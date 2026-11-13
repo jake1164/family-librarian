@@ -35,6 +35,13 @@ public sealed class ConversationOptions
     /// <summary>Numbered results offered per search.</summary>
     public int MaxChoices { get; set; } = 5;
 
+    /// <summary>
+    /// How many numbered books of a series the catalog must show before chat will say which one is the latest. Fewer than this is
+    /// too little to name a "highest" without misleading: a single sampled companion or an early book would be offered as the
+    /// newest. Below it, chat says how little it can see and searches the series name instead.
+    /// </summary>
+    public int MinKnownPositionsForLatest { get; set; } = 3;
+
     public bool IsEnabledFor(string transport) => Enabled && transport switch
     {
         ConversationTransports.Matrix => MatrixEnabled,
@@ -54,8 +61,12 @@ public enum ConversationPhase
     ChoosingFormat = 2
 }
 
-/// <summary>Server-side reference behind one numbered choice. The user only ever sees its number.</summary>
-public sealed record ConversationChoiceRef(string ProviderId, string ExternalId, string Title, string Authors, string? Detail);
+/// <summary>
+/// Server-side reference behind one numbered choice. The user only ever sees its number.
+/// <paramref name="SeriesName"/> is the series the catalog attached to this book, if any, so a follow-up such as "what comes next"
+/// can ask about that series instead of guessing it from the title. Optional, so state saved before it existed still loads.
+/// </summary>
+public sealed record ConversationChoiceRef(string ProviderId, string ExternalId, string Title, string Authors, string? Detail, string? SeriesName = null);
 
 /// <summary>
 /// The minimal structured context of a conversation: what was last offered and what is pending. Deliberately not a

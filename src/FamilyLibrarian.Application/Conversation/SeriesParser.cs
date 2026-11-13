@@ -15,6 +15,9 @@ public static partial class SeriesParser
     private const string Ordinals =
         "first|second|third|fourth|fifth|sixth|seventh|eighth|ninth|tenth|eleventh|twelfth|thirteenth|fourteenth|fifteenth|sixteenth|seventeenth|eighteenth|nineteenth|twentieth";
 
+    private const string Cardinals =
+        "one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty";
+
     public static bool TryParse(string text, out string seriesName, out decimal? position) =>
         TryParse(text, out seriesName, out position, out _);
 
@@ -83,8 +86,17 @@ public static partial class SeriesParser
         return CatalogSearchLimits.IsValidQueryText(seriesName) && seriesName.Length <= 80;
     }
 
-    private static decimal? ParseNumber(string value) =>
-        decimal.TryParse(value, NumberStyles.AllowDecimalPoint, CultureInfo.InvariantCulture, out var number) && number is >= 1 and <= 99 ? number : null;
+    private static decimal? ParseNumber(string value)
+    {
+        if (decimal.TryParse(value, NumberStyles.AllowDecimalPoint, CultureInfo.InvariantCulture, out var number))
+        {
+            return number is >= 1 and <= 99 ? number : null;
+        }
+
+        // "book three of ...": a written-out number reads the same as the digit.
+        var index = Array.IndexOf(Cardinals.Split('|'), value.Trim().ToLowerInvariant());
+        return index >= 0 ? index + 1 : null;
+    }
 
     private static decimal? ReadOrdinal(string word)
     {
@@ -109,13 +121,13 @@ public static partial class SeriesParser
     [GeneratedRegex(@"^(?:what(?:'s| is) )?(?:the )?(?<pos>" + Ordinals + @"|\d{1,2}(?:st|nd|rd|th)|last|latest|newest)\s+(?<s>.+?)\s+(?:book|novel|volume|installment|instalment|entry)$", RegexOptions.IgnoreCase)]
     private static partial Regex OrdinalBookPattern();
 
-    [GeneratedRegex(@"^(?:(?:what(?:'s| is)|which is)\s+)?(?:the\s+)?(?:book|volume|vol\.?|number|no\.?|#)\s*(?<n>\d{1,2}(?:\.\d{1,2})?)\s+(?:of|in|from)\s+(?:the\s+)?(?<s>.+?)(?:\s+series)?$", RegexOptions.IgnoreCase)]
+    [GeneratedRegex(@"^(?:(?:what(?:'s| is)|which is)\s+)?(?:the\s+)?(?:book|volume|vol\.?|number|no\.?|#)\s*(?<n>\d{1,2}(?:\.\d{1,2})?|" + Cardinals + @")\s+(?:of|in|from)\s+(?:the\s+)?(?<s>.+?)(?:\s+series)?$", RegexOptions.IgnoreCase)]
     private static partial Regex NumberedOfPattern();
 
     [GeneratedRegex(@"^(?:the\s+)?(?:original|main|core)\s+(?=\S)", RegexOptions.IgnoreCase)]
     private static partial Regex QualifierPattern();
 
-    [GeneratedRegex(@"^(?:the\s+)?(?<s>.+?)(?:\s+series)?[,:]?\s+(?:book|volume|vol\.?|part|#)\s*(?<n>\d{1,2}(?:\.\d{1,2})?)$", RegexOptions.IgnoreCase)]
+    [GeneratedRegex(@"^(?:the\s+)?(?<s>.+?)(?:\s+series)?[,:]?\s+(?:book|volume|vol\.?|part|#)\s*(?<n>\d{1,2}(?:\.\d{1,2})?|" + Cardinals + @")$", RegexOptions.IgnoreCase)]
     private static partial Regex SeriesNumberedPattern();
 
     [GeneratedRegex(@"^(?:what(?:'s| is| are) )?(?:the )?(?:(?:books|titles|order|reading order|series order|list of books|books in order)\s+(?:of|in|for)\s+(?:the\s+)?(?<s>.+?)(?:\s+series)?|(?<s>.+?)(?:\s+series)?\s+(?:reading order|series order|books in order|in order))$", RegexOptions.IgnoreCase)]

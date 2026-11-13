@@ -184,6 +184,13 @@ internal sealed class FakeTools : IConversationTools
         return Task.FromResult<ConversationLibraryResult?>(NextLibraryResult ?? new ConversationLibraryResult("Dune", "Frank Herbert", ["ebook"], false));
     }
 
+    public Task<ConversationLibraryResult?> CheckLibraryForChoiceAsync(ConversationChoiceRef choice, CancellationToken cancellationToken)
+    {
+        Calls.Add($"library-choice:{choice.ExternalId}");
+        return Task.FromResult<ConversationLibraryResult?>(
+            NextLibraryResult ?? new ConversationLibraryResult(choice.Title, choice.Authors, ["ebook"], false));
+    }
+
     public Task<SeriesLookupResult> FindSeriesBooksAsync(string seriesName, decimal? position, string? afterTitle, int maxBooks, CancellationToken cancellationToken)
     {
         Calls.Add($"series:{seriesName}|{position?.ToString(System.Globalization.CultureInfo.InvariantCulture) ?? "all"}" + (afterTitle is null ? "" : $"|after:{afterTitle}"));

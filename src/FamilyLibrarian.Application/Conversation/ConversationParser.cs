@@ -256,6 +256,23 @@ public static partial class ConversationParser
     {
         var text = message;
         var requestIntent = false;
+        IReadOnlyList<RequestMediaType>? leadingFormat = null;
+
+        // "I want the audiobook of ...", "I'd like the second ... book", "can I have the ...": a wish for a book is a request.
+        // Only taken when an article or a format word follows, so a title that begins with these words ("I Want to Be ...") is
+        // still searched as typed.
+        if (DesireFormatPattern().Match(text) is { Success: true } desiredFormat)
+        {
+            leadingFormat = ParseFormats(desiredFormat.Groups["fmt"].Value);
+            text = text[desiredFormat.Length..].Trim();
+            requestIntent = true;
+        }
+        else if (DesirePattern().Match(text) is { Success: true } desire)
+        {
+            text = text[desire.Length..].Trim();
+            requestIntent = true;
+        }
+
         for (var guard = 0; guard < 4; guard++)
         {
             var match = LeadingVerbPattern().Match(text);
@@ -268,7 +285,7 @@ public static partial class ConversationParser
             text = text[match.Length..].Trim();
         }
 
-        IReadOnlyList<RequestMediaType>? formats = null;
+        IReadOnlyList<RequestMediaType>? formats = leadingFormat;
         if (TrailingFormatPattern().Match(text) is { Success: true } trailing && trailing.Groups["q"].Value.Trim().Length >= 2)
         {
             formats = ParseFormats(trailing.Groups["fmt"].Value);
@@ -386,6 +403,17 @@ public static partial class ConversationParser
 
     [GeneratedRegex(@"\b(?:today|tonight|tomorrow|yesterday|right now|this (?:week|weekend)|next (?:week|month))\b")]
     private static partial Regex TimeWordPattern();
+
+    private const string FormatWords = "ebook|e-book|epub|audiobook|audio book|audio";
+
+    private const string DesireOpener =
+        @"^(?:please\s+)?(?:i(?:'d| would)?\s+(?:like|want|need)|(?:can|could|would|will)\s+(?:i|we)\s+(?:please\s+)?have|give\s+me)\s+(?:to\s+(?:request|get|have|order|add)\s+)?";
+
+    [GeneratedRegex(DesireOpener + @"(?:(?:the|a|an|my)\s+)?(?<fmt>" + FormatWords + @")\s+(?:version\s+)?(?:of|for)\s+", RegexOptions.IgnoreCase)]
+    private static partial Regex DesireFormatPattern();
+
+    [GeneratedRegex(DesireOpener + @"(?=(?:the|a|an|my|some)\s)", RegexOptions.IgnoreCase)]
+    private static partial Regex DesirePattern();
 
     private const string Pronoun = @"(?:it|that one|this one|that book|this book|that|this)";
 

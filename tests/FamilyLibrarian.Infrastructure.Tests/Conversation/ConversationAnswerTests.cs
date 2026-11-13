@@ -177,6 +177,79 @@ public sealed class ConversationAnswerTests
     }
 
     [TestMethod]
+    [DataRow("book three of Lantern Road", "Lantern Road", 3)]
+    [DataRow("what is volume two of Lantern Road", "Lantern Road", 2)]
+    [DataRow("Lantern Road book three", "Lantern Road", 3)]
+    [DataRow("book twelve of The Lantern Road", "Lantern Road", 12)]
+    [DataRow("what's book twenty in the Lantern Road series", "Lantern Road", 20)]
+    [DataRow("BOOK FIVE OF Lantern Road", "Lantern Road", 5)]
+    public void WrittenOutNumbersAreReadAsPositionsLikeDigits(string text, string series, int position)
+    {
+        Assert.IsTrue(SeriesParser.TryParse(text, out var name, out var found), text);
+        Assert.AreEqual(series, name, ignoreCase: true);
+        Assert.AreEqual((decimal)position, found);
+    }
+
+    [TestMethod]
+    [DataRow("book twenty-one of Lantern Road")]
+    [DataRow("book zero of Lantern Road")]
+    public void NumbersOutsideTheSupportedWordsAreNotPositions(string text) =>
+        Assert.IsFalse(SeriesParser.TryParse(text, out _, out var found) && found is not null, text);
+
+    [TestMethod]
+    public void AWishForTheAudiobookOfASeriesBookKeepsTheSeriesTheNumberAndTheFormat()
+    {
+        var parsed = ConversationParser.Parse("I want the audiobook of the second Lantern Road book");
+
+        Assert.AreEqual(ConversationCommandKind.Series, parsed.Kind);
+        Assert.AreEqual("Lantern Road", parsed.SeriesName);
+        Assert.AreEqual(2m, parsed.SeriesPosition);
+        CollectionAssert.AreEqual(new[] { RequestMediaType.Audiobook }, parsed.Formats!.ToArray());
+        Assert.IsTrue(parsed.RequestIntent);
+    }
+
+    [TestMethod]
+    [DataRow("I'd like the ebook of The Lantern Road", "The Lantern Road", RequestMediaType.Ebook)]
+    [DataRow("can I have the audiobook of The Lantern Road", "The Lantern Road", RequestMediaType.Audiobook)]
+    [DataRow("I need the audio book for The Lantern Road", "The Lantern Road", RequestMediaType.Audiobook)]
+    [DataRow("please give me the epub of The Lantern Road", "The Lantern Road", RequestMediaType.Ebook)]
+    public void AWishWithAFormatIsARequestForTheTitleInThatFormat(string text, string title, RequestMediaType format)
+    {
+        var parsed = ConversationParser.Parse(text);
+
+        Assert.AreEqual(ConversationCommandKind.Search, parsed.Kind, text);
+        Assert.AreEqual(title, parsed.Text, text);
+        CollectionAssert.AreEqual(new[] { format }, parsed.Formats!.ToArray(), text);
+        Assert.IsTrue(parsed.RequestIntent, text);
+    }
+
+    [TestMethod]
+    [DataRow("I need the third Lantern Road book")]
+    [DataRow("can I have the second Lantern Road book")]
+    public void AWishForANumberedSeriesBookIsASeriesRequest(string text)
+    {
+        var parsed = ConversationParser.Parse(text);
+
+        Assert.AreEqual(ConversationCommandKind.Series, parsed.Kind, text);
+        Assert.AreEqual("Lantern Road", parsed.SeriesName, text);
+        Assert.IsTrue(parsed.RequestIntent, text);
+    }
+
+    [TestMethod]
+    [DataRow("I Want to Be Left Behind")]
+    [DataRow("I Want You")]
+    [DataRow("I Need Your Love")]
+    [DataRow("Can I Have This Dance")]
+    public void ATitleThatMerelyBeginsWithWishWordsIsStillSearchedAsTyped(string title)
+    {
+        var parsed = ConversationParser.Parse(title);
+
+        Assert.AreEqual(ConversationCommandKind.Search, parsed.Kind, title);
+        Assert.AreEqual(title, parsed.Text, title);
+        Assert.IsFalse(parsed.RequestIntent, title);
+    }
+
+    [TestMethod]
     [DataRow("What is the latest original Harry Potter novel?")]
     [DataRow("what is the newest main Harry Potter book")]
     public void AQualifierWordIsNotPartOfTheSeriesName(string text)
@@ -208,7 +281,7 @@ public sealed class ConversationAnswerTests
     public async Task TheLatestBookIsOnlyEverTheHighestOneTheCatalogShowed()
     {
         var harness = new ConversationHarness();
-        harness.Tools.SeriesResults["Lantern Road"] = Found("The Lantern Road", Book("The Lantern Road", 4, "Road's End"));
+        harness.Tools.SeriesResults["Lantern Road"] = WithKnown("The Lantern Road", [1m, 2m, 4m], Book("The Lantern Road", 4, "Road's End"));
 
         var reply = await harness.SayAsync("What is the latest Lantern Road book?");
 
@@ -216,6 +289,41 @@ public sealed class ConversationAnswerTests
         StringAssert.Contains(reply.Reply.Text, "highest-numbered");
         StringAssert.Contains(reply.Reply.Text, "may not list every book");
         Assert.IsFalse(reply.Reply.Text.Contains("book 4 is", StringComparison.Ordinal), "It must not be worded as a settled fact.");
+    }
+
+    /// <summary>A lookup that found the book(s) at the requested position and knows these positions for the series.</summary>
+    private static SeriesLookupResult WithKnown(string series, decimal[] knownPositions, params SeriesBook[] books) =>
+        new(SeriesLookupKind.Found, series, books, [], knownPositions);
+
+    [TestMethod]
+    [DataRow(1)]
+    [DataRow(2)]
+    public async Task LatestFromTooFewKnownBooksIsNotClaimedAndTheSeriesNameIsSearchedInstead(int known)
+    {
+        var harness = new ConversationHarness();
+        var positions = Enumerable.Range(1, known).Select(position => (decimal)position).ToArray();
+        harness.Tools.SeriesResults["Lantern Road"] = WithKnown("The Lantern Road", positions, Book("The Lantern Road", known, "Road's Beginning"));
+        harness.Tools.Results["Lantern Road"] = new ConversationSearchResult([FakeTools.Choice("l1", "The Last Lantern")], false, []);
+
+        var reply = await harness.SayAsync("What is the latest Lantern Road book?");
+
+        Assert.AreEqual(ConversationReplyKind.Choices, reply.Reply.Kind);
+        Assert.IsFalse(reply.Reply.Text.Contains("highest-numbered", StringComparison.Ordinal), "One or two sampled books are not evidence of the latest.");
+        StringAssert.Contains(reply.Reply.Text, $"I can only see {known} numbered");
+        StringAssert.Contains(reply.Reply.Text, "isn't enough to say which is the latest");
+        CollectionAssert.Contains(harness.Tools.Calls, "search:Lantern Road");
+    }
+
+    [TestMethod]
+    public async Task HowManyKnownBooksAreEnoughToNameTheLatestIsAnOptionNotAConstant()
+    {
+        var harness = new ConversationHarness();
+        harness.Options.MinKnownPositionsForLatest = 1;
+        harness.Tools.SeriesResults["Lantern Road"] = WithKnown("The Lantern Road", [4m], Book("The Lantern Road", 4, "Road's End"));
+
+        var reply = await harness.SayAsync("What is the latest Lantern Road book?");
+
+        StringAssert.Contains(reply.Reply.Text, "highest-numbered");
     }
 
     [TestMethod]
@@ -305,7 +413,7 @@ public sealed class ConversationAnswerTests
     public async Task TheNextBookOfASeriesSaysItCannotSeeReleasesAndOffersTheLatestItKnows()
     {
         var harness = new ConversationHarness();
-        harness.Tools.SeriesResults["Expanse"] = Found("The Expanse", Book("The Expanse", 9, "Leviathan Falls"));
+        harness.Tools.SeriesResults["Expanse"] = WithKnown("The Expanse", [1m, 5m, 9m], Book("The Expanse", 9, "Leviathan Falls"));
 
         var known = await harness.SayAsync("What is the next Expanse novel?");
         var none = await new ConversationHarness().SayAsync("What is the next Expanse novel?");
@@ -314,6 +422,20 @@ public sealed class ConversationAnswerTests
         StringAssert.Contains(known.Reply.Text, "can't see books that haven't been published");
         StringAssert.Contains(known.Reply.Text, "Leviathan Falls");
         StringAssert.Contains(none.Reply.Text, "can't see books that haven't been published");
+    }
+
+    [TestMethod]
+    public async Task TheNextBookOfASeriesWithTooFewKnownBooksDoesNotNameAHighestOne()
+    {
+        var harness = new ConversationHarness();
+        harness.Tools.SeriesResults["Expanse"] = WithKnown("The Expanse", [1.1m], Book("The Expanse", 1.1m, "A Companion Guide"));
+
+        var reply = await harness.SayAsync("What is the next Expanse novel?");
+
+        StringAssert.Contains(reply.Reply.Text, "can't see books that haven't been published");
+        StringAssert.Contains(reply.Reply.Text, "I can only see 1 numbered book");
+        Assert.IsFalse(reply.Reply.Text.Contains("highest-numbered", StringComparison.Ordinal));
+        Assert.IsFalse(reply.Reply.Text.Contains("A Companion Guide", StringComparison.Ordinal), "A single sampled book is not offered as the latest.");
     }
 
     // ---- follow-ups about "it" ---------------------------------------------------------------------------------------
@@ -371,24 +493,68 @@ public sealed class ConversationAnswerTests
     public async Task IsItAvailableChecksTheLibraryForTheBookInFocus()
     {
         var harness = await WithOneBookInFocusAsync();
+        harness.Tools.NextLibraryResult = new ConversationLibraryResult("The Last Lantern", "Mara Quill", [], false);
 
         var reply = await harness.SayAsync("Is it available as an audiobook?");
 
         Assert.AreEqual(ConversationReplyKind.Library, reply.Reply.Kind);
-        Assert.IsTrue(harness.Tools.Calls.Any(call => call.StartsWith("library:The Last Lantern", StringComparison.Ordinal)));
+        CollectionAssert.Contains(harness.Tools.Calls, "library-choice:the-last-lantern", "The offered record is checked by its id.");
+        Assert.IsFalse(harness.Tools.Calls.Any(call => call.StartsWith("library:", StringComparison.Ordinal)), "Never a text search that may rank another record first.");
+        StringAssert.Contains(reply.Reply.Text, "request it");
         Assert.IsEmpty(harness.Tools.Created);
     }
 
     [TestMethod]
-    public async Task WhatComesNextAsksTheSeriesWhatFollowsTheBookInFocus()
+    public async Task WhatComesNextAsksTheSeriesTheBookWasOfferedIn()
     {
         var harness = await WithOneBookInFocusAsync();
 
         var reply = await harness.SayAsync("What comes out next?");
 
-        CollectionAssert.Contains(harness.Tools.Calls, "series:|all|after:The Last Lantern");
+        CollectionAssert.Contains(harness.Tools.Calls, "series:The Lantern Road|all|after:The Last Lantern", "The series the catalog gave the book is passed on.");
         Assert.AreNotEqual(ConversationReplyKind.Status, reply.Reply.Kind);
         StringAssert.Contains(reply.Reply.Text, "The Last Lantern");
+    }
+
+    [TestMethod]
+    public async Task ABookFromAPlainSearchRemembersItsPrimarySeriesToo()
+    {
+        var harness = new ConversationHarness();
+        harness.Tools.Results["The Last Lantern"] = new ConversationSearchResult(
+            [new ConversationChoiceRef("fake", "x1", "The Last Lantern", "Mara Quill", "2021", SeriesName: "The Lantern Road")], false, []);
+        await harness.SayAsync("Find The Last Lantern");
+
+        await harness.SayAsync("What comes next?");
+
+        CollectionAssert.Contains(harness.Tools.Calls, "series:The Lantern Road|all|after:The Last Lantern");
+    }
+
+    [TestMethod]
+    public async Task AFollowUpOnABookInSeveralSeriesNamesThemInsteadOfQuotingAnEmptyName()
+    {
+        var harness = new ConversationHarness();
+        harness.Tools.Results["The Last Lantern"] = new ConversationSearchResult([FakeTools.Choice("x1", "The Last Lantern")], false, []);
+        harness.Tools.SeriesResults[string.Empty] = new SeriesLookupResult(SeriesLookupKind.AmbiguousSeries, null, [], ["Series Alpha", "Series Beta"], []);
+        await harness.SayAsync("Find The Last Lantern");
+
+        var reply = await harness.SayAsync("What comes out next?");
+
+        StringAssert.Contains(reply.Reply.Text, "is in more than one series");
+        StringAssert.Contains(reply.Reply.Text, "Series Alpha");
+        StringAssert.Contains(reply.Reply.Text, "Series Beta");
+        Assert.IsFalse(reply.Reply.Text.Contains("“”", StringComparison.Ordinal), "An empty quoted name must never appear.");
+    }
+
+    [TestMethod]
+    public void ChoiceStateSavedBeforeSeriesNamesExistedStillLoads()
+    {
+        const string old = "{\"Phase\":1,\"Query\":\"q\",\"Choices\":[{\"ProviderId\":\"p\",\"ExternalId\":\"e\",\"Title\":\"T\",\"Authors\":\"A\",\"Detail\":\"d\"}],\"SelectedIndex\":null,\"FormatHint\":[],\"RequestIntent\":false}";
+
+        var state = ConversationState.Deserialize(old);
+
+        Assert.HasCount(1, state.Choices);
+        Assert.IsNull(state.Choices[0].SeriesName);
+        Assert.AreEqual("T", state.Choices[0].Title);
     }
 
     [TestMethod]

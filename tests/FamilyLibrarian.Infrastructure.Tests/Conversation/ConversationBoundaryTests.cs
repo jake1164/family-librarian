@@ -76,7 +76,8 @@ public sealed class ConversationBoundaryTests
         var names = typeof(IConversationTools).GetMethods().Select(method => method.Name).Order().ToArray();
 
         Assert.AreEqual(
-            "CheckLibraryAsync,CreateBookRequestAsync,FindSeriesBooksAsync,GetBookDetailsAsync,GetMyRequestsAsync,ResolveWorkAsync,SearchBooksAsync",
+            // CheckLibraryForChoiceAsync (CHAT-ANSWER-1) is the same read-only library check as CheckLibraryAsync, by catalog id.
+            "CheckLibraryAsync,CheckLibraryForChoiceAsync,CreateBookRequestAsync,FindSeriesBooksAsync,GetBookDetailsAsync,GetMyRequestsAsync,ResolveWorkAsync,SearchBooksAsync",
             string.Join(",", names),
             "A new conversation action needs an explicit design and security review.");
         Assert.IsFalse(names.Any(name =>
