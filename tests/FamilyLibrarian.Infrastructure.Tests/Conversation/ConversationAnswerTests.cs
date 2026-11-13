@@ -478,7 +478,21 @@ public sealed class ConversationAnswerTests
     }
 
     [TestMethod]
-    public async Task AModelStatusOrOffTopicReplyDoesNotClearTheBooksBeingDiscussed()
+    public async Task AModelStatusReplyDoesNotClearTheBooksBeingDiscussed()
+    {
+        var harness = new ConversationHarness { Interpreter = new FakeInterpreter(new BookIntentInterpretation(BookIntent.CheckStatus, null, null)) }
+            .WithResults("The Lantern Road");
+        await harness.SayAsync("Find The Lantern Road");
+
+        var status = await harness.SayAsync("has the thing I asked for last week arrived yet");
+        var picked = await harness.SayAsync("2");
+
+        Assert.AreEqual(ConversationReplyKind.Status, status.Reply.Kind);
+        Assert.AreEqual(ConversationReplyKind.AskFormat, picked.Reply.Kind, "The earlier list must still be there after a status answer.");
+    }
+
+    [TestMethod]
+    public async Task AModelOffTopicReplyDoesNotClearTheBooksBeingDiscussed()
     {
         var harness = new ConversationHarness { Interpreter = new FakeInterpreter(new BookIntentInterpretation(BookIntent.OutOfDomain, null, null)) }
             .WithResults("The Lantern Road");
