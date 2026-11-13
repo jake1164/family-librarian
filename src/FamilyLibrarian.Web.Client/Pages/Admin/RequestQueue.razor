@@ -4,6 +4,7 @@
 @using FamilyLibrarian.Contracts.Providers
 @using FamilyLibrarian.Web.Client.Acquisition
 @using FamilyLibrarian.Web.Client.Integrations
+@using FamilyLibrarian.Web.Client.Requests
 @inject AdminRequestsApiClient Requests
 @inject MetadataIntegrationsApiClient MetadataIntegrations
 @inject ISnackbar Snackbar
@@ -155,9 +156,8 @@
     private AdminActiveAcquisitionResponse? ActiveForFormat(Guid formatId) =>
         ActiveAcquisitions.FirstOrDefault(activity => activity.RequestFormatId == formatId);
 
-    private string? RequestLabel(BookRequestResponse request) => request.Status == "PendingAcquisition"
-        ? ActiveForRequest(request.Id).Any() ? "Working" : "Awaiting next check"
-        : null;
+    private string? RequestLabel(BookRequestResponse request) =>
+        RequestProgressLabels.For(request, ActiveForRequest(request.Id).Any());
 
     private static bool HasReviewCandidates(AdminBookRequestResponse item, Guid formatId) =>
         item.Request.Status == "NeedsReview" &&

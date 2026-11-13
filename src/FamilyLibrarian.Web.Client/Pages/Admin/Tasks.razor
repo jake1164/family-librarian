@@ -7,6 +7,7 @@
 @using FamilyLibrarian.Contracts.Publishing
 @using FamilyLibrarian.Contracts.Requests
 @using FamilyLibrarian.Web.Client.Operations
+@using FamilyLibrarian.Web.Client.Requests
 @inject AdminTasksApiClient TasksApi
 @inject AdminRequestsApiClient RequestsApi
 @inject FamilyLibrarian.Web.Client.ModelGateway.ModelGatewayApiClient ModelsApi
@@ -236,9 +237,8 @@
     [CascadingParameter]
     private IReadOnlyList<AdminActiveAcquisitionResponse> ActiveAcquisitions { get; set; } = [];
 
-    private string? RequestLabel(BookRequestResponse request) => request.Status == "PendingAcquisition"
-        ? ActiveAcquisitions.Any(activity => activity.RequestId == request.Id) ? "Working" : "Awaiting next check"
-        : null;
+    private string? RequestLabel(BookRequestResponse request) =>
+        RequestProgressLabels.For(request, ActiveAcquisitions.Any(activity => activity.RequestId == request.Id));
 
     private static bool HasReviewCandidates(AdminBookRequestResponse request, Guid formatId) =>
         request.Request.Status == "NeedsReview" &&
