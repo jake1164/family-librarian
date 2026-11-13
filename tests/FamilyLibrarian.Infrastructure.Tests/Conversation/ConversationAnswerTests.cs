@@ -402,6 +402,55 @@ public sealed class ConversationAnswerTests
         Assert.AreEqual(ConversationReplyKind.AskFormat, reply.Reply.Kind, "The book is still in focus after the earlier follow-up.");
     }
 
+    // ---- the rate limit only counts messages that do work ------------------------------------------------------------------
+
+    [TestMethod]
+    public async Task ASessionAllowsTwentyFourTurnsBeforeTheContextIsCleared()
+    {
+        Assert.AreEqual(24, new ConversationOptions().MaxTurnsPerSession);
+
+        var harness = new ConversationHarness().WithResults("The Lantern Road");
+        for (var turn = 0; turn < 24; turn++)
+        {
+            var reply = await harness.SayAsync("Find The Lantern Road");
+            Assert.AreEqual(ConversationReplyKind.Choices, reply.Reply.Kind, $"Turn {turn + 1} is still answered.");
+        }
+
+        var cleared = await harness.SayAsync("Find The Lantern Road");
+
+        Assert.AreEqual(ConversationReplyKind.Throttled, cleared.Reply.Kind, "The 25th counted turn clears the conversation.");
+    }
+
+    [TestMethod]
+    public async Task ControlMessagesAreNotCountedAgainstTheRateLimitButBookMessagesAre()
+    {
+        var harness = new ConversationHarness().WithResults("The Lantern Road");
+
+        await harness.SayAsync("cancel");
+        await harness.SayAsync("help");
+        await harness.SayAsync("status");
+        await harness.SayAsync("   ");
+        await harness.SayAsync("Find The Lantern Road");
+        await harness.SayAsync("1");
+        await harness.SayAsync("request it");
+
+        CollectionAssert.AreEqual(CountedPattern, harness.Limiter.Counted);
+    }
+
+    private static readonly bool[] CountedPattern = [false, false, false, false, true, true, true];
+
+    [TestMethod]
+    public async Task ARefusedBookMessageIsAnswerRateLimitedAndWasOneThatCounts()
+    {
+        var harness = new ConversationHarness();
+        harness.Limiter.Deny = true;
+
+        var searched = await harness.SayAsync("Find The Lantern Road");
+
+        Assert.AreEqual(ConversationReplyKind.RateLimited, searched.Reply.Kind);
+        Assert.IsTrue(harness.Limiter.Counted.Single());
+    }
+
     // ---- the model cannot override the fixed rules or wipe the conversation --------------------------------------------
 
     private static ConversationHarness WithModel(BookIntent intent) =>

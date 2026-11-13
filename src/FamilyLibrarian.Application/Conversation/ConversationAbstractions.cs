@@ -16,8 +16,8 @@ public sealed class ConversationOptions
 
     public bool WebEnabled { get; set; }
 
-    /// <summary>Turns in one session before the context is cleared (D-4: 12).</summary>
-    public int MaxTurnsPerSession { get; set; } = 12;
+    /// <summary>Turns in one session before the context is cleared (D-4 was 12; raised to 24 in CHAT-ANSWER-1 at the owner's request).</summary>
+    public int MaxTurnsPerSession { get; set; } = 24;
 
     /// <summary>Minutes of silence after which the session context is cleared (D-4: 20).</summary>
     public int IdleExpiryMinutes { get; set; } = 20;
@@ -25,8 +25,12 @@ public sealed class ConversationOptions
     /// <summary>Longest accepted message (D-4: 2,000).</summary>
     public int MaxInputCharacters { get; set; } = 2_000;
 
-    /// <summary>Rolling per-user ceiling on messages, so deterministic commands are capped only by a rate limit.</summary>
-    public int MaxMessagesPerMinute { get; set; } = 20;
+    /// <summary>
+    /// Rolling per-user ceiling on messages, so deterministic commands are capped only by a rate limit. Cancel, help, status and
+    /// empty messages do not count. Set with <c>Conversation__MaxMessagesPerMinute</c>. Raised from 20 to 120 (CHAT-ANSWER-1) because
+    /// 20 was reachable by one person testing; the outbound catalog lookups have their own rate limiting.
+    /// </summary>
+    public int MaxMessagesPerMinute { get; set; } = 120;
 
     /// <summary>Numbered results offered per search.</summary>
     public int MaxChoices { get; set; } = 5;
@@ -170,5 +174,9 @@ public interface IConversationTransaction
 public interface IConversationLimiter
 {
     /// <summary>Returns a lease to dispose when the turn ends, or null when the user is over the limit or already mid-turn.</summary>
-    Task<IDisposable?> TryEnterAsync(Guid userId, CancellationToken cancellationToken);
+    /// <param name="countsTowardLimit">
+    /// False for control messages (cancel, help, status, empty) that do no catalog or model work: they neither use up nor are blocked
+    /// by the rolling allowance, so a user over the limit can still cancel. They still take their turn, one at a time per user.
+    /// </param>
+    Task<IDisposable?> TryEnterAsync(Guid userId, CancellationToken cancellationToken, bool countsTowardLimit = true);
 }

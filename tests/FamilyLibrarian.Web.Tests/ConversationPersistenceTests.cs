@@ -222,6 +222,35 @@ public sealed class ConversationPersistenceTests
         Assert.IsNotNull(other, "Another user is not affected.");
     }
 
+    [TestMethod]
+    public async Task MessagesThatDoNotCountNeitherUseUpNorAreBlockedByTheRateLimitButStillTakeTurns()
+    {
+        var limiter = new ConversationLimiter(new ConversationOptions { MaxMessagesPerMinute = 2 }, new ManualTimeProvider());
+        var user = Guid.NewGuid();
+
+        for (var index = 0; index < 5; index++)
+        {
+            using var control = await limiter.TryEnterAsync(user, CancellationToken.None, countsTowardLimit: false);
+            Assert.IsNotNull(control, "Control messages never consume the allowance.");
+        }
+
+        using (var first = await limiter.TryEnterAsync(user, CancellationToken.None)) Assert.IsNotNull(first);
+        using (var second = await limiter.TryEnterAsync(user, CancellationToken.None)) Assert.IsNotNull(second);
+        Assert.IsNull(await limiter.TryEnterAsync(user, CancellationToken.None), "Real messages are still capped.");
+
+        using var cancel = await limiter.TryEnterAsync(user, CancellationToken.None, countsTowardLimit: false);
+        Assert.IsNotNull(cancel, "A user over the limit can still cancel or ask for help.");
+
+        using var held = await limiter.TryEnterAsync(user, CancellationToken.None, countsTowardLimit: false);
+        using var cancellation = new CancellationTokenSource(TimeSpan.FromMilliseconds(100));
+        await Assert.ThrowsAsync<OperationCanceledException>(
+            () => limiter.TryEnterAsync(user, cancellation.Token, countsTowardLimit: false));
+    }
+
+    [TestMethod]
+    public void TheDefaultAllowanceIsOneHundredAndTwentyMessagesAMinute() =>
+        Assert.AreEqual(120, new ConversationOptions().MaxMessagesPerMinute);
+
     private sealed class ManualTimeProvider : TimeProvider
     {
         private DateTimeOffset now = new(2026, 10, 12, 12, 0, 0, TimeSpan.Zero);

@@ -67,7 +67,9 @@ public sealed class ConversationService(
             return Terminal(ConversationReplyKind.TooLong, $"Please keep messages under {options.MaxInputCharacters:N0} characters.");
         }
 
-        using var lease = await limiter.TryEnterAsync(userId, cancellationToken);
+        // Read the message first (pure, bounded by the length check above) so control messages can skip the rate allowance.
+        var parsed = ConversationParser.Parse(text);
+        using var lease = await limiter.TryEnterAsync(userId, cancellationToken, countsTowardLimit: CountsAsTurn(parsed));
         if (lease is null)
         {
             return Terminal(ConversationReplyKind.RateLimited, "You're sending messages quickly. Give me a moment, then try again.");
@@ -81,7 +83,7 @@ public sealed class ConversationService(
             }
 
             var started = System.Diagnostics.Stopwatch.GetTimestamp();
-            var processed = await ProcessAsync(userId, turn.Transport, scopeKey, eventId, text, cancellationToken);
+            var processed = await ProcessAsync(userId, turn.Transport, scopeKey, eventId, parsed, cancellationToken);
             diagnostics?.StepCompleted(ConversationSteps.Turn, System.Diagnostics.Stopwatch.GetElapsedTime(started), processed.Reply.Kind.ToString());
             return processed;
         }
@@ -97,8 +99,16 @@ public sealed class ConversationService(
         return events.MarkDeliveredAsync(key.Transport, key.ScopeKey, key.EventId, cancellationToken);
     }
 
+    /// <summary>
+    /// Whether a message is real work: it counts toward the session's turn limit and the per-user rate limit. Cancel, help, status
+    /// and empty messages are control messages that touch no catalog or model, so neither limit applies to them.
+    /// </summary>
+    private static bool CountsAsTurn(ParsedConversationMessage parsed) =>
+        parsed.Kind is not (ConversationCommandKind.Help or ConversationCommandKind.Cancel or ConversationCommandKind.Status
+            or ConversationCommandKind.Empty);
+
     private async Task<ConversationTurnResult> ProcessAsync(
-        Guid userId, string transport, string scopeKey, string? eventId, string text, CancellationToken cancellationToken)
+        Guid userId, string transport, string scopeKey, string? eventId, ParsedConversationMessage parsed, CancellationToken cancellationToken)
     {
         var now = clock.UtcNow;
         var session = await sessions.FindAsync(userId, transport, scopeKey, cancellationToken)
@@ -112,9 +122,7 @@ public sealed class ConversationService(
             session.StartedAtUtc = now;
         }
 
-        var parsed = ConversationParser.Parse(text);
-        var countsAsTurn = parsed.Kind is not (ConversationCommandKind.Help or ConversationCommandKind.Cancel or ConversationCommandKind.Status
-            or ConversationCommandKind.Empty);
+        var countsAsTurn = CountsAsTurn(parsed);
         TurnPlan plan;
         if (countsAsTurn && session.TurnCount >= options.MaxTurnsPerSession)
         {

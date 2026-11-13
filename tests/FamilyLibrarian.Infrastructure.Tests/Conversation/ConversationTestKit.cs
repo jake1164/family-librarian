@@ -120,8 +120,14 @@ internal sealed class FakeLimiter : IConversationLimiter
 {
     public bool Deny { get; set; }
 
-    public Task<IDisposable?> TryEnterAsync(Guid userId, CancellationToken cancellationToken) =>
-        Task.FromResult<IDisposable?>(Deny ? null : new Lease());
+    /// <summary>One entry per message: whether the service asked for it to count against the rate limit.</summary>
+    public List<bool> Counted { get; } = [];
+
+    public Task<IDisposable?> TryEnterAsync(Guid userId, CancellationToken cancellationToken, bool countsTowardLimit = true)
+    {
+        Counted.Add(countsTowardLimit);
+        return Task.FromResult<IDisposable?>(Deny ? null : new Lease());
+    }
 
     private sealed class Lease : IDisposable
     {
