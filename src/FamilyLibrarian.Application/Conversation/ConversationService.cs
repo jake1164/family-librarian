@@ -124,7 +124,7 @@ public sealed class ConversationService(
                 ConversationState.Empty(), null, ResetTurns: true);
         }
         else if (expired && parsed.Kind is ConversationCommandKind.Pick or ConversationCommandKind.Request or ConversationCommandKind.Format
-                     or ConversationCommandKind.Details)
+                     or ConversationCommandKind.Details or ConversationCommandKind.Reference)
         {
             plan = Keep(ConversationReply.Of(ConversationReplyKind.NotUnderstood,
                 $"That search expired after {options.IdleExpiryMinutes} minutes without activity. Tell me the book again and I'll look it up."),
@@ -259,6 +259,12 @@ public sealed class ConversationService(
             case ConversationCommandKind.Details:
                 return Keep(await DetailsReplyAsync(state, parsed.Number!.Value, cancellationToken), state);
 
+            case ConversationCommandKind.Reference:
+                return await ReferencePlanAsync(parsed, state, cancellationToken);
+
+            case ConversationCommandKind.Release:
+                return await ReleasePlanAsync(parsed, state, cancellationToken);
+
             case ConversationCommandKind.Pick:
             case ConversationCommandKind.Request:
                 return await PickPlanAsync(state, parsed.Number!.Value, parsed.Formats, cancellationToken);
@@ -277,8 +283,7 @@ public sealed class ConversationService(
         switch (lookup.Kind)
         {
             case SeriesLookupKind.NotFound:
-                // Not a series we know of ("The First Book of Samuel"): treat the words as an ordinary search.
-                return await SearchPlanAsync(parsed.Text!, parsed.Text!, parsed.Formats, parsed.RequestIntent, state, cancellationToken);
+                return await SeriesNotFoundPlanAsync(parsed, state, cancellationToken);
 
             case SeriesLookupKind.AmbiguousSeries:
                 return Keep(ConversationReply.Of(ConversationReplyKind.NotUnderstood,
@@ -296,7 +301,8 @@ public sealed class ConversationService(
                     ? "I don't have any numbered books for it"
                     : $"I know of {string.Join(", ", lookup.KnownPositions.Select(FormatPosition))}";
                 return Keep(ConversationReply.Of(ConversationReplyKind.Text,
-                    $"I found the series {lookup.SeriesName}, but not that book. {known}."), state);
+                    $"I found the series {lookup.SeriesName}, but not that book. {known}. " +
+                    "The catalog may not list every book in a series, so it could still exist."), state);
         }
 
         var choices = lookup.Books
@@ -320,12 +326,19 @@ public sealed class ConversationService(
         }
 
         var shown = choices.Select((choice, index) => new ConversationChoice(index + 1, choice.Title, choice.Authors, choice.Detail)).ToArray();
+        // "Latest" and "in order" are read from whatever books the catalog happened to show for the series, so they are never
+        // worded as settled fact: a newer book, or an earlier one, may simply not have been listed.
+        var latest = parsed.SeriesPosition == SeriesPositionResolver.LastPosition;
         var lines = new StringBuilder(parsed.SeriesAfterTitle is not null
             ? shown.Length == 1
                 ? $"After {parsed.SeriesAfterTitle}, the next book in {lookup.SeriesName} is:"
                 : $"After {parsed.SeriesAfterTitle}, more than one book is listed next in {lookup.SeriesName}:"
             : parsed.SeriesPosition is null
-            ? $"{lookup.SeriesName}, in order:"
+            ? $"{lookup.SeriesName}, in order (these are only the books the catalog showed me, so the list may be incomplete):"
+            : latest
+                ? shown.Length == 1
+                    ? $"The highest-numbered book I can find in {lookup.SeriesName} is #{FormatPositionOrLast(parsed.SeriesPosition.Value, lookup)}. The catalog may not list every book, so there could be a newer one:"
+                    : $"More than one book is listed as the highest-numbered in {lookup.SeriesName}, #{FormatPositionOrLast(parsed.SeriesPosition.Value, lookup)}. The catalog may not list every book, so there could be a newer one:"
             : shown.Length == 1
                 ? $"In {lookup.SeriesName}, book {FormatPositionOrLast(parsed.SeriesPosition.Value, lookup)} is:"
                 : $"More than one book is listed as book {FormatPositionOrLast(parsed.SeriesPosition.Value, lookup)} of {lookup.SeriesName}:");
@@ -337,6 +350,124 @@ public sealed class ConversationService(
 
         lines.Append("\nReply with a number to pick one, or “request 1 audiobook”.");
         return new TurnPlan(new ConversationReply(ConversationReplyKind.Choices, lines.ToString(), shown, [], ["1", "cancel"]), next, null);
+    }
+
+    /// <summary>
+    /// The series lookup found no series of that name. A bare title that only looks like a series question ("The First Book of
+    /// Samuel") is searched as typed. A real question ("What is the 3rd Murderbot book?") is not, because the whole sentence is a
+    /// poor search: the series name, or the named book, is searched instead and the reply says the order could not be confirmed.
+    /// </summary>
+    private async Task<TurnPlan> SeriesNotFoundPlanAsync(ParsedConversationMessage parsed, ConversationState state, CancellationToken cancellationToken)
+    {
+        if (parsed is { Action: ConversationActions.Next, SeriesAfterTitle: { } focused })
+        {
+            return Keep(ConversationReply.Of(ConversationReplyKind.Text,
+                $"I couldn't tell what comes after “{focused}”: the catalog doesn't show me this series' order. " +
+                "It may be the latest, or a newer book may not be listed."), state);
+        }
+
+        if (parsed.SeriesAfterTitle is { Length: > 0 } after)
+        {
+            return await SearchPlanAsync(
+                after, after, parsed.Formats, requestIntent: false, state, cancellationToken,
+                lead: $"I couldn't work out what comes after “{after}” because the catalog doesn't show me that series' order. Here's what I found for “{after}”:");
+        }
+
+        var text = parsed.Text ?? string.Empty;
+        if (!ConversationProse.LooksLikeProse(text) || string.IsNullOrWhiteSpace(parsed.SeriesName))
+        {
+            return await SearchPlanAsync(text, text, parsed.Formats, parsed.RequestIntent, state, cancellationToken);
+        }
+
+        var series = parsed.SeriesName;
+        return await SearchPlanAsync(
+            series, series, parsed.Formats, parsed.RequestIntent, state, cancellationToken,
+            lead: $"I couldn't confirm which books are in “{series}” from the catalog, so I can't give their order. Here's what I found for “{series}”:");
+    }
+
+    /// <summary>
+    /// "it", "that one": an action on the single book the conversation is about. The book is the one chosen for a format, or the
+    /// only one offered. When several were offered "it" is ambiguous and the person is asked for a number: nothing is ever guessed.
+    /// </summary>
+    private async Task<TurnPlan> ReferencePlanAsync(ParsedConversationMessage parsed, ConversationState state, CancellationToken cancellationToken)
+    {
+        if (FocusIndex(state) is not { } index)
+        {
+            return Keep(ConversationReply.Of(ConversationReplyKind.NotUnderstood,
+                state.Choices.Count > 1
+                    ? "Which book do you mean? Reply with its number first."
+                    : "Tell me a book to look for first."), state);
+        }
+
+        var choice = state.Choices[index];
+        switch (parsed.Action)
+        {
+            case ConversationActions.Request:
+                return await PickPlanAsync(state, index + 1, parsed.Formats, cancellationToken);
+
+            case ConversationActions.Details:
+                return Keep(await DetailsReplyAsync(state, index + 1, cancellationToken), state);
+
+            case ConversationActions.Availability:
+                var firstAuthor = choice.Authors.Split(',', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries).FirstOrDefault();
+                var query = string.IsNullOrEmpty(firstAuthor) ? choice.Title : $"{choice.Title} {firstAuthor}";
+                return Keep(await LibraryReplyAsync(query, cancellationToken), state);
+
+            default:
+                return await SeriesPlanAsync(
+                    new ParsedConversationMessage(
+                        ConversationCommandKind.Series, Text: choice.Title, SeriesName: string.Empty, SeriesAfterTitle: choice.Title,
+                        Action: ConversationActions.Next),
+                    state, cancellationToken);
+        }
+    }
+
+    private static int? FocusIndex(ConversationState state)
+    {
+        if (state is { Phase: ConversationPhase.ChoosingFormat, SelectedIndex: { } selected } && selected >= 0 && selected < state.Choices.Count)
+        {
+            return selected;
+        }
+
+        return state.Choices.Count == 1 ? 0 : null;
+    }
+
+    private const string UnpublishedNotice = "I can't see books that haven't been published yet";
+
+    /// <summary>
+    /// Unreleased books, release dates and release years are not in the catalog sources chat reads, so chat says so rather than
+    /// returning search hits that look like an answer. A named title is still looked up so the person gets something useful.
+    /// </summary>
+    private async Task<TurnPlan> ReleasePlanAsync(ParsedConversationMessage parsed, ConversationState state, CancellationToken cancellationToken)
+    {
+        if (parsed is { Action: ConversationActions.When, Text: { Length: >= 2 } title })
+        {
+            return await SearchPlanAsync(
+                title, title, null, requestIntent: false, state, cancellationToken,
+                lead: $"I can't confirm release dates, and {UnpublishedNotice}. Here's what the catalog has for “{title}”:");
+        }
+
+        if (parsed is { Action: ConversationActions.Next, SeriesName: { Length: > 0 } series })
+        {
+            var lookup = await tools.FindSeriesBooksAsync(series, SeriesPositionResolver.LastPosition, null, options.MaxChoices, cancellationToken);
+            if (lookup is { Kind: SeriesLookupKind.Found, Books.Count: > 0 })
+            {
+                var top = lookup.Books[0].Position is { } position ? $" #{FormatPosition(position)}" : string.Empty;
+                return Keep(ConversationReply.Of(ConversationReplyKind.Text,
+                    $"{UnpublishedNotice}, so I can't say what's next in {lookup.SeriesName}. " +
+                    $"The highest-numbered book I can find is{top}: {string.Join("; ", lookup.Books.Select(book => book.Title))}. " +
+                    "The catalog may not list every book."), state);
+            }
+
+            return Keep(ConversationReply.Of(ConversationReplyKind.Text,
+                $"{UnpublishedNotice}, so I can't say what's next in “{series}”. Ask for “the latest {series} book” or a title and I'll look it up."), state);
+        }
+
+        return Keep(ConversationReply.Of(ConversationReplyKind.Text,
+            parsed.Action == ConversationActions.Year
+                ? "I can't filter by release year, so I can't answer that. Ask for a title or a series and I'll look it up."
+                : $"{UnpublishedNotice}, and the catalogs I use don't list upcoming releases. " +
+                  "Ask for a title, or “the latest” book of a series, and I'll look it up."), state);
     }
 
     private static string FormatPosition(decimal position) => position.ToString("0.##", System.Globalization.CultureInfo.InvariantCulture);
@@ -432,18 +563,26 @@ public sealed class ConversationService(
 
         switch (interpretation?.Intent)
         {
+            // The model never overrides the fixed rules: a message with a plain book cue is not off topic, and one that does not
+            // mention requests is not a status question, whatever the model says. Both only decide a canned reply, so neither
+            // clears the conversation: the books being discussed stay in focus.
+            case BookIntent.OutOfDomain when ConversationParser.HasBookCue(text):
+            case BookIntent.CheckStatus when !ConversationParser.MentionsRequests(text):
+                if (workflow is not null) await workflow.ObserveAsync(interpretation.UsageRecordId, ModelWorkflowEffect.Abstained, cancellationToken);
+                return null;
+
             case BookIntent.OutOfDomain:
                 if (workflow is not null) await workflow.ObserveAsync(interpretation.UsageRecordId, ModelWorkflowEffect.IntentUsed, cancellationToken);
                 return new TurnPlan(
                     ConversationReply.Of(ConversationReplyKind.OutOfDomain,
                         "I can only help with books: finding them, checking the library, and your book requests. " +
                         "Try “find The Hobbit”, “status”, or “help”."),
-                    ConversationState.Empty(), null);
+                    state, null);
 
             case BookIntent.CheckStatus:
                 var status = await StatusReplyAsync(cancellationToken);
                 if (workflow is not null) await workflow.ObserveAsync(interpretation.UsageRecordId, ModelWorkflowEffect.IntentUsed, cancellationToken);
-                return new TurnPlan(status, ConversationState.Empty(), null);
+                return new TurnPlan(status, state, null);
 
             case BookIntent.FindBook when interpretation.Title is { } title:
                 var reworded = interpretation.Author is { } author ? $"{title} {author}" : title;

@@ -210,7 +210,8 @@ public sealed class ConversationLatencyTests
         };
 
         await harness.SayAsync("help");
-        await harness.SayAsync("that sad book about a lighthouse keeper in australia");
+        // No book cue: the model's off-topic verdict is accepted (CHAT-ANSWER-1 ignores it for messages that mention books).
+        await harness.SayAsync("what is the capital of france and why is it so big");
 
         CollectionAssert.AreEqual(
             new[] { (ConversationSteps.Turn, "Help"), (ConversationSteps.Interpreter, "OutOfDomain"), (ConversationSteps.Turn, "OutOfDomain") },

@@ -18,7 +18,28 @@ public enum ConversationCommandKind
     Isbn,
     Series,
     OutOfDomain,
-    Search
+    Search,
+
+    /// <summary>"it", "that one": an action on the one book the conversation is about. <see cref="ParsedConversationMessage.Action"/> says which.</summary>
+    Reference,
+
+    /// <summary>A question about unreleased books, release dates or release years: things the catalog sources cannot answer.</summary>
+    Release
+}
+
+/// <summary>The <see cref="ParsedConversationMessage.Action"/> values for <see cref="ConversationCommandKind.Reference"/> and <see cref="ConversationCommandKind.Release"/>.</summary>
+public static class ConversationActions
+{
+    public const string Request = "request";
+    public const string Availability = "availability";
+    public const string Details = "details";
+
+    /// <summary>For a reference: what follows the book in focus. For a release question: the next release of a series.</summary>
+    public const string Next = "next";
+
+    public const string Upcoming = "upcoming";
+    public const string Year = "year";
+    public const string When = "when";
 }
 
 /// <summary>A parsed message. Only the fields that apply to <see cref="Kind"/> are set.</summary>
@@ -30,7 +51,8 @@ public sealed record ParsedConversationMessage(
     bool RequestIntent = false,
     string? SeriesName = null,
     decimal? SeriesPosition = null,
-    string? SeriesAfterTitle = null);
+    string? SeriesAfterTitle = null,
+    string? Action = null);
 
 /// <summary>
 /// Rule-based reading of a message, with no model involved. Everything here is a fixed grammar: commands, numbered picks,
@@ -92,6 +114,11 @@ public static partial class ConversationParser
             return new(ConversationCommandKind.Request, Number: requestNumber, Formats: formats, RequestIntent: true);
         }
 
+        if (ReadReference(bare) is { } reference)
+        {
+            return reference;
+        }
+
         if (ExtractIsbn(message) is { } isbn)
         {
             return new(ConversationCommandKind.Isbn, Text: isbn);
@@ -100,6 +127,11 @@ public static partial class ConversationParser
         if (InjectionPattern().IsMatch(lower))
         {
             return new(ConversationCommandKind.OutOfDomain);
+        }
+
+        if (ReadRelease(message.TrimEnd('?', '!', '.', ' ')) is { } release)
+        {
+            return release;
         }
 
         if (LibraryPattern().Match(message) is { Success: true } library && library.Groups["q"].Value.Trim() is { Length: >= 2 } libraryQuery)
@@ -126,6 +158,71 @@ public static partial class ConversationParser
 
         return new(ConversationCommandKind.Search, Text: searchText, Formats: searchFormats, RequestIntent: requestIntent);
     }
+
+    /// <summary>
+    /// "request it", "is it available as an audiobook", "what comes out next": an action on the book the conversation is about.
+    /// Which book that is, or whether there is one, is decided later from the conversation state; this only reads the wording.
+    /// </summary>
+    private static ParsedConversationMessage? ReadReference(string bare)
+    {
+        if (RequestItPattern().Match(bare) is { Success: true } requestIt)
+        {
+            return new(ConversationCommandKind.Reference, Action: ConversationActions.Request, Formats: FormatOf(requestIt), RequestIntent: true);
+        }
+
+        if (AvailabilityPattern().Match(bare) is { Success: true } availability)
+        {
+            return new(ConversationCommandKind.Reference, Action: ConversationActions.Availability, Formats: FormatOf(availability));
+        }
+
+        if (AvailabilityFormatPattern().Match(bare) is { Success: true } availabilityFormat)
+        {
+            return new(ConversationCommandKind.Reference, Action: ConversationActions.Availability, Formats: FormatOf(availabilityFormat));
+        }
+
+        if (DetailsItPattern().IsMatch(bare))
+        {
+            return new(ConversationCommandKind.Reference, Action: ConversationActions.Details);
+        }
+
+        return NextPattern().IsMatch(bare) ? new(ConversationCommandKind.Reference, Action: ConversationActions.Next) : null;
+    }
+
+    private static IReadOnlyList<RequestMediaType>? FormatOf(Match match) =>
+        match.Groups["fmt"].Success ? ParseFormats(match.Groups["fmt"].Value) : null;
+
+    /// <summary>
+    /// Questions the catalog sources cannot answer: books not yet published, release dates, and filtering by release year. They are
+    /// recognized so chat can say so, instead of returning a list of unrelated search hits. Short messages are left alone because
+    /// a title can be any ordinary words ("Coming Soon").
+    /// </summary>
+    private static ParsedConversationMessage? ReadRelease(string plain)
+    {
+        var words = plain.Split(' ', StringSplitOptions.RemoveEmptyEntries).Length;
+
+        if (WhenPattern().Match(plain) is { Success: true } asked && asked.Groups["q"].Value.Trim() is { Length: >= 2 } subject)
+        {
+            return new(ConversationCommandKind.Release, Text: subject.Trim('"', '“', '”'), Action: ConversationActions.When);
+        }
+
+        if (words >= 3 && NextReleasePattern().Match(plain) is { Success: true } next && !AfterPattern().IsMatch(plain))
+        {
+            return new(ConversationCommandKind.Release, SeriesName: next.Groups["s"].Value.Trim(), Action: ConversationActions.Next);
+        }
+
+        if (words >= 4 && ReleaseYearPattern().IsMatch(plain))
+        {
+            return new(ConversationCommandKind.Release, Action: ConversationActions.Year);
+        }
+
+        return words >= 3 && UpcomingPattern().IsMatch(plain) ? new(ConversationCommandKind.Release, Action: ConversationActions.Upcoming) : null;
+    }
+
+    /// <summary>True when the message has a plain book cue ("novel", "series", "author", "by"): it is not off topic.</summary>
+    public static bool HasBookCue(string? text) => !string.IsNullOrWhiteSpace(text) && BookCuePattern().IsMatch(text.ToLowerInvariant());
+
+    /// <summary>True when the message is about the sender's own requests ("status", "arrived", "my audiobook").</summary>
+    public static bool MentionsRequests(string? text) => !string.IsNullOrWhiteSpace(text) && RequestWordPattern().IsMatch(text.ToLowerInvariant());
 
     /// <summary>Collapses whitespace and strips control characters so later patterns see plain text.</summary>
     public static string Normalize(string? text)
@@ -289,4 +386,41 @@ public static partial class ConversationParser
 
     [GeneratedRegex(@"\b(?:today|tonight|tomorrow|yesterday|right now|this (?:week|weekend)|next (?:week|month))\b")]
     private static partial Regex TimeWordPattern();
+
+    private const string Pronoun = @"(?:it|that one|this one|that book|this book|that|this)";
+
+    private const string OptionalFormat = @"(?:\s+(?:as\s+|in\s+)?(?:an?\s+)?(?<fmt>ebook|e-book|epub|audiobook|audio book|audio|both))?";
+
+    [GeneratedRegex(@"^(?:please\s+)?(?:(?:(?:can|could|may|would|will)\s+(?:i|you|we)\s+(?:please\s+)?)?(?:request|get|add|order)\s+(?:me\s+)?|i(?:'d| would)?\s+(?:like|want)\s+(?:to\s+(?:request|get)\s+)?)" + Pronoun + OptionalFormat + "$")]
+    private static partial Regex RequestItPattern();
+
+    [GeneratedRegex(@"^(?:(?:is|are)\s+" + Pronoun + @"\s+(?:available|in\s+(?:the\s+|our\s+)?(?:library|collection)|on\s+the\s+shelf)|(?:do|did)\s+(?:we|i)\s+(?:already\s+)?(?:have|own)\s+" + Pronoun + ")" + OptionalFormat + "$")]
+    private static partial Regex AvailabilityPattern();
+
+    [GeneratedRegex(@"^(?:is|are)\s+" + Pronoun + @"\s+(?:available\s+)?(?:as\s+|in\s+)?(?:an?\s+)?(?<fmt>ebook|e-book|epub|audiobook|audio book|audio)$")]
+    private static partial Regex AvailabilityFormatPattern();
+
+    [GeneratedRegex(@"^(?:(?:tell me (?:more )?about|more (?:about|on)|details?(?: on| about)?|info(?:rmation)?(?: on| about)?)\s+" + Pronoun + @"|what(?:'s| is)\s+(?:it|that|this)\s+about)$")]
+    private static partial Regex DetailsItPattern();
+
+    [GeneratedRegex(@"^(?:and\s+)?(?:(?:what|which)(?:'s| is)?\s+(?:book\s+)?(?:comes?\s+)?(?:out\s+)?(?:next|after\s+(?:it|that|this))|(?:what(?:'s| is)\s+)?(?:the\s+)?next(?:\s+(?:one|book|novel))?)$")]
+    private static partial Regex NextPattern();
+
+    [GeneratedRegex(@"^(?:when|what\s+(?:day|date))\s+(?:is|does|will|was|did)\s+(?<q>.+?)\s+(?:(?:coming|come)\s+out|(?:going\s+to\s+)?(?:be\s+)?(?:released|published)|out|due|release)$", RegexOptions.IgnoreCase)]
+    private static partial Regex WhenPattern();
+
+    [GeneratedRegex(@"^(?:what(?:'s| is)\s+)?(?:the\s+)?next\s+(?<s>.+?)\s+(?:book|novel)$", RegexOptions.IgnoreCase)]
+    private static partial Regex NextReleasePattern();
+
+    [GeneratedRegex(@"\bafter\b", RegexOptions.IgnoreCase)]
+    private static partial Regex AfterPattern();
+
+    [GeneratedRegex(@"\b(?:released|published|out|coming out|written|printed)\s+(?:after|before|since|in|during|between|from)\s+(?:the\s+year\s+)?(?:1[5-9]|20)\d\d\b", RegexOptions.IgnoreCase)]
+    private static partial Regex ReleaseYearPattern();
+
+    [GeneratedRegex(@"\b(?:upcoming|forthcoming|unreleased|not yet (?:released|published|out)|yet to be (?:released|published)|coming soon|new releases?|pre-?orders?)\b", RegexOptions.IgnoreCase)]
+    private static partial Regex UpcomingPattern();
+
+    [GeneratedRegex(@"\b(?:requests?|requested|status|progress|orders?|ordered|downloads?|downloaded|ready|arriv\w*|waiting|pending|approv\w*|my (?:books?|audiobooks?|ebooks?))\b")]
+    private static partial Regex RequestWordPattern();
 }

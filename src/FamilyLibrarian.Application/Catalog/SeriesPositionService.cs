@@ -38,7 +38,7 @@ public sealed record SeriesLookupResult(
 /// the catalog: the series providers report on their search results, and series recorded for works the household has already
 /// resolved. Pure logic, so ambiguity handling is fully testable; nothing here invents a position.
 /// </summary>
-public static class SeriesPositionResolver
+public static partial class SeriesPositionResolver
 {
     private static readonly HashSet<string> NoiseWords = ["the", "a", "an", "series", "saga", "books", "book", "novels"];
 
@@ -210,9 +210,14 @@ public static class SeriesPositionResolver
             return [];
         }
 
-        return CatalogText.NormalizeForMatch(name).Split(' ', StringSplitOptions.RemoveEmptyEntries)
+        // A bracketed suffix labels an ordering of the same series ("The Expanse (Chronological)"), not a different series.
+        var withoutBrackets = Brackets().Replace(name, " ");
+        return CatalogText.NormalizeForMatch(withoutBrackets).Split(' ', StringSplitOptions.RemoveEmptyEntries)
             .Where(token => !NoiseWords.Contains(token)).ToHashSet(StringComparer.Ordinal);
     }
+
+    [System.Text.RegularExpressions.GeneratedRegex(@"\([^)]*\)")]
+    private static partial System.Text.RegularExpressions.Regex Brackets();
 }
 
 /// <summary>Gathers series facts from provider search results and from the series the household's catalog already records.</summary>

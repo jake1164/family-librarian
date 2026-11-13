@@ -77,7 +77,8 @@ public static partial class SeriesParser
 
     private static bool Accept(string name, decimal? foundPosition, out string seriesName, out decimal? position)
     {
-        seriesName = name.Trim().Trim('"', '“', '”').Trim();
+        // "the latest original Harry Potter novel": "original" describes the books, it is not part of the series name.
+        seriesName = QualifierPattern().Replace(name.Trim().Trim('"', '“', '”').Trim(), string.Empty).Trim();
         position = foundPosition;
         return CatalogSearchLimits.IsValidQueryText(seriesName) && seriesName.Length <= 80;
     }
@@ -108,8 +109,11 @@ public static partial class SeriesParser
     [GeneratedRegex(@"^(?:what(?:'s| is) )?(?:the )?(?<pos>" + Ordinals + @"|\d{1,2}(?:st|nd|rd|th)|last|latest|newest)\s+(?<s>.+?)\s+(?:book|novel|volume|installment|instalment|entry)$", RegexOptions.IgnoreCase)]
     private static partial Regex OrdinalBookPattern();
 
-    [GeneratedRegex(@"^(?:book|volume|vol\.?|number|no\.?|#)\s*(?<n>\d{1,2}(?:\.\d{1,2})?)\s+(?:of|in|from)\s+(?:the\s+)?(?<s>.+?)(?:\s+series)?$", RegexOptions.IgnoreCase)]
+    [GeneratedRegex(@"^(?:(?:what(?:'s| is)|which is)\s+)?(?:the\s+)?(?:book|volume|vol\.?|number|no\.?|#)\s*(?<n>\d{1,2}(?:\.\d{1,2})?)\s+(?:of|in|from)\s+(?:the\s+)?(?<s>.+?)(?:\s+series)?$", RegexOptions.IgnoreCase)]
     private static partial Regex NumberedOfPattern();
+
+    [GeneratedRegex(@"^(?:the\s+)?(?:original|main|core)\s+(?=\S)", RegexOptions.IgnoreCase)]
+    private static partial Regex QualifierPattern();
 
     [GeneratedRegex(@"^(?:the\s+)?(?<s>.+?)(?:\s+series)?[,:]?\s+(?:book|volume|vol\.?|part|#)\s*(?<n>\d{1,2}(?:\.\d{1,2})?)$", RegexOptions.IgnoreCase)]
     private static partial Regex SeriesNumberedPattern();
