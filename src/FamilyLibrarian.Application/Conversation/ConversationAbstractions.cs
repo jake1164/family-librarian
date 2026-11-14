@@ -16,8 +16,8 @@ public sealed class ConversationOptions
 
     public bool WebEnabled { get; set; }
 
-    /// <summary>Turns in one session before the context is cleared (D-4: 12).</summary>
-    public int MaxTurnsPerSession { get; set; } = 12;
+    /// <summary>Turns in one session before the context is cleared (D-4 was 12; raised to 24 in CHAT-ANSWER-1 at the owner's request).</summary>
+    public int MaxTurnsPerSession { get; set; } = 24;
 
     /// <summary>Minutes of silence after which the session context is cleared (D-4: 20).</summary>
     public int IdleExpiryMinutes { get; set; } = 20;
@@ -25,11 +25,22 @@ public sealed class ConversationOptions
     /// <summary>Longest accepted message (D-4: 2,000).</summary>
     public int MaxInputCharacters { get; set; } = 2_000;
 
-    /// <summary>Rolling per-user ceiling on messages, so deterministic commands are capped only by a rate limit.</summary>
-    public int MaxMessagesPerMinute { get; set; } = 20;
+    /// <summary>
+    /// Rolling per-user ceiling on messages, so deterministic commands are capped only by a rate limit. Cancel, help, status and
+    /// empty messages do not count. Set with <c>Conversation__MaxMessagesPerMinute</c>. Raised from 20 to 120 (CHAT-ANSWER-1) because
+    /// 20 was reachable by one person testing; the outbound catalog lookups have their own rate limiting.
+    /// </summary>
+    public int MaxMessagesPerMinute { get; set; } = 120;
 
     /// <summary>Numbered results offered per search.</summary>
     public int MaxChoices { get; set; } = 5;
+
+    /// <summary>
+    /// How many numbered books of a series the catalog must show before chat will say which one is the latest. Fewer than this is
+    /// too little to name a "highest" without misleading: a single sampled companion or an early book would be offered as the
+    /// newest. Below it, chat says how little it can see and searches the series name instead.
+    /// </summary>
+    public int MinKnownPositionsForLatest { get; set; } = 3;
 
     public bool IsEnabledFor(string transport) => Enabled && transport switch
     {
@@ -50,8 +61,12 @@ public enum ConversationPhase
     ChoosingFormat = 2
 }
 
-/// <summary>Server-side reference behind one numbered choice. The user only ever sees its number.</summary>
-public sealed record ConversationChoiceRef(string ProviderId, string ExternalId, string Title, string Authors, string? Detail);
+/// <summary>
+/// Server-side reference behind one numbered choice. The user only ever sees its number.
+/// <paramref name="SeriesName"/> is the series the catalog attached to this book, if any, so a follow-up such as "what comes next"
+/// can ask about that series instead of guessing it from the title. Optional, so state saved before it existed still loads.
+/// </summary>
+public sealed record ConversationChoiceRef(string ProviderId, string ExternalId, string Title, string Authors, string? Detail, string? SeriesName = null);
 
 /// <summary>
 /// The minimal structured context of a conversation: what was last offered and what is pending. Deliberately not a
@@ -170,5 +185,9 @@ public interface IConversationTransaction
 public interface IConversationLimiter
 {
     /// <summary>Returns a lease to dispose when the turn ends, or null when the user is over the limit or already mid-turn.</summary>
-    Task<IDisposable?> TryEnterAsync(Guid userId, CancellationToken cancellationToken);
+    /// <param name="countsTowardLimit">
+    /// False for control messages (cancel, help, status, empty) that do no catalog or model work: they neither use up nor are blocked
+    /// by the rolling allowance, so a user over the limit can still cancel. They still take their turn, one at a time per user.
+    /// </param>
+    Task<IDisposable?> TryEnterAsync(Guid userId, CancellationToken cancellationToken, bool countsTowardLimit = true);
 }

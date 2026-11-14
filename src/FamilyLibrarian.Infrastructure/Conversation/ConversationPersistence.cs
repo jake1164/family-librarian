@@ -144,10 +144,10 @@ public sealed class ConversationLimiter(ConversationOptions options, TimeProvide
 
     private readonly ConcurrentDictionary<Guid, UserSlot> slots = new();
 
-    public async Task<IDisposable?> TryEnterAsync(Guid userId, CancellationToken cancellationToken)
+    public async Task<IDisposable?> TryEnterAsync(Guid userId, CancellationToken cancellationToken, bool countsTowardLimit = true)
     {
         var slot = slots.GetOrAdd(userId, _ => new UserSlot());
-        if (!slot.TryCount(time.GetUtcNow(), Window, options.MaxMessagesPerMinute))
+        if (countsTowardLimit && !slot.TryCount(time.GetUtcNow(), Window, options.MaxMessagesPerMinute))
         {
             return null;
         }

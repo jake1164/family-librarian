@@ -30,10 +30,12 @@ public sealed class ConversationEndpointTests
         if (fixture is not null) await fixture.DisposeAsync();
     }
 
-    private static FamilyLibrarianAppFactory Factory(bool enabled = true) => new(WebTestFixture.Require(fixture).ConnectionString, services =>
+    private static FamilyLibrarianAppFactory Factory(bool enabled = true, int? messagesPerMinute = null) => new(WebTestFixture.Require(fixture).ConnectionString, services =>
     {
         services.RemoveAll<ConversationOptions>();
-        services.AddSingleton(new ConversationOptions { Enabled = enabled, MatrixEnabled = enabled, WebEnabled = enabled });
+        var options = new ConversationOptions { Enabled = enabled, MatrixEnabled = enabled, WebEnabled = enabled };
+        if (messagesPerMinute is { } limit) options.MaxMessagesPerMinute = limit;
+        services.AddSingleton(options);
     });
 
     private static async Task<HttpClient> SignedInAsync(FamilyLibrarianAppFactory factory, string email, string password, bool withToken = true)
@@ -189,14 +191,15 @@ public sealed class ConversationEndpointTests
     [TestMethod]
     public async Task FloodingTheChatIsAnsweredWith429AndOtherMembersAreUnaffected()
     {
-        await using var factory = Factory();
+        await using var factory = Factory(messagesPerMinute: 20);
         using var flooder = await SignedInAsync(factory, FamilyLibrarianAppFactory.AdminEmail, FamilyLibrarianAppFactory.AdminPassword);
         using var bystander = await ReaderAsync(factory);
 
+        // "details 1" is a counted message that touches no catalog; help, cancel and status are control messages and are not counted.
         HttpStatusCode? limited = null;
         for (var index = 0; index < 40 && limited is null; index++)
         {
-            using var response = await flooder.PostAsJsonAsync("/api/v1/conversation/messages", new ConversationMessageRequest("help", Guid.NewGuid().ToString("N")));
+            using var response = await flooder.PostAsJsonAsync("/api/v1/conversation/messages", new ConversationMessageRequest("details 1", Guid.NewGuid().ToString("N")));
             if (response.StatusCode == HttpStatusCode.TooManyRequests)
             {
                 limited = response.StatusCode;
@@ -207,5 +210,7 @@ public sealed class ConversationEndpointTests
 
         Assert.AreEqual(HttpStatusCode.TooManyRequests, limited);
         Assert.AreEqual("Help", (await SayAsync(bystander, "help")).Kind);
+        Assert.AreEqual("Help", (await SayAsync(flooder, "help")).Kind, "A user over the limit can still ask for help.");
+        Assert.AreEqual("Cancelled", (await SayAsync(flooder, "cancel")).Kind, "...and cancel, so New conversation always works.");
     }
 }

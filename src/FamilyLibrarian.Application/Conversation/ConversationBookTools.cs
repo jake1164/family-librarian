@@ -30,6 +30,12 @@ public interface IConversationTools
 
     Task<ConversationLibraryResult?> CheckLibraryAsync(string text, CancellationToken cancellationToken);
 
+    /// <summary>
+    /// The same read-only library check for one already-offered catalog record, found by its provider and id instead of by a text
+    /// search, so "is it available" is about that book and not whichever record a search ranks first. Null when its details cannot be read.
+    /// </summary>
+    Task<ConversationLibraryResult?> CheckLibraryForChoiceAsync(ConversationChoiceRef choice, CancellationToken cancellationToken);
+
     Task<Guid?> ResolveWorkAsync(ConversationChoiceRef choice, CancellationToken cancellationToken);
 
     /// <summary>Which book sits at a position in a series (null lists the series in order), from series facts already in the catalog.</summary>
@@ -93,7 +99,8 @@ public sealed partial class ConversationBookTools(
                 candidate.ExternalId,
                 ConversationState.Clip(candidate.Title),
                 ConversationState.Clip(string.Join(", ", candidate.Authors.Take(3))),
-                ConversationState.Clip(DescribeCandidate(candidate))))
+                ConversationState.Clip(DescribeCandidate(candidate)),
+                PrimarySeriesName(candidate)))
             .ToArray();
         return new ConversationSearchResult(choices, outcome.Providers.Any(provider => !provider.Succeeded), candidates);
     }
@@ -144,7 +151,41 @@ public sealed partial class ConversationBookTools(
             return found.SomeSourcesUnavailable ? new ConversationLibraryResult(text, string.Empty, [], true, Incomplete: true) : null;
         }
 
-        var candidate = found.Candidates[0];
+        return await CheckCandidateAsync(found.Candidates[0], found.SomeSourcesUnavailable, cancellationToken);
+    }
+
+    /// <summary>Checks the library for the catalog record behind an offered choice, read by its provider and id (see the interface).</summary>
+    public async Task<ConversationLibraryResult?> CheckLibraryForChoiceAsync(ConversationChoiceRef choice, CancellationToken cancellationToken)
+    {
+        RequireUser();
+        var provider = await providers.FindActiveProviderAsync(choice.ProviderId, cancellationToken);
+        if (provider is null)
+        {
+            return null;
+        }
+
+        BookCandidate? candidate;
+        try
+        {
+            candidate = await WithinBudgetAsync(
+                async token => new Found<BookCandidate>(await provider.GetDetailsAsync(choice.ExternalId, token)), timeBudgets.Details, cancellationToken) is { } found
+                ? found.Value
+                : null;
+        }
+        catch (Exception exception) when (exception is HttpRequestException or System.Text.Json.JsonException
+            || (exception is OperationCanceledException && !cancellationToken.IsCancellationRequested))
+        {
+            candidate = null;
+        }
+
+        // Details that cannot be read are "unknown", never "not in the library": say the check could not finish.
+        return candidate is null
+            ? new ConversationLibraryResult(choice.Title, choice.Authors, [], true, Incomplete: true)
+            : await CheckCandidateAsync(candidate, sourcesUnavailable: false, cancellationToken);
+    }
+
+    private async Task<ConversationLibraryResult> CheckCandidateAsync(BookCandidate candidate, bool sourcesUnavailable, CancellationToken cancellationToken)
+    {
         var identity = new BookIdentity(
             candidate.Title,
             candidate.Authors.Count > 0 ? candidate.Authors[0] : null,
@@ -160,7 +201,14 @@ public sealed partial class ConversationBookTools(
         var owned = new List<string>();
         if (result.Ebook.Any(option => option.OptionKind == OptionKind.Owned)) owned.Add("ebook");
         if (result.Audiobook.Any(option => option.OptionKind == OptionKind.Owned)) owned.Add("audiobook");
-        return new ConversationLibraryResult(candidate.Title, string.Join(", ", candidate.Authors.Take(3)), owned, found.SomeSourcesUnavailable);
+        return new ConversationLibraryResult(candidate.Title, string.Join(", ", candidate.Authors.Take(3)), owned, sourcesUnavailable);
+    }
+
+    /// <summary>The series the catalog marks primary for this book, else its first, so a follow-up can ask about that series.</summary>
+    private static string? PrimarySeriesName(BookCandidate candidate)
+    {
+        var series = candidate.Series.FirstOrDefault(entry => entry.IsPrimary) ?? (candidate.Series.Count > 0 ? candidate.Series[0] : null);
+        return string.IsNullOrWhiteSpace(series?.Name) ? null : ConversationState.Clip(series.Name.Trim());
     }
 
     public async Task<SeriesLookupResult> FindSeriesBooksAsync(

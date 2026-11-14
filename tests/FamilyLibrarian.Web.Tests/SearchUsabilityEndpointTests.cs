@@ -61,9 +61,11 @@ public sealed class SearchUsabilityEndpointTests
             var runId = await StartAsync(client, new(text, page, null));
             var run = await WaitAsync(client, runId);
 
+            // Navigation carries a per-request context id (and expiry), so it legitimately differs between the two entry
+            // points; everything else must still be identical.
             Assert.AreEqual(
-                System.Text.Json.JsonSerializer.Serialize(direct),
-                System.Text.Json.JsonSerializer.Serialize(run.Search),
+                System.Text.Json.JsonSerializer.Serialize(WithoutNavigation(direct!)),
+                System.Text.Json.JsonSerializer.Serialize(WithoutNavigation(run.Search)),
                 $"'{text}' page {page}: both entry points share one orchestration.");
         }
     }
@@ -87,6 +89,11 @@ public sealed class SearchUsabilityEndpointTests
         Assert.AreEqual(HttpStatusCode.BadRequest,
             (await client.PostAsJsonAsync("/api/v1/catalog/search/runs", new CatalogSearchRequest("a"))).StatusCode);
     }
+
+    private static CatalogSearchResponse WithoutNavigation(CatalogSearchResponse response) => response with
+    {
+        Results = response.Results.Select(result => result with { Navigation = null }).ToArray()
+    };
 
     private static async Task<Guid> StartAsync(HttpClient client, CatalogSearchRequest request)
     {

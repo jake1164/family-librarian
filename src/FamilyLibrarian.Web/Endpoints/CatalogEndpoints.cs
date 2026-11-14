@@ -44,6 +44,8 @@ internal static class CatalogEndpoints
         string? q,
         int? page,
         ICatalogSearchService search,
+        ICurrentUser currentUser,
+        CatalogBrowseNavigation navigation,
         ILoggerFactory loggerFactory,
         CancellationToken cancellationToken)
     {
@@ -70,13 +72,18 @@ internal static class CatalogEndpoints
         var outcome = await search.SearchAsync(query, cancellationToken);
         LogProviderFailures(logger, outcome.ProviderResults);
 
-        return Results.Ok(ToResponse(outcome, searchText!));
+        var response = ToResponse(outcome, searchText!);
+        return Results.Ok(currentUser.UserId is { } userId
+            ? navigation.Attach(userId, CatalogBrowseNavigation.LegacySearchScope(searchText!, searchPage), outcome, response)
+            : response);
     }
 
     private static async Task<IResult> GetCatalogCandidateAsync(
         string providerId,
         string externalId,
         IActiveMetadataProviderResolver providerResolver,
+        ICurrentUser currentUser,
+        CatalogBrowseNavigation navigation,
         ILoggerFactory loggerFactory,
         CancellationToken cancellationToken)
     {
@@ -91,7 +98,12 @@ internal static class CatalogEndpoints
         try
         {
             var candidate = await provider.GetDetailsAsync(externalId, cancellationToken);
-            return candidate is null ? Results.NotFound() : Results.Ok(ToResponse(candidate));
+            if (candidate is null) return Results.NotFound();
+            // Navigation comes from this one already-fetched record; it never triggers another provider call.
+            var response = ToResponse(candidate);
+            return Results.Ok(currentUser.UserId is { } userId
+                ? response with { Navigation = navigation.ForDetail(userId, candidate) }
+                : response);
         }
         catch (HttpRequestException exception)
         {
@@ -272,14 +284,17 @@ internal static class CatalogEndpoints
         string? q,
         ICurrentUser currentUser,
         CatalogSearchRunCoordinator coordinator,
-        ICatalogSearchService search)
+        ICatalogSearchService search,
+        CatalogBrowseNavigation navigation)
     {
         if (currentUser.UserId is not { } userId || !coordinator.TryGet(userId, runId, out var run) || run is null)
             return Results.NotFound();
         var snapshot = run.Snapshot()
             .Select(result => new ProviderSearchResult(result.ProviderId, result.ProviderName, result.Succeeded, result.Candidates, result.HasMore))
             .ToArray();
-        var response = ToResponse(search.Compose(snapshot, run.Query), run.Query.Text);
+        var outcome = search.Compose(snapshot, run.Query);
+        // The context is keyed by (owner, run) so polling reuses one; it holds copies, so it outlives the run.
+        var response = navigation.Attach(userId, CatalogBrowseNavigation.RunScope(run.Id), outcome, ToResponse(outcome, run.Query.Text));
         return Results.Ok(new CatalogSearchRunResponse(response, run.IsComplete));
     }
 

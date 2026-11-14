@@ -1,0 +1,193 @@
+@using System.Globalization
+
+@* One known book per row, shared by the author and series browse pages. Everything shown is a fact the host already
+   returned; an unknown stays unknown, and no navigation here follows, requests, resolves or imports anything. *@
+@if (Entries.Count > 0)
+{
+    var tied = TiedPositions;
+    <ul class="browse-book-list" aria-label="@AriaLabel" style="list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px;">
+        @foreach (var (entry, index) in Entries.Select((entry, index) => (entry, index)))
+        {
+            var book = entry.Book;
+            var href = BookHref(book);
+            <li @key="RowKey(entry, index)" class="browse-book-row">
+                <MudPaper Outlined="true" Class="pa-3">
+                    <MudStack Spacing="1" Style="min-width: 0;">
+                        <MudStack Row="true" Spacing="2" AlignItems="AlignItems.Baseline" Wrap="Wrap.Wrap">
+                            @if (ShowPosition)
+                            {
+                                <MudText Typo="Typo.overline" Class="browse-position">@PositionText(entry)</MudText>
+                            }
+                            @if (href is not null)
+                            {
+                                <MudLink Typo="Typo.subtitle1" Href="@href" Class="browse-book-title" Style="overflow-wrap: anywhere;">@book.Title</MudLink>
+                            }
+                            else
+                            {
+                                <MudText Typo="Typo.subtitle1" Class="browse-book-title" Style="overflow-wrap: anywhere;">@book.Title</MudText>
+                            }
+                        </MudStack>
+
+                        @if (href is null)
+                        {
+                            <MudText Typo="Typo.caption" Color="Color.Warning">
+                                This record cannot be opened from here. Search for it to open its details.
+                            </MudText>
+                        }
+
+                        @if (ShowPosition && entry.Position is { } tiedPosition && tied.Contains(tiedPosition))
+                        {
+                            <MudText Typo="Typo.caption" Class="browse-tie">Shares this position with another book on this page.</MudText>
+                        }
+
+                        <MudText Typo="Typo.body2" Color="Color.Secondary" Class="browse-credits">
+                            @if (book.Credits.Count == 0)
+                            {
+                                <text>Author not reported</text>
+                            }
+                            else
+                            {
+                                @(book.Credits.Count > 1 ? "Contributors: " : "By ")
+                                @for (var i = 0; i < book.Credits.Count; i++)
+                                {
+                                    var credit = book.Credits[i];
+                                    var creditHref = CreditHref(credit);
+                                    @if (i > 0)
+                                    {
+                                        <text>, </text>
+                                    }
+                                    @if (creditHref is not null)
+                                    {
+                                        <MudLink Href="@creditHref">@credit.Name</MudLink>
+                                    }
+                                    else
+                                    {
+                                        <text>@credit.Name</text>
+                                    }
+                                    @if (!string.IsNullOrWhiteSpace(credit.Role))
+                                    {
+                                        <text> (@credit.Role)</text>
+                                    }
+                                }
+                            }
+                        </MudText>
+
+                        @if (book.Memberships.Count > 0)
+                        {
+                            <MudText Typo="Typo.body2" Class="browse-memberships">
+                                Series:
+                                @for (var i = 0; i < book.Memberships.Count; i++)
+                                {
+                                    var membership = book.Memberships[i];
+                                    var membershipHref = MembershipHref(membership);
+                                    @if (i > 0)
+                                    {
+                                        <text>; </text>
+                                    }
+                                    @if (membershipHref is not null)
+                                    {
+                                        <MudLink Href="@membershipHref">@membership.Name</MudLink>
+                                    }
+                                    else
+                                    {
+                                        <text>@membership.Name</text>
+                                    }
+                                    @if (!string.IsNullOrWhiteSpace(membership.PositionLabel))
+                                    {
+                                        <text> · position @membership.PositionLabel</text>
+                                    }
+                                }
+                            </MudText>
+                        }
+
+                        <MudStack Row="true" Spacing="1" AlignItems="AlignItems.Center" Wrap="Wrap.Wrap">
+                            @foreach (var format in book.Formats)
+                            {
+                                <MediaTypeChip MediaType="@format" />
+                            }
+                            @if (book.Formats.Count == 0)
+                            {
+                                <MudText Typo="Typo.caption" Color="Color.Secondary">Format not reported</MudText>
+                            }
+                            @if (HasKnownVersion(book))
+                            {
+                                <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined">@book.VersionLabel</MudChip>
+                            }
+                            else
+                            {
+                                <MudText Typo="Typo.caption" Color="Color.Secondary">Version unknown</MudText>
+                            }
+                            <MudText Typo="Typo.caption" Color="Color.Secondary">
+                                @(book.PublicationDate is { } date ? $"Published {date.Year.ToString(CultureInfo.InvariantCulture)}" : "Date unknown")
+                            </MudText>
+                        </MudStack>
+
+                        <MudText Typo="Typo.caption" Color="Color.Secondary" Class="browse-sources">
+                            @SourceText(book)
+                        </MudText>
+
+                        @if (book.AssociationsTruncated)
+                        {
+                            <MudText Typo="Typo.caption" Color="Color.Warning" Class="browse-row-truncated">
+                                Some credits, series or sources for this book are not shown, so what is listed may be incomplete.
+                            </MudText>
+                        }
+                    </MudStack>
+                </MudPaper>
+            </li>
+        }
+    </ul>
+}
+
+@code {
+    [Parameter, EditorRequired] public IReadOnlyList<CatalogBrowseEntryResponse> Entries { get; set; } = [];
+
+    /// <summary>Where the user is, so an opened book can offer a way back. Null opens books without a return link.</summary>
+    [Parameter] public BrowseReturn? Return { get; set; }
+
+    /// <summary>The temporary context of an observed preview; lets credit/series subject references become links.</summary>
+    [Parameter] public Guid? ContextId { get; set; }
+
+    [Parameter] public bool ShowPosition { get; set; } = true;
+    [Parameter] public string AriaLabel { get; set; } = "Known books";
+
+    private HashSet<decimal> TiedPositions => Entries
+        .Where(entry => entry.Position is not null)
+        .GroupBy(entry => entry.Position!.Value)
+        .Where(group => group.Count() > 1)
+        .Select(group => group.Key)
+        .ToHashSet();
+
+    private string? BookHref(CatalogBrowseBookResponse book) => book.WorkId is { } workId
+        ? CatalogBrowseLinks.WorkHref(workId, Return)
+        : CatalogBrowseLinks.TryBookHref(book.ProviderId, book.ExternalId, Return);
+
+    private string? CreditHref(CatalogBrowseCreditResponse credit) =>
+        credit.AuthorId is { } authorId ? CatalogBrowseLinks.AuthorHref(authorId)
+        : credit.SubjectId is { } subject && ContextId is { } context ? CatalogBrowseLinks.ObservedAuthorHref(context, subject)
+        : null;
+
+    private string? MembershipHref(CatalogBrowseMembershipResponse membership) =>
+        membership.SeriesId is { } seriesId ? CatalogBrowseLinks.SeriesHref(seriesId)
+        : membership.SubjectId is { } subject && ContextId is { } context ? CatalogBrowseLinks.ObservedSeriesHref(context, subject)
+        : null;
+
+    private static string RowKey(CatalogBrowseEntryResponse entry, int index) =>
+        $"{entry.Book.WorkId}|{entry.Book.ProviderId}|{entry.Book.ExternalId}|{entry.PositionLabel}|{index}";
+
+    private static string PositionText(CatalogBrowseEntryResponse entry) =>
+        !string.IsNullOrWhiteSpace(entry.PositionLabel) ? $"Position {entry.PositionLabel}"
+        : entry.Position is { } number ? $"Position {number.ToString("0.##", CultureInfo.InvariantCulture)}"
+        : "Position unknown";
+
+    // A saved Work's version fields may be null and a source may say "Unspecified"; neither means a normal novel.
+    private static bool HasKnownVersion(CatalogBrowseBookResponse book) =>
+        !string.IsNullOrWhiteSpace(book.VersionKind) && book.VersionKind != "Unspecified" &&
+        !string.IsNullOrWhiteSpace(book.VersionLabel);
+
+    private static string SourceText(CatalogBrowseBookResponse book) =>
+        book.Sources.Count == 0
+            ? "Source not recorded"
+            : "Source: " + string.Join("; ", book.Sources.Select(source =>
+                $"{source.ProviderName ?? source.ProviderId} (seen {source.ObservedAtUtc.ToLocalTime().ToString("d MMM yyyy", CultureInfo.InvariantCulture)})"));
+}

@@ -1,0 +1,173 @@
+@page "/authors/{AuthorId:guid}"
+@page "/browse/authors/{ContextId:guid}/{SubjectId:guid}"
+@attribute [Authorize]
+@implements IDisposable
+@using System.Globalization
+@inject CatalogBrowseApiClient Browse
+
+<PageTitle>@(Title) · Family Librarian</PageTitle>
+
+@* Read-only: this page only ever issues GET requests for known data. It never follows, requests, resolves, imports or notifies. *@
+<MudStack Spacing="3">
+    <MudStack Row="true">
+        <MudButton Variant="Variant.Text" Href="search" StartIcon="@Icons.Material.Filled.ArrowBack">Back to search</MudButton>
+    </MudStack>
+
+    @if (isLoading)
+    {
+        <div role="status" aria-live="polite" class="browse-loading">
+            <MudProgressCircular Indeterminate="true" Color="Color.Primary" aria-label="Loading known books" />
+            <MudText Typo="Typo.body2">Loading known books…</MudText>
+        </div>
+    }
+    else if (problem is { } outcome)
+    {
+        <BrowseProblem Outcome="@outcome" Observed="@IsObserved" Noun="author"
+                       FirstPageHref="@FirstPageHref" OnRetry="ReloadAsync" />
+    }
+    else if (saved is not null)
+    {
+        <div>
+            <MudText Typo="Typo.overline">Author in the family catalog</MudText>
+            <MudText Typo="Typo.h4" HtmlTag="h1" Class="browse-heading">@saved.Name</MudText>
+            <MudText Typo="Typo.body2">Known books by this author</MudText>
+        </div>
+
+        <BrowseNotes Limitations="@saved.Limitations" Observed="false" />
+
+        <BrowseGroups Groups="@saved.Groups" NoKnownSeries="@saved.NoKnownSeries" Return="@ReturnHere(saved.Page)"
+                      ContextId="@null" EmptyText="@(saved.Page > 1 ? "There are no more known books after the previous page." : "No books are known for this author yet.")" />
+
+        <BrowsePager Page="@saved.Page" HasMore="@saved.HasMore" HrefFor="@PageHref" />
+    }
+    else if (observed is not null)
+    {
+        <div>
+            <MudText Typo="Typo.overline">Author name from @observed.ProviderName</MudText>
+            <MudText Typo="Typo.h4" HtmlTag="h1" Class="browse-heading">@observed.Label</MudText>
+            <MudText Typo="Typo.body2" Class="browse-source-context">
+                Preview from @observed.ProviderName, seen @observed.ObservedAtUtc.ToLocalTime().ToString("d MMM yyyy h:mm tt", CultureInfo.InvariantCulture).
+                This temporary preview is available until about @observed.ExpiresAtUtc.ToLocalTime().ToString("h:mm tt", CultureInfo.InvariantCulture).
+                Viewing it saves nothing.
+            </MudText>
+        </div>
+
+        <BrowseNotes Limitations="@observed.Limitations" Observed="true" />
+
+        <BrowseGroups Groups="@observed.Groups" NoKnownSeries="@observed.NoKnownSeries" Return="@ReturnHere(observed.Page)"
+                      ContextId="@observed.ContextId"
+                      EmptyText="@(observed.Page > 1 ? "There are no more books in this preview after the previous page." : "This source has not shown any books for this name in your recent search or book view.")" />
+
+        <BrowsePager Page="@observed.Page" HasMore="@observed.HasMore" HrefFor="@PageHref" />
+
+        <BrowseNameChoices Choices="@observed.NameChoices" Label="@observed.Label" IsAuthor="true" />
+    }
+</MudStack>
+
+@code {
+    [Parameter] public Guid AuthorId { get; set; }
+    [Parameter] public Guid ContextId { get; set; }
+    [Parameter] public Guid SubjectId { get; set; }
+
+    // Bound as text on purpose: Blazor throws while converting "abc" or an overflowing number to int?, before this
+    // component could show recovery. CatalogBrowseLinks.TryParsePage owns the rule (missing/empty = page 1).
+    [SupplyParameterFromQuery(Name = "page")] public string? PageText { get; set; }
+
+    private CatalogAuthorBrowseResponse? saved;
+    private CatalogObservedAuthorBrowseResponse? observed;
+    private CatalogBrowseOutcome? problem;
+    private bool isLoading = true;
+    private string? loadedKey;
+    private CancellationTokenSource? loading;
+
+    private int currentPage = 1;
+    private bool pageIsValid = true;
+
+    private bool IsObserved => ContextId != Guid.Empty && SubjectId != Guid.Empty;
+    private string Title => saved?.Name ?? observed?.Label ?? "Author";
+    private string FirstPageHref => IsObserved
+        ? CatalogBrowseLinks.ObservedAuthorHref(ContextId, SubjectId)
+        : CatalogBrowseLinks.AuthorHref(AuthorId);
+
+    // Defensive: one component serves both route forms, so an id the current route does not supply must never be
+    // inherited from the previously rendered route (a browser check found Blazor already resets these on a route change).
+    public override Task SetParametersAsync(ParameterView parameters)
+    {
+        AuthorId = Guid.Empty;
+        ContextId = Guid.Empty;
+        SubjectId = Guid.Empty;
+        return base.SetParametersAsync(parameters);
+    }
+
+    protected override async Task OnParametersSetAsync()
+    {
+        pageIsValid = CatalogBrowseLinks.TryParsePage(PageText, out currentPage);
+        var pageKey = pageIsValid ? currentPage.ToString(CultureInfo.InvariantCulture) : "invalid";
+        var key = IsObserved
+            ? $"observed|{ContextId}|{SubjectId}|{pageKey}"
+            : $"saved|{AuthorId}|{pageKey}";
+        if (key == loadedKey) return;
+        loadedKey = key;
+        await LoadAsync();
+    }
+
+    private Task ReloadAsync() => LoadAsync();
+
+    private async Task LoadAsync()
+    {
+        loading?.Cancel();
+        loading?.Dispose();
+        loading = new CancellationTokenSource();
+        var token = loading.Token;
+
+        saved = null;
+        observed = null;
+        problem = null;
+        isLoading = true;
+
+        if (!pageIsValid)
+        {
+            problem = CatalogBrowseOutcome.InvalidRequest;
+            isLoading = false;
+            return;
+        }
+
+        try
+        {
+            if (IsObserved)
+            {
+                var result = await Browse.GetObservedAuthorAsync(ContextId, SubjectId, currentPage, token);
+                if (token.IsCancellationRequested) return;
+                observed = result.Value;
+                problem = result.IsOk ? null : result.Outcome;
+            }
+            else
+            {
+                var result = await Browse.GetAuthorAsync(AuthorId, currentPage, token);
+                if (token.IsCancellationRequested) return;
+                saved = result.Value;
+                problem = result.IsOk ? null : result.Outcome;
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            return;
+        }
+
+        isLoading = false;
+    }
+
+    private BrowseReturn ReturnHere(int page) => IsObserved
+        ? new BrowseReturn(BrowseReturnKind.ObservedAuthor, ContextId, SubjectId, page)
+        : new BrowseReturn(BrowseReturnKind.Author, AuthorId, null, page);
+
+    private string PageHref(int page) => IsObserved
+        ? CatalogBrowseLinks.ObservedAuthorHref(ContextId, SubjectId, page)
+        : CatalogBrowseLinks.AuthorHref(AuthorId, page);
+
+    public void Dispose()
+    {
+        loading?.Cancel();
+        loading?.Dispose();
+    }
+}
