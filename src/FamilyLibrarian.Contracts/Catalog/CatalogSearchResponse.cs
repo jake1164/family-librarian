@@ -37,7 +37,8 @@ public sealed record CatalogBookCandidateResponse(
     string? Language = null,
     string VersionKind = "Unspecified",
     string VersionLabel = "Version unknown",
-    string VersionDescription = "The source does not clearly identify the version.")
+    string VersionDescription = "The source does not clearly identify the version.",
+    CatalogBookNavigationResponse? Navigation = null)
 {
     // Populated when search grouped this candidate together with matching
     // records from other providers; empty for a single-provider detail fetch
