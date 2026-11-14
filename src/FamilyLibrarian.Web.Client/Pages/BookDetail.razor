@@ -10,11 +10,19 @@
 @inject RequestsApiClient Requests
 @inject DeliveryTargetApiClient DeliveryTargets
 @inject FollowApiClient Follows
+@inject CatalogBrowseApiClient Browse
 
 <PageTitle>@(book?.Title ?? "Book") · Family Librarian</PageTitle>
 
 <MudStack Spacing="4">
-    <MudStack Row="true">
+    <MudStack Row="true" Wrap="Wrap.Wrap" Spacing="2">
+        @if (ReturnContext is { } returnContext)
+        {
+            <MudButton Variant="Variant.Text" Href="@CatalogBrowseLinks.ReturnHref(returnContext)" StartIcon="@Icons.Material.Filled.ArrowBack"
+                       Class="browse-return-link">
+                @CatalogBrowseLinks.ReturnLabel(returnContext)
+            </MudButton>
+        }
         <MudButton Variant="Variant.Text" Href="search" StartIcon="@Icons.Material.Filled.ArrowBack">
             Back to search
         </MudButton>
@@ -33,6 +41,17 @@
         @if (isRefreshing)
         {
             <MudProgressLinear Indeterminate="true" Color="Color.Primary" Size="Size.Small" />
+        }
+
+        @if (isPreview)
+        {
+            <MudAlert Severity="Severity.Warning" Variant="Variant.Outlined" Class="book-preview-notice">
+                <MudText Typo="Typo.subtitle2">Saved preview</MudText>
+                <MudText Typo="Typo.body2">
+                    @book.ProviderName did not answer, so this is a short summary kept from your earlier browsing. It has no
+                    description or edition list, and it cannot be used to request this book or follow its series. Try again later.
+                </MudText>
+            </MudAlert>
         }
 
         <MudPaper Class="pa-4" Elevation="1">
@@ -69,7 +88,32 @@
 
                     <div>
                         <MudText Typo="Typo.h3">@book.Title</MudText>
-                        <MudText Typo="Typo.h6">@(book.Authors.Count > 1 ? "Contributors: " : string.Empty)@string.Join(", ", book.Authors)</MudText>
+                        <MudText Typo="Typo.h6" Class="book-authors">
+                            @(book.Authors.Count > 1 ? "Contributors: " : string.Empty)
+                            @for (var i = 0; i < book.Authors.Count; i++)
+                            {
+                                var authorName = book.Authors[i];
+                                var authorLink = CatalogBrowseLinks.AuthorReference(book, i);
+                                @if (i > 0)
+                                {
+                                    <text>, </text>
+                                }
+                                @if (authorLink is not null)
+                                {
+                                    <MudLink Typo="Typo.h6" Href="@CatalogBrowseLinks.ReturnHref(authorLink)" Class="book-author-link">@authorName</MudLink>
+                                }
+                                else
+                                {
+                                    <text>@authorName</text>
+                                }
+                            }
+                        </MudText>
+                        @if (LinksUnavailable)
+                        {
+                            <MudText Typo="Typo.caption" Class="book-links-unavailable">
+                                Author and series pages are not available for this record right now. Search again to browse them.
+                            </MudText>
+                        }
                         <CandidateVersionSummary Candidate="@book" />
                     </div>
 
@@ -114,7 +158,11 @@
             </MudStack>
         </MudPaper>
 
-        @if (!string.IsNullOrWhiteSpace(book.Description))
+        @if (isPreview)
+        {
+            @* A saved preview has no description or editions; saying "none reported" would claim more than is known. *@
+        }
+        else if (!string.IsNullOrWhiteSpace(book.Description))
         {
             <MudPaper Class="pa-4" Outlined="true">
                 <MudText Typo="Typo.h6" Class="mb-2">About this record</MudText>
@@ -133,24 +181,38 @@
         {
             <MudPaper Class="pa-4" Outlined="true">
                 <MudText Typo="Typo.h6">Known series context</MudText>
-                @foreach (var series in book.Series)
+                @for (var seriesIndex = 0; seriesIndex < book.Series.Count; seriesIndex++)
                 {
+                    var series = book.Series[seriesIndex];
+                    var seriesLink = CatalogBrowseLinks.SeriesReference(book, seriesIndex);
                     <MudStack Row="true" Spacing="2" AlignItems="AlignItems.Center" Wrap="Wrap.Wrap">
-                        <MudText Typo="Typo.body2">
-                            @series.Name@(string.IsNullOrWhiteSpace(series.PositionLabel) ? string.Empty : $" · position {series.PositionLabel}")
+                        <MudText Typo="Typo.body2" Class="book-series-entry">
+                            @if (seriesLink is not null)
+                            {
+                                <MudLink Href="@CatalogBrowseLinks.ReturnHref(seriesLink)" Class="book-series-link">@series.Name</MudLink>
+                            }
+                            else
+                            {
+                                <text>@series.Name</text>
+                            }@(string.IsNullOrWhiteSpace(series.PositionLabel) ? string.Empty : $" · position {series.PositionLabel}")
                         </MudText>
-                        <MudButton Variant="Variant.Text"
-                                   Size="Size.Small"
-                                   Color="@(IsFollowingSeriesNamed(series.Name) ? Color.Primary : Color.Default)"
-                                   Disabled="@isTogglingSeriesFollow"
-                                   OnClick="() => ToggleSeriesFollowAsync(series.Name)">
-                            @(IsFollowingSeriesNamed(series.Name) ? "Following" : "Follow this series")
-                        </MudButton>
+                        @if (!isPreview)
+                        {
+                            <MudButton Variant="Variant.Text"
+                                       Size="Size.Small"
+                                       Color="@(IsFollowingSeriesNamed(series.Name) ? Color.Primary : Color.Default)"
+                                       Disabled="@isTogglingSeriesFollow"
+                                       OnClick="() => ToggleSeriesFollowAsync(series.Name)">
+                                @(IsFollowingSeriesNamed(series.Name) ? "Following" : "Follow this series")
+                            </MudButton>
+                        }
                     </MudStack>
                 }
             </MudPaper>
         }
 
+        @if (!isPreview)
+        {
         <MudPaper Class="pa-4" Outlined="true">
             <MudText Typo="Typo.h6" Class="mb-1">Known editions</MudText>
             <MudText Typo="Typo.body2" Class="mb-3">
@@ -197,6 +259,10 @@
             }
         </MudPaper>
 
+        }
+
+        @if (!isPreview)
+        {
         <MudAlert Severity="Severity.Info" Variant="Variant.Outlined">
             Choose the book and version you want, then choose Ebook or Audiobook below.
             Study guides, adaptations, shortened versions, and combined volumes are separate choices.
@@ -266,6 +332,10 @@
             </MudPaper>
         }
 
+        }
+
+        @if (!isPreview)
+        {
         <MudPaper Class="pa-4" Elevation="1">
             <MudStack Spacing="3">
                 <MudText Typo="Typo.h6">Ask for this book</MudText>
@@ -430,6 +500,7 @@
                 }
             </MudStack>
         </MudPaper>
+        }
     }
 </MudStack>
 
@@ -439,6 +510,22 @@
 
     [Parameter]
     public string ExternalId { get; set; } = string.Empty;
+
+    // Typed return context, read as raw strings so a hand-edited query can never fail binding. Anything that does not
+    // validate is ignored: the book page itself stays fully usable.
+    [SupplyParameterFromQuery(Name = CatalogBrowseLinks.BackParameter)] public string? Back { get; set; }
+    [SupplyParameterFromQuery(Name = CatalogBrowseLinks.BackIdParameter)] public string? BackId { get; set; }
+    [SupplyParameterFromQuery(Name = CatalogBrowseLinks.BackSubjectParameter)] public string? BackSubject { get; set; }
+    [SupplyParameterFromQuery(Name = CatalogBrowseLinks.BackPageParameter)] public string? BackPage { get; set; }
+
+    private BrowseReturn? ReturnContext => CatalogBrowseLinks.TryParseReturn(Back, BackId, BackSubject, BackPage);
+
+    // True when only the host's compact cached observation is shown because the live source could not be reached.
+    private bool isPreview;
+
+    private bool LinksUnavailable => book is not null && (book.Authors.Count > 0 || book.Series.Count > 0) &&
+        !Enumerable.Range(0, book.Authors.Count).Any(index => CatalogBrowseLinks.AuthorReference(book, index) is not null) &&
+        !Enumerable.Range(0, book.Series.Count).Any(index => CatalogBrowseLinks.SeriesReference(book, index) is not null);
 
     private CatalogBookCandidateResponse? book;
     private bool isLoading = true;
@@ -602,6 +689,7 @@
         // fallback if the fetch fails.
         var cached = FindCachedCandidate();
         book = null;
+        isPreview = false;
         isLoading = true;
         isRefreshing = false;
 
@@ -614,7 +702,12 @@
             // already found (from the cached copy) rather than silently
             // dropping the other sources this record was merged from.
             if (fresh is not null)
+            {
                 fresh = CatalogSearchState.PreserveGroupedEditions(fresh, cached);
+                // The search card's navigation covers more of the run than this single fetch, but only while every
+                // reference still names the same ordinal and label as the fresh record.
+                fresh = CatalogBrowseLinks.WithBestNavigation(fresh, cached, DateTimeOffset.UtcNow);
+            }
 
             book = fresh;
         }
@@ -623,6 +716,17 @@
             // A transient failure falls back to the search card's summary rather
             // than blanking the page.
             book = cached;
+            if (book is null && ReturnContext is { Kind: BrowseReturnKind.ObservedAuthor or BrowseReturnKind.ObservedSeries } observed)
+            {
+                // Entered from a preview while the source is down: the host's own cached observation of this exact
+                // record can supply a compact, read-only summary. It is a preview, never request authorization.
+                var preview = await Browse.GetObservedBookAsync(observed.Id, ProviderId, ExternalId);
+                if (preview.IsOk)
+                {
+                    book = CatalogBrowseLinks.ToPreviewCandidate(preview.Value!, ProviderId, ExternalId);
+                    isPreview = true;
+                }
+            }
         }
         finally
         {
@@ -630,7 +734,7 @@
             isRefreshing = false;
         }
 
-        if (book is not null)
+        if (book is not null && !isPreview)
         {
             if (book.VersionKind is "Novel" or "Unspecified")
                 StartAvailabilityLoad(book);

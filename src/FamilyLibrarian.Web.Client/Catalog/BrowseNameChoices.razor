@@ -1,0 +1,53 @@
+@* "Matching names in your catalog": saved people/series whose name equals the observed one. Separate choices, never
+   merged, never chosen for the user, never written from. *@
+<section class="browse-name-choices" aria-labelledby="@HeadingId">
+    <MudText Typo="Typo.h6" HtmlTag="h2" id="@HeadingId">Matching names in your catalog</MudText>
+    <MudText Typo="Typo.body2" Class="mb-2">
+        A matching name is not proof of a match. These saved @(IsAuthor ? "authors" : "series") share the spelling of
+        “@Label”, but they may be different @(IsAuthor ? "people" : "series"). Pick one to see what the catalog knows about it.
+    </MudText>
+    @if (Choices.Choices.Count == 0)
+    {
+        <MudText Typo="Typo.body2" Class="browse-no-choices">No saved @(IsAuthor ? "author" : "series") has this exact name.</MudText>
+    }
+    else
+    {
+        <ul style="list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px;">
+            @foreach (var choice in Choices.Choices)
+            {
+                <li @key="choice.Id" class="browse-name-choice">
+                    <MudPaper Outlined="true" Class="pa-3">
+                        <MudStack Spacing="0">
+                            <MudLink Typo="Typo.subtitle1" Href="@ChoiceHref(choice)">@choice.Name</MudLink>
+                            <MudText Typo="Typo.caption">
+                                @(choice.KnownBookCount == 1 ? "1 known book" : $"{choice.KnownBookCount} known books")
+                                · saved record …@Suffix(choice.Id)
+                            </MudText>
+                            @if (choice.SampleTitles.Count > 0)
+                            {
+                                <MudText Typo="Typo.caption" Color="Color.Secondary">Includes: @string.Join("; ", choice.SampleTitles)</MudText>
+                            }
+                        </MudStack>
+                    </MudPaper>
+                </li>
+            }
+        </ul>
+        @if (Choices.Truncated)
+        {
+            <MudText Typo="Typo.caption" Class="mt-1">More saved @(IsAuthor ? "authors" : "series") share this name than are shown here.</MudText>
+        }
+    }
+</section>
+
+@code {
+    [Parameter, EditorRequired] public CatalogBrowseNameChoicesResponse Choices { get; set; } = new([], false);
+    [Parameter, EditorRequired] public string Label { get; set; } = string.Empty;
+    [Parameter] public bool IsAuthor { get; set; } = true;
+
+    private string HeadingId => IsAuthor ? "name-choices-author" : "name-choices-series";
+
+    private string ChoiceHref(CatalogBrowseNameChoiceResponse choice) =>
+        IsAuthor ? CatalogBrowseLinks.AuthorHref(choice.Id) : CatalogBrowseLinks.SeriesHref(choice.Id);
+
+    private static string Suffix(Guid id) => id.ToString("N")[^6..];
+}

@@ -43,7 +43,8 @@ builder.Services.AddScoped<CatalogAvailabilityApiClient>(sp => new CatalogAvaila
 builder.Services.AddScoped<AntiforgeryTokenProvider>();
 builder.Services.AddScoped<AccountsApiClient>();
 builder.Services.AddScoped<CatalogApiClient>();
-builder.Services.AddScoped<CatalogSearchState>();
+builder.Services.AddScoped<CatalogBrowseApiClient>();
+builder.Services.AddScoped(sp => new CatalogSearchState(sp.GetRequiredService<AuthenticationStateProvider>()));
 builder.Services.AddScoped<MetadataIntegrationsApiClient>();
 builder.Services.AddScoped<GutenbergCatalogApiClient>();
 builder.Services.AddScoped<RequestsApiClient>();

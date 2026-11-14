@@ -1,0 +1,35 @@
+@* Previous/next page links. Pages are fixed-size and open-ended: there is never a total count. *@
+@if (Page > 1 || HasMore)
+{
+    <nav aria-label="Pages of known books" class="browse-pager">
+        <MudStack Row="true" Spacing="2" AlignItems="AlignItems.Center" Wrap="Wrap.Wrap">
+            @if (Page > 1)
+            {
+                <MudButton Variant="Variant.Outlined" Size="Size.Small" Href="@HrefFor(Page - 1)">Previous page</MudButton>
+            }
+            <MudText Typo="Typo.body2" Class="browse-page-number">Page @Page</MudText>
+            @if (CanGoNext)
+            {
+                <MudButton Variant="Variant.Outlined" Size="Size.Small" Href="@HrefFor(Page + 1)">Next page</MudButton>
+            }
+        </MudStack>
+        @if (CanGoNext)
+        {
+            <MudText Typo="Typo.caption">More known books may follow on the next page.</MudText>
+        }
+        else if (AtBrowsingLimit)
+        {
+            @* The host reports more rows but rejects any page past the ceiling, so no link is offered and the end is not claimed. *@
+            <MudText Typo="Typo.caption" Class="browse-limit">There are more known books than can be browsed here. This view stops at page @CatalogBrowseLinks.MaximumPage.</MudText>
+        }
+    </nav>
+}
+
+@code {
+    [Parameter, EditorRequired] public int Page { get; set; } = 1;
+    [Parameter] public bool HasMore { get; set; }
+    [Parameter, EditorRequired] public Func<int, string> HrefFor { get; set; } = _ => string.Empty;
+
+    private bool CanGoNext => HasMore && Page < CatalogBrowseLinks.MaximumPage;
+    private bool AtBrowsingLimit => HasMore && Page >= CatalogBrowseLinks.MaximumPage;
+}

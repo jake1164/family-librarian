@@ -1,0 +1,50 @@
+@* An author's known books for one page, grouped by known series, then the books with no known series. Grouping is built from
+   this page only, and "No known series" is a statement about the data we hold, never that a book stands alone. *@
+@if (Groups.Count == 0 && NoKnownSeries.Count == 0)
+{
+    <MudAlert Severity="Severity.Info" Class="browse-empty">@EmptyText</MudAlert>
+}
+else
+{
+    @foreach (var group in Groups)
+    {
+        <section class="browse-group" aria-label="@group.Name">
+            <MudText Typo="Typo.h6" HtmlTag="h2" Class="mb-1" Style="overflow-wrap: anywhere;">
+                @if (GroupHref(group) is { } href)
+                {
+                    <MudLink Href="@href" Typo="Typo.h6">@group.Name</MudLink>
+                }
+                else
+                {
+                    @group.Name
+                }
+            </MudText>
+            <BrowseBookList Entries="@group.Entries" Return="@Return" ContextId="@ContextId" AriaLabel="@($"Known books in {group.Name}")" />
+        </section>
+    }
+
+    @if (NoKnownSeries.Count > 0)
+    {
+        <section class="browse-group browse-no-series" aria-label="No known series">
+            <MudText Typo="Typo.h6" HtmlTag="h2" Class="mb-1">No known series</MudText>
+            <MudText Typo="Typo.caption" Class="mb-1">
+                No series is recorded for these books in the data known here. That does not mean they stand alone.
+            </MudText>
+            <BrowseBookList Entries="@NoKnownSeries" Return="@Return" ContextId="@ContextId" ShowPosition="false"
+                            AriaLabel="Known books with no known series" />
+        </section>
+    }
+}
+
+@code {
+    [Parameter, EditorRequired] public IReadOnlyList<CatalogBrowseGroupResponse> Groups { get; set; } = [];
+    [Parameter, EditorRequired] public IReadOnlyList<CatalogBrowseEntryResponse> NoKnownSeries { get; set; } = [];
+    [Parameter] public BrowseReturn? Return { get; set; }
+    [Parameter] public Guid? ContextId { get; set; }
+    [Parameter] public string EmptyText { get; set; } = "No known books.";
+
+    private string? GroupHref(CatalogBrowseGroupResponse group) =>
+        group.SeriesId is { } seriesId ? CatalogBrowseLinks.SeriesHref(seriesId)
+        : group.SubjectId is { } subject && ContextId is { } context ? CatalogBrowseLinks.ObservedSeriesHref(context, subject)
+        : null;
+}
