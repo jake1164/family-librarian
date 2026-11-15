@@ -11,6 +11,7 @@
     <Project Path="samples/FamilyLibrarian.SampleProvider/FamilyLibrarian.SampleProvider.csproj" />
   </Folder>
   <Folder Name="/tests/">
+    <Project Path="tests/FamilyLibrarian.CatalogConcurrencyHost/FamilyLibrarian.CatalogConcurrencyHost.csproj" />
     <Project Path="tests/FamilyLibrarian.Domain.Tests/FamilyLibrarian.Domain.Tests.csproj" />
     <Project Path="tests/FamilyLibrarian.Infrastructure.Tests/FamilyLibrarian.Infrastructure.Tests.csproj" />
     <Project Path="tests/FamilyLibrarian.Web.Tests/FamilyLibrarian.Web.Tests.csproj" />

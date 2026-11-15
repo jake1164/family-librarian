@@ -17,11 +17,20 @@ namespace FamilyLibrarian.Infrastructure.Catalog;
 /// provider references and editions are removed, because both are unique
 /// catalog-wide (provider id, ISBN) and would block a new request from
 /// creating a fresh Work for the same book.
+/// <para>
+/// This is a catalog writer, so it takes the same transaction-scoped catalog lock as the resolver and makes both of its saves
+/// in one transaction. The orphan test is evaluated after the lock is held, so a Work a resolver is attaching to is never
+/// retired from under it, and a failure part-way rolls back both the retirement and the deletion of its unique rows. It is not
+/// retried in-process: it is idempotent housekeeping and the next start repeats it. It does not coordinate with request
+/// creation, which has its own lock; that pre-existing race is unchanged.
+/// </para>
 /// </remarks>
 public sealed class OrphanedWorkRetirement(AppDbContext database)
 {
     public async Task<int> RetireAsync(DateTimeOffset now, CancellationToken cancellationToken)
     {
+        await using var transaction = await CatalogWriteLock.BeginAsync(database, cancellationToken);
+
         var orphans = await database.Works
             .Where(work => !work.IsRetired &&
                 database.BookRequests.Any(request => request.WorkId == work.Id) &&
@@ -52,6 +61,7 @@ public sealed class OrphanedWorkRetirement(AppDbContext database)
         database.ExternalReferences.RemoveRange(references);
         database.Editions.RemoveRange(editions);
         await database.SaveChangesAsync(cancellationToken);
+        await transaction.CommitAsync(cancellationToken);
 
         return orphans.Count;
     }

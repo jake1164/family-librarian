@@ -4,7 +4,7 @@ using Microsoft.EntityFrameworkCore;
 
 namespace FamilyLibrarian.Infrastructure.Persistence;
 
-public sealed class CatalogRepository(AppDbContext database) : ICatalogRepository
+public sealed class CatalogRepository(AppDbContext database) : ICatalogRepository, ICatalogMutationRepository
 {
     public Task<Work?> FindWorkByExternalReferenceAsync(
         string providerId,
@@ -27,6 +27,40 @@ public sealed class CatalogRepository(AppDbContext database) : ICatalogRepositor
                 work => !work.IsRetired && work.Editions.Any(edition =>
                     edition.Isbn13 != null && isbn13s.Contains(edition.Isbn13)),
                 cancellationToken);
+
+    /// <summary>The most Works, Authors or Series one list lookup returns. More than this many same-name rows is already ambiguous.</summary>
+    private const int MaximumListedMatches = 50;
+
+    public async Task<IReadOnlyList<Work>> ListWorksByIsbn13Async(
+        IReadOnlyCollection<string> isbn13s,
+        CancellationToken cancellationToken) =>
+        await QueryWorks()
+            .Where(work => !work.IsRetired && work.Editions.Any(edition =>
+                edition.Isbn13 != null && isbn13s.Contains(edition.Isbn13)))
+            .OrderBy(work => work.CreatedAtUtc)
+            .ThenBy(work => work.Id)
+            .Take(MaximumListedMatches)
+            .ToListAsync(cancellationToken);
+
+    public async Task<IReadOnlyList<Author>> ListAuthorsByNormalizedNameAsync(
+        string normalizedName,
+        CancellationToken cancellationToken) =>
+        await database.Authors
+            .Where(author => author.NormalizedName == normalizedName)
+            .OrderBy(author => author.CreatedAtUtc)
+            .ThenBy(author => author.Id)
+            .Take(MaximumListedMatches)
+            .ToListAsync(cancellationToken);
+
+    public async Task<IReadOnlyList<Series>> ListSeriesByNormalizedNameAsync(
+        string normalizedName,
+        CancellationToken cancellationToken) =>
+        await database.Series
+            .Where(series => series.NormalizedName == normalizedName)
+            .OrderBy(series => series.CreatedAtUtc)
+            .ThenBy(series => series.Id)
+            .Take(MaximumListedMatches)
+            .ToListAsync(cancellationToken);
 
     public Task<Work?> GetWorkAsync(Guid workId, CancellationToken cancellationToken) =>
         QueryWorks().SingleOrDefaultAsync(work => work.Id == workId, cancellationToken);

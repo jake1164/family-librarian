@@ -209,7 +209,12 @@ public static class DependencyInjection
                 });
 
         services.AddScoped<IClock, SystemClock>();
-        services.AddScoped<ICatalogRepository, CatalogRepository>();
+        services.AddScoped<CatalogRepository>();
+        services.AddScoped<ICatalogRepository>(provider => provider.GetRequiredService<CatalogRepository>());
+        services.AddScoped<ICatalogMutationRepository>(provider => provider.GetRequiredService<CatalogRepository>());
+        // Singleton: it holds no state and creates a fresh scope (context, connection, transaction) for every attempt.
+        services.AddSingleton<ICatalogWriteScope, PostgresCatalogWriteScope>();
+        services.AddSingleton<ICatalogResolutionDiagnostics, CatalogResolutionLog>();
         services.AddScoped<OrphanedWorkRetirement>();
         services.AddScoped<CatalogWorkResolver>();
         services.AddScoped<ICatalogSearchService, CatalogSearchService>();

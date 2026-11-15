@@ -2,6 +2,12 @@ using FamilyLibrarian.Domain.Catalog;
 
 namespace FamilyLibrarian.Application.Catalog;
 
+/// <remarks>
+/// Reader-side access. The single-result lookups below (<c>FindWorkByIsbn13Async</c>, <c>FindAuthorByNormalizedNameAsync</c>,
+/// <c>FindSeriesByNormalizedNameAsync</c>) assume at most one match and throw when a name or an ISBN set legitimately matches
+/// several rows, so no catalog writer uses them: writers go through <see cref="ICatalogWriteScope"/> and its list-based
+/// <see cref="ICatalogMutationRepository"/>, which also coordinates them across processes.
+/// </remarks>
 public interface ICatalogRepository
 {
     Task<Work?> FindWorkByExternalReferenceAsync(

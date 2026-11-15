@@ -35,6 +35,9 @@ public sealed class ActiveMetadataProviderResolver(
         return IsUsable(provider.Id, settings) ? provider : null;
     }
 
+    public bool IsRegistered(string providerId) =>
+        providers.Any(candidate => string.Equals(candidate.Id, providerId, StringComparison.OrdinalIgnoreCase));
+
     private async Task<Dictionary<string, ProviderSetting>> LoadSettingsAsync(
         CancellationToken cancellationToken)
     {

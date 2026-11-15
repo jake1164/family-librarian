@@ -2,7 +2,6 @@ using System.Diagnostics;
 using System.Text.RegularExpressions;
 using FamilyLibrarian.Application.Abstractions;
 using FamilyLibrarian.Application.Catalog;
-using FamilyLibrarian.Application.Concurrency;
 using FamilyLibrarian.Application.Integrations;
 using FamilyLibrarian.Application.Requests;
 using FamilyLibrarian.Domain.Requests;
@@ -70,8 +69,6 @@ public sealed partial class ConversationBookTools(
     private readonly ConversationTimeBudgets timeBudgets = budgets ?? ConversationTimeBudgets.Default;
 
     private const int MaxDescriptionLength = 400;
-
-    private static readonly KeyedAsyncLock<string> ResolveLocks = new();
 
     public async Task<ConversationSearchResult> SearchBooksAsync(string text, int maxChoices, CancellationToken cancellationToken)
     {
@@ -229,11 +226,11 @@ public sealed partial class ConversationBookTools(
         RequireUser();
         try
         {
-            // Two people asking for the same new book at the same moment take turns: the second finds the first's record.
-            using var turn = await ResolveLocks.AcquireAsync($"{choice.ProviderId}|{choice.ExternalId}", cancellationToken);
+            // Two people asking for the same new book at the same moment take turns inside the resolver's catalog write scope,
+            // which serializes writers across processes, so the second finds the first's record.
             return (await works.ResolveAsync(choice.ProviderId, choice.ExternalId, cancellationToken)).Work.Id;
         }
-        catch (Exception exception) when (exception is UnknownMetadataProviderException or CatalogCandidateNotFoundException or ArgumentException
+        catch (Exception exception) when (exception is CatalogResolutionException or ArgumentException
             or HttpRequestException or System.Text.Json.JsonException
             || (exception is OperationCanceledException && !cancellationToken.IsCancellationRequested))
         {
