@@ -33,6 +33,14 @@ public interface ICatalogRepository
         string normalizedName,
         CancellationToken cancellationToken);
 
+    /// <summary>
+    /// Every Series with this normalized name, oldest first, so a reader can tell a name that matches several saved series from
+    /// one that matches none. The default keeps an implementation that only knows the single-result lookup working; it can never
+    /// report an ambiguity, so the real repository overrides it.
+    /// </summary>
+    async Task<IReadOnlyList<Series>> ListSeriesByNormalizedNameAsync(string normalizedName, CancellationToken cancellationToken) =>
+        await FindSeriesByNormalizedNameAsync(normalizedName, cancellationToken) is { } series ? [series] : [];
+
     /// <summary>The Series with its <c>Entries</c> (and each entry's Work)
     /// loaded, for following/gap-detection.</summary>
     Task<Series?> GetSeriesAsync(Guid seriesId, CancellationToken cancellationToken);

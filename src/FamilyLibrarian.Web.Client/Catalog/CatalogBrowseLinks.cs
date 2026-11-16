@@ -339,6 +339,7 @@ public static class CatalogBrowseCopy
     public const string IdentityUnverifiedCode = "identity-unverified";
     public const string GroupingPageLocalCode = "grouping-page-local";
     public const string SourceFailedCode = "source-failed";
+    public const string PositionConflictedCode = "position-conflicted";
 
     /// <summary>
     /// Plain-language text for each limitation code. Unknown codes are skipped, never echoed, so a newer host cannot put
@@ -354,6 +355,7 @@ public static class CatalogBrowseCopy
                 GroupingPageLocalCode => "Series groups are built from the books on this page only. A series may continue on another page.",
                 TruncatedCode => "Some details were left out to keep this list small, so credits, series or sources shown may be incomplete.",
                 SourceFailedCode => "A source did not answer, so this view may be missing books.",
+                PositionConflictedCode => "Sources disagree about some positions here. Each number shown is the one the catalog selected, not the only claim.",
                 _ => null
             })
             .OfType<string>()

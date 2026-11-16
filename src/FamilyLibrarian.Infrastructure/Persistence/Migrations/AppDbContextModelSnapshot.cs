@@ -1490,6 +1490,11 @@ namespace FamilyLibrarian.Infrastructure.Persistence.Migrations
                         .HasColumnType("character varying(32)")
                         .HasColumnName("format");
 
+                    b.Property<string>("IdentityBasis")
+                        .HasMaxLength(32)
+                        .HasColumnType("character varying(32)")
+                        .HasColumnName("identity_basis");
+
                     b.Property<string>("Isbn13")
                         .HasMaxLength(13)
                         .HasColumnType("character varying(13)")
@@ -1504,10 +1509,20 @@ namespace FamilyLibrarian.Infrastructure.Persistence.Migrations
                         .HasColumnType("date")
                         .HasColumnName("publication_date");
 
+                    b.Property<string>("PublicationPrecision")
+                        .HasMaxLength(16)
+                        .HasColumnType("character varying(16)")
+                        .HasColumnName("publication_precision");
+
                     b.Property<string>("Publisher")
                         .HasMaxLength(512)
                         .HasColumnType("character varying(512)")
                         .HasColumnName("publisher");
+
+                    b.Property<string>("SourceProviderId")
+                        .HasMaxLength(128)
+                        .HasColumnType("character varying(128)")
+                        .HasColumnName("source_provider_id");
 
                     b.Property<string>("Title")
                         .IsRequired()
@@ -1602,6 +1617,87 @@ namespace FamilyLibrarian.Infrastructure.Persistence.Migrations
                     b.ToTable("external_references", "catalog");
                 });
 
+            modelBuilder.Entity("FamilyLibrarian.Domain.Catalog.MetadataClaim", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<string>("Field")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("character varying(32)")
+                        .HasColumnName("field");
+
+                    b.Property<DateTimeOffset>("FirstSeenAtUtc")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("first_seen_at");
+
+                    b.Property<bool>("IsCurrent")
+                        .HasColumnType("boolean")
+                        .HasColumnName("is_current");
+
+                    b.Property<bool>("IsSelected")
+                        .HasColumnType("boolean")
+                        .HasColumnName("is_selected");
+
+                    b.Property<DateTimeOffset>("LastSeenAtUtc")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("last_seen_at");
+
+                    b.Property<string>("ProviderId")
+                        .IsRequired()
+                        .HasMaxLength(128)
+                        .HasColumnType("character varying(128)")
+                        .HasColumnName("provider_id");
+
+                    b.Property<string>("ScopeKey")
+                        .IsRequired()
+                        .HasMaxLength(256)
+                        .HasColumnType("character varying(256)")
+                        .HasColumnName("scope_key");
+
+                    b.Property<string>("SourceEntityId")
+                        .IsRequired()
+                        .HasMaxLength(512)
+                        .HasColumnType("character varying(512)")
+                        .HasColumnName("source_entity_id");
+
+                    b.Property<string>("ValueHash")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)")
+                        .HasColumnName("value_hash");
+
+                    b.Property<string>("ValueJson")
+                        .IsRequired()
+                        .HasColumnType("jsonb")
+                        .HasColumnName("value_json");
+
+                    b.Property<uint>("Version")
+                        .IsConcurrencyToken()
+                        .ValueGeneratedOnAddOrUpdate()
+                        .HasColumnType("xid")
+                        .HasColumnName("xmin");
+
+                    b.Property<Guid>("WorkId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("work_id");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("WorkId", "Field", "ScopeKey")
+                        .IsUnique()
+                        .HasDatabaseName("ix_metadata_claims_one_selected")
+                        .HasFilter("is_selected");
+
+                    b.HasIndex("WorkId", "Field", "ScopeKey", "ProviderId", "SourceEntityId", "ValueHash")
+                        .IsUnique();
+
+                    b.ToTable("metadata_claims", "catalog");
+                });
+
             modelBuilder.Entity("FamilyLibrarian.Domain.Catalog.Series", b =>
                 {
                     b.Property<Guid>("Id")
@@ -1660,6 +1756,11 @@ namespace FamilyLibrarian.Infrastructure.Persistence.Migrations
                         .HasColumnType("uuid")
                         .HasColumnName("id");
 
+                    b.Property<string>("BindingBasis")
+                        .HasMaxLength(32)
+                        .HasColumnType("character varying(32)")
+                        .HasColumnName("binding_basis");
+
                     b.Property<DateTimeOffset>("CreatedAtUtc")
                         .HasColumnType("timestamp with time zone")
                         .HasColumnName("created_at_utc");
@@ -1677,6 +1778,11 @@ namespace FamilyLibrarian.Infrastructure.Persistence.Migrations
                         .HasPrecision(10, 3)
                         .HasColumnType("numeric(10,3)")
                         .HasColumnName("position_sort");
+
+                    b.Property<string>("PositionState")
+                        .HasMaxLength(32)
+                        .HasColumnType("character varying(32)")
+                        .HasColumnName("position_state");
 
                     b.Property<Guid>("SeriesId")
                         .HasColumnType("uuid")
@@ -1706,6 +1812,68 @@ namespace FamilyLibrarian.Infrastructure.Persistence.Migrations
                     b.HasIndex("SeriesId", "PositionSort", "PositionLabel");
 
                     b.ToTable("series_entries", "catalog");
+                });
+
+            modelBuilder.Entity("FamilyLibrarian.Domain.Catalog.SourceObservation", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<string>("ContentHash")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)")
+                        .HasColumnName("content_hash");
+
+                    b.Property<string>("ExternalId")
+                        .IsRequired()
+                        .HasMaxLength(512)
+                        .HasColumnType("character varying(512)")
+                        .HasColumnName("external_id");
+
+                    b.Property<DateTimeOffset>("LastSeenAtUtc")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("last_seen_at");
+
+                    b.Property<DateTimeOffset>("ObservedAtUtc")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("observed_at");
+
+                    b.Property<string>("ProviderId")
+                        .IsRequired()
+                        .HasMaxLength(128)
+                        .HasColumnType("character varying(128)")
+                        .HasColumnName("provider_id");
+
+                    b.Property<int>("SchemaVersion")
+                        .HasColumnType("integer")
+                        .HasColumnName("schema_version");
+
+                    b.Property<string>("Snapshot")
+                        .IsRequired()
+                        .HasColumnType("jsonb")
+                        .HasColumnName("snapshot");
+
+                    b.Property<uint>("Version")
+                        .IsConcurrencyToken()
+                        .ValueGeneratedOnAddOrUpdate()
+                        .HasColumnType("xid")
+                        .HasColumnName("xmin");
+
+                    b.Property<Guid>("WorkId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("work_id");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("WorkId", "ProviderId", "ExternalId", "ContentHash")
+                        .IsUnique();
+
+                    b.HasIndex("WorkId", "ProviderId", "ExternalId", "ObservedAtUtc");
+
+                    b.ToTable("source_observations", "catalog");
                 });
 
             modelBuilder.Entity("FamilyLibrarian.Domain.Catalog.Work", b =>
@@ -1748,9 +1916,19 @@ namespace FamilyLibrarian.Infrastructure.Persistence.Migrations
                         .HasColumnType("character varying(16000)")
                         .HasColumnName("description");
 
+                    b.Property<string>("FirstPublicationBasis")
+                        .HasMaxLength(32)
+                        .HasColumnType("character varying(32)")
+                        .HasColumnName("first_publication_basis");
+
                     b.Property<DateOnly?>("FirstPublicationDate")
                         .HasColumnType("date")
                         .HasColumnName("first_publication_date");
+
+                    b.Property<string>("FirstPublicationPrecision")
+                        .HasMaxLength(16)
+                        .HasColumnType("character varying(16)")
+                        .HasColumnName("first_publication_precision");
 
                     b.Property<bool>("IsRetired")
                         .HasColumnType("boolean")
@@ -1782,6 +1960,11 @@ namespace FamilyLibrarian.Infrastructure.Persistence.Migrations
                         .HasColumnType("xid")
                         .HasColumnName("xmin");
 
+                    b.Property<string>("VersionClass")
+                        .HasMaxLength(32)
+                        .HasColumnType("character varying(32)")
+                        .HasColumnName("version_class");
+
                     b.HasKey("Id");
 
                     b.HasIndex("NormalizedTitle");
@@ -1800,6 +1983,11 @@ namespace FamilyLibrarian.Infrastructure.Persistence.Migrations
                     b.Property<Guid>("AuthorId")
                         .HasColumnType("uuid")
                         .HasColumnName("author_id");
+
+                    b.Property<string>("BindingBasis")
+                        .HasMaxLength(32)
+                        .HasColumnType("character varying(32)")
+                        .HasColumnName("binding_basis");
 
                     b.Property<int>("Ordinal")
                         .HasColumnType("integer")
@@ -5608,6 +5796,15 @@ namespace FamilyLibrarian.Infrastructure.Persistence.Migrations
                     b.Navigation("Work");
                 });
 
+            modelBuilder.Entity("FamilyLibrarian.Domain.Catalog.MetadataClaim", b =>
+                {
+                    b.HasOne("FamilyLibrarian.Domain.Catalog.Work", null)
+                        .WithMany()
+                        .HasForeignKey("WorkId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+                });
+
             modelBuilder.Entity("FamilyLibrarian.Domain.Catalog.SeriesEntry", b =>
                 {
                     b.HasOne("FamilyLibrarian.Domain.Catalog.Series", "Series")
@@ -5625,6 +5822,15 @@ namespace FamilyLibrarian.Infrastructure.Persistence.Migrations
                     b.Navigation("Series");
 
                     b.Navigation("Work");
+                });
+
+            modelBuilder.Entity("FamilyLibrarian.Domain.Catalog.SourceObservation", b =>
+                {
+                    b.HasOne("FamilyLibrarian.Domain.Catalog.Work", null)
+                        .WithMany()
+                        .HasForeignKey("WorkId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
                 });
 
             modelBuilder.Entity("FamilyLibrarian.Domain.Catalog.Work", b =>

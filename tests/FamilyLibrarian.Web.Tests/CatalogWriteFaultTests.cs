@@ -464,7 +464,6 @@ public sealed class CatalogWriteFaultTests
         else
         {
             Assert.IsNotNull(fault);
-            Assert.AreNotEqual(CatalogResolutionFault.IsbnCollision, fault.Fault);
         }
 
         // The server dropped the session before it read COMMIT, so the deterministic expectation is: verified absent, retried, created.

@@ -109,6 +109,10 @@ public sealed class CatalogCrossProcessTests
         }
     }
 
+    private static readonly string[] RefreshedAndUnchanged = ["Refreshed", "Unchanged"];
+
+    private static readonly string[] ExpectedCurrentPositions = ["demo:3", "openlibrary:2"];
+
     private static string Unique(string stem) => $"{stem} {Guid.NewGuid():N}";
 
     private static BookCandidate Candidate(
@@ -400,5 +404,83 @@ public sealed class CatalogCrossProcessTests
         var timer = Stopwatch.StartNew();
         await probe.HoldAsync(CancellationToken.None);
         Assert.IsTrue(timer.Elapsed < TimeSpan.FromSeconds(4), "A new holder acquires the lock at once.");
+    }
+
+    // ---------------------------------------------------------------- update races (activated observation evidence)
+
+    [TestMethod]
+    public async Task ContradictoryPositionRefreshesInTwoProcessesKeepBothClaimsAndTheDeterministicSelection()
+    {
+        _ = Conn;
+        const string isbn = "9780000710102";
+        var title = Unique("Cross process positions");
+        var author = Unique("Position Author");
+        var series = Unique("Position Series");
+        var demo = Candidate(FirstProvider, "xp-pos-demo", title, author, isbn, series, "1");
+        var openLibrary = Candidate(SecondProvider, "xp-pos-ol", title, author, isbn, series, "1");
+        var created = await ResolveInProcessAsync(demo).WaitAsync(Wait);
+        var attached = await ResolveInProcessAsync(openLibrary).WaitAsync(Wait);
+        Assert.AreEqual(created.Work.Id, attached.Work.Id);
+        var workId = created.Work.Id;
+
+        // Both sources now say something new, and the two sources contradict each other: demo -> 3, Open Library -> 2. Both
+        // processes hold the same, current view of both sources and refresh the same Work at the same moment, each starting from its
+        // own stale read of the claims.
+        await Completed(hostA!.Record(FirstProvider, "xp-pos-demo", Candidate(FirstProvider, "xp-pos-demo", title, author, isbn, series, "3")));
+        await Completed(hostA.Record(SecondProvider, "xp-pos-ol", Candidate(SecondProvider, "xp-pos-ol", title, author, isbn, series, "2")));
+        Candidates[(FirstProvider, "xp-pos-demo")] = Candidate(FirstProvider, "xp-pos-demo", title, author, isbn, series, "3");
+        Candidates[(SecondProvider, "xp-pos-ol")] = Candidate(SecondProvider, "xp-pos-ol", title, author, isbn, series, "2");
+
+        await using var probe = new CatalogLockProbe(Conn);
+        await probe.HoldAsync(CancellationToken.None);
+        var inHelper = hostA.Refresh(workId);
+        var inProcess = Task.Run(async () =>
+        {
+            await using var scope = Host.Services.CreateAsyncScope();
+            return await scope.ServiceProvider.GetRequiredService<FamilyLibrarian.Application.Catalog.Observation.CatalogObservationService>()
+                .RefreshWorkAsync(workId, CancellationToken.None);
+        });
+        await probe.WaitUntilWaitingAsync(hostA.ApplicationName, TimeSpan.FromSeconds(15));
+        await probe.WaitUntilWaitingAsync(inProcessApplication, TimeSpan.FromSeconds(15));
+        await probe.ReleaseAsync(CancellationToken.None);
+
+        var helperReport = await Completed(inHelper);
+        var processReport = await inProcess.WaitAsync(Wait);
+
+        Assert.IsTrue(Ok(helperReport), helperReport.ToString());
+        Assert.AreEqual(FamilyLibrarian.Application.Catalog.Observation.WorkRefreshStatus.Completed, processReport.Status);
+
+        // For each source exactly one process wrote the new statement; the other, running after it under the lock, found it already
+        // there and changed nothing: concurrent refreshes never duplicate an effect.
+        var helperSteps = helperReport.GetProperty("steps").EnumerateArray()
+            .Select(step => (Provider: step.GetProperty("providerId").GetString()!, Status: step.GetProperty("status").GetString()!)).ToArray();
+        foreach (var source in new[] { FirstProvider, SecondProvider })
+        {
+            var statuses = helperSteps.Where(step => step.Provider == source).Select(step => step.Status)
+                .Concat(processReport.Providers.Where(step => step.ProviderId == source).Select(step => step.Status.ToString())).Order(StringComparer.Ordinal).ToArray();
+            CollectionAssert.AreEqual(RefreshedAndUnchanged, statuses, $"{source}: {string.Join(',', statuses)}");
+        }
+
+        await WithDatabaseAsync(async db =>
+        {
+            var claims = await db.MetadataClaims.AsNoTracking()
+                .Where(claim => claim.WorkId == workId && claim.Field == MetadataClaimField.SeriesPosition).ToListAsync();
+            Assert.AreEqual(4, claims.Count, "Both contradictory statements and both earlier ones survive; none was lost to the race.");
+            var current = claims.Where(claim => claim.IsCurrent).Select(claim => $"{claim.ProviderId}:{PositionOf(claim)}").Order(StringComparer.Ordinal).ToArray();
+            CollectionAssert.AreEqual(ExpectedCurrentPositions, current);
+            var selected = claims.Single(claim => claim.IsSelected);
+            Assert.AreEqual("openlibrary", selected.ProviderId, "Equal support falls to the lowest number, whichever process committed last.");
+            var entry = await db.SeriesEntries.AsNoTracking().SingleAsync(item => item.WorkId == workId);
+            Assert.AreEqual(SeriesPositionState.Conflicted, entry.PositionState);
+            Assert.AreEqual(2m, entry.PositionSort);
+            Assert.AreEqual(1, await db.Works.CountAsync(work => work.CanonicalTitle == title));
+            return 0;
+        });
+    }
+
+    private static string? PositionOf(MetadataClaim claim)
+    {
+        using var document = JsonDocument.Parse(claim.ValueJson);
+        return document.RootElement.GetProperty("label").GetString();
     }
 }

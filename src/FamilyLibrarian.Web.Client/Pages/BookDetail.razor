@@ -121,7 +121,7 @@
                         @if (book.PublicationDate is { } publicationDate)
                         {
                             <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined">
-                                First reported: @publicationDate.ToString("MMMM d, yyyy")
+                                First reported: @CandidateDateText(publicationDate, book.PublicationDatePrecision)
                             </MudChip>
                         }
                         @if (!string.IsNullOrWhiteSpace(book.Publisher))
@@ -194,7 +194,7 @@
                             else
                             {
                                 <text>@series.Name</text>
-                            }@(string.IsNullOrWhiteSpace(series.PositionLabel) ? string.Empty : $" · position {series.PositionLabel}")
+                            }@(string.IsNullOrWhiteSpace(series.PositionLabel) ? string.Empty : $" · position {series.PositionLabel}{(series.PositionState == "Conflicted" ? " (sources disagree)" : string.Empty)}")
                         </MudText>
                         @if (!isPreview)
                         {
@@ -915,4 +915,13 @@
 
     private static string FormatLabel(string format) =>
         string.IsNullOrWhiteSpace(format) ? "Format not reported" : format;
+
+    // A source that stated only a year or a month is shown as exactly that: a year alone is stored as 1 January, which is never
+    // displayed as if it were the publication day.
+    private static string CandidateDateText(DateOnly date, string? precision) => precision switch
+    {
+        "Year" => date.ToString("yyyy", System.Globalization.CultureInfo.InvariantCulture),
+        "Month" => date.ToString("MMMM yyyy", System.Globalization.CultureInfo.InvariantCulture),
+        _ => date.ToString("MMMM d, yyyy", System.Globalization.CultureInfo.InvariantCulture)
+    };
 }

@@ -52,7 +52,7 @@ public sealed class CatalogBrowseService(ICatalogBrowseRepository repository, IC
             foreach (var membership in work.Memberships)
             {
                 entries.Add((membership.SeriesId, membership.SeriesName,
-                    new BrowseEntry(book, membership.PositionLabel, membership.PositionSort)));
+                    new BrowseEntry(book, membership.PositionLabel, membership.PositionSort, membership.PositionState)));
             }
         }
 
@@ -85,7 +85,7 @@ public sealed class CatalogBrowseService(ICatalogBrowseRepository repository, IC
         // The repository already returned this page in its stable total order; sorting again here could only
         // disagree with the page boundary.
         var entries = members.Take(PageSize)
-            .Select(member => new BrowseEntry(ToBook(member.Work), member.PositionLabel, member.PositionSort))
+            .Select(member => new BrowseEntry(ToBook(member.Work), member.PositionLabel, member.PositionSort, member.PositionState))
             .ToArray();
 
         return new CatalogBrowseResult<BrowseSeriesPage>(CatalogBrowseStatus.Ok, new BrowseSeriesPage(
@@ -251,6 +251,11 @@ public sealed class CatalogBrowseService(ICatalogBrowseRepository repository, IC
             limitations.Add(CatalogBrowseLimitations.Truncated);
         }
 
+        if (works.Any(work => work.Memberships.Any(membership => membership.PositionState == nameof(SeriesPositionState.Conflicted))))
+        {
+            limitations.Add(CatalogBrowseLimitations.PositionConflicted);
+        }
+
         return limitations;
     }
 
@@ -296,7 +301,7 @@ public sealed class CatalogBrowseService(ICatalogBrowseRepository repository, IC
         work.Memberships
             .Select(membership => new BrowseBookMembership(
                 membership.SeriesId, null, membership.SeriesName, membership.PositionLabel,
-                membership.PositionSort, membership.IsPrimary))
+                membership.PositionSort, membership.IsPrimary, membership.PositionState))
             .ToArray(),
         work.Sources.Select(source => new BrowseBookSource(source.ProviderId, null, source.ObservedAtUtc)).ToArray(),
         work.Formats,

@@ -311,6 +311,7 @@ app.MapAuthenticationEndpoints();
 app.MapCurrentUserEndpoints();
 app.MapCatalogEndpoints();
 app.MapCatalogBrowseEndpoints();
+app.MapCatalogAdminEndpoints();
 app.MapRequestEndpoints();
 app.MapAdminRequestEndpoints();
 app.MapAdminTasksEndpoints();

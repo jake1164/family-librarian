@@ -21,6 +21,9 @@ public static class CatalogBrowseLimitations
     /// <summary>Groups were built from the displayed page only; a group can continue on another page.</summary>
     public const string GroupingPageLocal = "grouping-page-local";
 
+    /// <summary>Sources disagree about at least one position shown here; the number shown is the selected value, not the only claim.</summary>
+    public const string PositionConflicted = "position-conflicted";
+
     /// <summary>The temporary navigation cache could not admit this context; the book itself is unaffected.</summary>
     public const string NavigationUnavailable = "navigation-unavailable";
 
@@ -132,7 +135,8 @@ public sealed record BrowseBookMembership(
     string Name,
     string? PositionLabel,
     decimal? Position,
-    bool IsPrimary);
+    bool IsPrimary,
+    string? PositionState = null);
 
 /// <summary>
 /// A book in a browse list. Exactly one of <see cref="WorkId"/> or the provider reference is the way to open it.
@@ -158,7 +162,8 @@ public sealed record BrowseBook(
 }
 
 /// <summary>A book listed under one series with that series' own position text and number, where known.</summary>
-public sealed record BrowseEntry(BrowseBook Book, string? PositionLabel, decimal? Position);
+/// <param name="PositionState">SingleSource, Agreed or Conflicted for a saved position; null is a legacy or observed position nobody has attributed.</param>
+public sealed record BrowseEntry(BrowseBook Book, string? PositionLabel, decimal? Position, string? PositionState = null);
 
 public sealed record BrowseGroup(Guid? SeriesId, Guid? SubjectId, string Name, IReadOnlyList<BrowseEntry> Entries);
 

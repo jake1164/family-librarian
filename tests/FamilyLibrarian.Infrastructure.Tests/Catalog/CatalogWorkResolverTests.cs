@@ -1,5 +1,6 @@
 using FamilyLibrarian.Application.Abstractions;
 using FamilyLibrarian.Application.Catalog;
+using FamilyLibrarian.Application.Catalog.Observation;
 using FamilyLibrarian.Application.Following;
 using FamilyLibrarian.Application.Integrations;
 using FamilyLibrarian.Application.Notifications;
@@ -619,14 +620,16 @@ public sealed class CatalogWorkResolverTests
     // ---- typed faults, ambiguity and notices (logic only: the repository here is an in-memory double) ----------------------------
 
     [TestMethod]
-    public async Task AnIsbnSetSpanningTwoWorksIsATypedCollisionThatWritesNothing()
+    public async Task AnIsbnSetSpanningTwoWorksBecomesItsOwnWorkWithTheContestedIsbnsLeftWhereTheyAre()
     {
         var repository = new InMemoryCatalogRepository();
+        var held = new List<Work>();
         foreach (var isbn in new[] { "9780593135204", "9780593396166" })
         {
             var work = new Work($"Held {isbn}", null, null, null, PublicationStatus.Unknown, Now);
             work.AddEdition(new Edition(work.Id, "Held", EditionFormat.Ebook, isbn, null, Now));
             repository.AddWork(work);
+            held.Add(work);
         }
 
         var candidate = CreateCandidate() with
@@ -635,12 +638,18 @@ public sealed class CatalogWorkResolverTests
         };
         var resolver = CreateResolver(new StubProvider(candidate), repository, new EmptyFollowRepository(), CreateNotificationService());
 
-        var thrown = await Assert.ThrowsExactlyAsync<CatalogResolutionException>(
-            async () => await resolver.ResolveAsync("stub", "work-1", CancellationToken.None));
+        var result = await resolver.ResolveAsync("stub", "work-1", CancellationToken.None);
 
-        Assert.AreEqual(CatalogResolutionFault.IsbnCollision, thrown.Fault);
-        Assert.IsEmpty(repository.ExternalReferences, "No guessed winner: no reference was added to either Work.");
-        Assert.AreEqual(0, repository.SaveCount);
+        // Which Work the book belongs to is not knowable from an ISBN set that spans several: it is attached to none.
+        Assert.IsTrue(result.WasCreated);
+        Assert.AreEqual(CatalogResolutionOutcome.Created, result.Outcome);
+        Assert.AreEqual(ObservationKind.Collision, result.Detail!.Kind);
+        Assert.AreEqual("MultipleWorks", result.Detail.Reason);
+        Assert.IsFalse(held.Any(work => work.Id == result.Work.Id));
+        Assert.IsEmpty(result.Work.Editions, "A contested ISBN is never written to the new Work.");
+        Assert.IsTrue(held.All(work => work.Editions.Count == 1), "Neither held Work gained or lost an edition.");
+        Assert.AreEqual(result.Work.Id, repository.ExternalReferences.Single().EntityId, "Only the new Work holds the reference.");
+        Assert.IsNotEmpty(repository.Observations, "The collision is kept as bounded evidence.");
     }
 
     [TestMethod]
@@ -847,7 +856,8 @@ public sealed class CatalogWorkResolverTests
         public Task<CatalogWriteResult<T>> ExecuteAsync<T>(
             Func<ICatalogWriteSession, CancellationToken, Task<T>> mutation,
             Func<ICatalogWriteSession, T, CancellationToken, Task<T?>> verifyAfterUnknownCommit,
-            CancellationToken cancellationToken) where T : class =>
+            CancellationToken cancellationToken,
+            CancellationToken deadline = default) where T : class =>
             Task.FromResult(new CatalogWriteResult<T>(status, null));
     }
 
@@ -857,7 +867,8 @@ public sealed class CatalogWorkResolverTests
         public async Task<CatalogWriteResult<T>> ExecuteAsync<T>(
             Func<ICatalogWriteSession, CancellationToken, Task<T>> mutation,
             Func<ICatalogWriteSession, T, CancellationToken, Task<T?>> verifyAfterUnknownCommit,
-            CancellationToken cancellationToken) where T : class
+            CancellationToken cancellationToken,
+            CancellationToken deadline = default) where T : class
         {
             var attempted = await mutation(new PassThroughSession(repository, follows), cancellationToken);
             return new CatalogWriteResult<T>(CatalogWriteStatus.Recovered, attempted);
@@ -933,7 +944,8 @@ public sealed class CatalogWorkResolverTests
         public async Task<CatalogWriteResult<T>> ExecuteAsync<T>(
             Func<ICatalogWriteSession, CancellationToken, Task<T>> mutation,
             Func<ICatalogWriteSession, T, CancellationToken, Task<T?>> verifyAfterUnknownCommit,
-            CancellationToken cancellationToken) where T : class =>
+            CancellationToken cancellationToken,
+            CancellationToken deadline = default) where T : class =>
             new(CatalogWriteStatus.Committed, await mutation(new Session(repository, follows), cancellationToken));
     }
 
@@ -1097,6 +1109,62 @@ public sealed class CatalogWorkResolverTests
         }
     }
 
+    // ---- discovery budgets (logic only: the repository here is an in-memory double) ----------------------------------------------
+
+    [TestMethod]
+    public async Task DiscoverySearchesAtMostSixProvidersOnceEachAndFetchesAtMostThreeDetailsFromEach()
+    {
+        var repository = new InMemoryCatalogRepository();
+        var author = new Author("Budget Author", null, Now);
+        repository.AddAuthor(author);
+        var work = new Work("Budget Book", null, null, null, PublicationStatus.Unknown, Now);
+        work.AddAuthor(author, 0);
+        repository.AddWork(work);
+        var providers = Enumerable.Range(1, 9).Select(number => new BudgetProvider($"p{number}")).ToArray();
+        var service = new CatalogObservationService(
+            new ActiveProviders(providers), repository, new PassThroughWriteScope(repository, new EmptyFollowRepository()),
+            CreateNotificationService(), new FixedClock());
+
+        var report = await service.RefreshWorkAsync(work.Id, CancellationToken.None);
+
+        Assert.AreEqual(WorkRefreshStatus.Completed, report.Status);
+        Assert.AreEqual(6, providers.Count(provider => provider.SearchCalls > 0), "Discovery touches at most six providers.");
+        Assert.IsTrue(providers.All(provider => provider.SearchCalls <= 1), "At most one search each.");
+        Assert.IsTrue(providers.All(provider => provider.DetailCalls <= 3), "At most three detail fetches each.");
+        Assert.IsEmpty(repository.ExternalReferences, "Tentative proposals attach nothing.");
+        Assert.IsEmpty(repository.Observations);
+        Assert.IsGreaterThan(0, report.Proposals.Count);
+    }
+
+    private sealed class BudgetProvider(string id) : IBookMetadataProvider
+    {
+        private int searches;
+        private int details;
+
+        public int SearchCalls => Volatile.Read(ref searches);
+
+        public int DetailCalls => Volatile.Read(ref details);
+
+        public string Id => id;
+
+        public string DisplayName => id;
+
+        private BookCandidate Record(int number) => new(
+            id, id, $"{id}-{number}", "Budget Book", ["Budget Author"], null, null, null, [], []);
+
+        public Task<BookCandidateSearchPage> SearchAsync(BookSearchQuery query, CancellationToken cancellationToken)
+        {
+            Interlocked.Increment(ref searches);
+            return Task.FromResult(new BookCandidateSearchPage(Enumerable.Range(1, 5).Select(Record).ToArray(), false));
+        }
+
+        public Task<BookCandidate?> GetDetailsAsync(string externalId, CancellationToken cancellationToken)
+        {
+            Interlocked.Increment(ref details);
+            return Task.FromResult<BookCandidate?>(Record(int.Parse(externalId[(id.Length + 1)..], System.Globalization.CultureInfo.InvariantCulture)));
+        }
+    }
+
     private sealed class InMemoryCatalogRepository : ICatalogRepository, ICatalogMutationRepository
     {
         private readonly List<Work> _works = [];
@@ -1165,6 +1233,83 @@ public sealed class CatalogWorkResolverTests
 
         public Task<Author?> GetAuthorAsync(Guid authorId, CancellationToken cancellationToken) =>
             Task.FromResult(_authors.SingleOrDefault(author => author.Id == authorId));
+
+        public List<MetadataClaim> Claims { get; } = [];
+
+        public List<SourceObservation> Observations { get; } = [];
+
+        public Task<IReadOnlyList<ExternalReference>> ListWorkReferencesAsync(Guid workId, CancellationToken cancellationToken) =>
+            GetWorkSourcesAsync(workId, cancellationToken);
+
+        public Task<IReadOnlyDictionary<string, Guid>> MapIsbnOwnersAsync(
+            IReadOnlyCollection<string> isbn13s, CancellationToken cancellationToken) =>
+            Task.FromResult<IReadOnlyDictionary<string, Guid>>(_works
+                .Where(work => !work.IsRetired)
+                .SelectMany(work => work.Editions.Where(edition => edition.Isbn13 is not null && isbn13s.Contains(edition.Isbn13))
+                    .Select(edition => (Isbn: edition.Isbn13!, WorkId: work.Id)))
+                .GroupBy(owner => owner.Isbn)
+                .ToDictionary(group => group.Key, group => group.First().WorkId));
+
+        public Task<IReadOnlyList<MetadataClaim>> ListClaimsAsync(
+            Guid workId, IReadOnlyCollection<ClaimGroup> groups, CancellationToken cancellationToken) =>
+            Task.FromResult<IReadOnlyList<MetadataClaim>>(Claims
+                .Where(claim => claim.WorkId == workId && groups.Contains(new ClaimGroup(claim.Field, claim.ScopeKey))).ToArray());
+
+        public Task<IReadOnlyList<SourceObservation>> ListObservationsAsync(
+            Guid workId, string providerId, string externalId, CancellationToken cancellationToken) =>
+            Task.FromResult<IReadOnlyList<SourceObservation>>(Observations
+                .Where(observation => observation.WorkId == workId && observation.ProviderId == providerId && observation.ExternalId == externalId)
+                .ToArray());
+
+        public Task<string> GetSourceRevisionAsync(Guid workId, string providerId, string externalId, CancellationToken cancellationToken) =>
+            Task.FromResult(string.Join(
+                '\n',
+                Observations.Where(observation => observation.WorkId == workId && observation.ProviderId == providerId && observation.ExternalId == externalId)
+                    .Select(observation => $"S:{observation.Id:N}")
+                    .Concat(Claims.Where(claim => claim.WorkId == workId && claim.ProviderId == providerId && claim.SourceEntityId == externalId)
+                        .Select(claim => $"C:{claim.Id:N}:{claim.IsCurrent}:{claim.LastSeenAtUtc.UtcTicks}"))
+                    .Order(StringComparer.Ordinal)));
+
+        public Task<IReadOnlyList<Guid>> ListEntityIdsByExternalReferenceAsync(
+            ExternalReferenceEntityType entityType, string providerId, string externalId, CancellationToken cancellationToken) =>
+            Task.FromResult<IReadOnlyList<Guid>>(ExternalReferences
+                .Where(reference => reference.EntityType == entityType && reference.ProviderId == providerId && reference.ExternalId == externalId)
+                .Select(reference => reference.EntityId).ToArray());
+
+        public Task<IReadOnlySet<Guid>> ListEntityIdsReferencedByOtherIdAsync(
+            ExternalReferenceEntityType entityType,
+            string providerId,
+            string externalId,
+            IReadOnlyCollection<Guid> entityIds,
+            CancellationToken cancellationToken) =>
+            Task.FromResult<IReadOnlySet<Guid>>(ExternalReferences
+                .Where(reference => reference.EntityType == entityType && reference.ProviderId == providerId &&
+                    reference.ExternalId != externalId && entityIds.Contains(reference.EntityId))
+                .Select(reference => reference.EntityId).ToHashSet());
+
+        public Task<IReadOnlyList<Author>> GetAuthorsAsync(IReadOnlyCollection<Guid> authorIds, CancellationToken cancellationToken) =>
+            Task.FromResult<IReadOnlyList<Author>>(_authors.Where(author => authorIds.Contains(author.Id)).ToArray());
+
+        public Task<IReadOnlyList<Series>> GetSeriesAsync(IReadOnlyCollection<Guid> seriesIds, CancellationToken cancellationToken) =>
+            Task.FromResult<IReadOnlyList<Series>>(_series.Where(series => seriesIds.Contains(series.Id)).ToArray());
+
+        public void AddEdition(Edition edition)
+        {
+            // The in-memory graph is the Work's own collection; there is no change tracker to tell.
+        }
+
+        public void AddSeriesEntry(SeriesEntry seriesEntry)
+        {
+            // See AddEdition.
+        }
+
+        public void AddClaim(MetadataClaim claim) => Claims.Add(claim);
+
+        public void RemoveClaim(MetadataClaim claim) => Claims.Remove(claim);
+
+        public void AddObservation(SourceObservation observation) => Observations.Add(observation);
+
+        public void RemoveObservation(SourceObservation observation) => Observations.Remove(observation);
 
         public void AddWork(Work work) => _works.Add(work);
 

@@ -17,7 +17,8 @@ public sealed record CatalogBrowseMembershipResponse(
     string Name,
     string? PositionLabel,
     decimal? Position,
-    bool IsPrimary);
+    bool IsPrimary,
+    string? PositionState = null);
 
 /// <summary>
 /// A book in a browse list. A saved book opens by <see cref="WorkId"/>; an observed one by its provider reference.
@@ -44,7 +45,8 @@ public sealed record CatalogBrowseBookResponse(
 public sealed record CatalogBrowseEntryResponse(
     CatalogBrowseBookResponse Book,
     string? PositionLabel,
-    decimal? Position);
+    decimal? Position,
+    string? PositionState = null);
 
 public sealed record CatalogBrowseGroupResponse(
     Guid? SeriesId,

@@ -4,6 +4,7 @@ using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using FamilyLibrarian.Application.Catalog;
+using FamilyLibrarian.Domain.Catalog;
 using Microsoft.Extensions.Options;
 
 namespace FamilyLibrarian.Infrastructure.Metadata;
@@ -359,6 +360,8 @@ public sealed class OpenLibraryBookMetadataProvider(
             ? PreferredLanguage
             : LanguageCodeNormalizer.Normalize(FirstString(document.Languages));
 
+        var firstPublished = PublicationDateParser.Parse(FirstString(document.FirstPublishDates), ExactDateFormats);
+
         return new BookCandidate(
             Id,
             DisplayName,
@@ -367,7 +370,7 @@ public sealed class OpenLibraryBookMetadataProvider(
             authors,
             GetDescription(document.Description),
             GetCoverUrl(coverId),
-            TryParseExactDate(FirstString(document.FirstPublishDates)),
+            firstPublished?.Date,
             GetEditions(document, displayTitle),
             [],
             publisher,
@@ -379,7 +382,12 @@ public sealed class OpenLibraryBookMetadataProvider(
                 .ToArray(),
             SourceUrl: $"https://openlibrary.org/works/{externalId}",
             Language: language,
-            WorkTitle: title);
+            WorkTitle: title)
+        {
+            PublicationDatePrecision = PublicationDateParser.Stated(firstPublished),
+            // first_publish_date is Open Library's work-level original publication date.
+            PublicationDateBasis = firstPublished is null ? null : DateBasis.Original
+        };
     }
 
     private static BookEditionCandidate[] GetEditions(
@@ -417,13 +425,17 @@ public sealed class OpenLibraryBookMetadataProvider(
             : edition.Title.Trim();
         var isbn13 = FirstNormalizedIsbn13(edition.Isbns);
         var format = FirstString(edition.Formats) ?? "Unknown format";
-        var publicationDate = TryParseExactDate(FirstString(edition.PublishDates));
+        var published = PublicationDateParser.Parse(FirstString(edition.PublishDates), ExactDateFormats);
+        var publicationDate = published?.Date;
 
         return isbn13 is null && string.Equals(title, workTitle, StringComparison.Ordinal)
             && publicationDate is null && string.Equals(format, "Unknown format", StringComparison.Ordinal)
                 ? null
                 : new BookEditionCandidate(title, isbn13, format, publicationDate,
-                    LanguageCodeNormalizer.Normalize(FirstString(edition.Languages)), FirstString(edition.Publishers));
+                    LanguageCodeNormalizer.Normalize(FirstString(edition.Languages)), FirstString(edition.Publishers))
+                {
+                    PublicationDatePrecision = PublicationDateParser.Stated(published)
+                };
     }
 
     private static BookEditionCandidate[] ToEditionCandidates(
@@ -449,12 +461,17 @@ public sealed class OpenLibraryBookMetadataProvider(
             ? "Unknown format"
             : entry.PhysicalFormat.Trim();
 
+        var published = PublicationDateParser.Parse(entry.PublishDate, ExactDateFormats);
+
         return isbn13 is null && string.Equals(title, workTitle, StringComparison.Ordinal)
             && string.Equals(format, "Unknown format", StringComparison.Ordinal)
                 ? null
-                : new BookEditionCandidate(title, isbn13, format, TryParseExactDate(entry.PublishDate),
+                : new BookEditionCandidate(title, isbn13, format, published?.Date,
                     LanguageCodeNormalizer.Normalize(GetLanguageCode(entry.Languages is { Count: > 0 } languages ? languages[0].Key : null)),
-                    entry.Publishers is { Count: > 0 } publishers ? publishers[0] : null);
+                    entry.Publishers is { Count: > 0 } publishers ? publishers[0] : null)
+                {
+                    PublicationDatePrecision = PublicationDateParser.Stated(published)
+                };
     }
 
     private static string? FirstNormalizedIsbn13(IEnumerable<string>? values)
@@ -527,23 +544,6 @@ public sealed class OpenLibraryBookMetadataProvider(
         return value.Length <= MaximumDescriptionLength
             ? value
             : string.Concat(value.AsSpan(0, MaximumDescriptionLength).TrimEnd(), "…");
-    }
-
-    private static DateOnly? TryParseExactDate(string? value)
-    {
-        if (string.IsNullOrWhiteSpace(value))
-        {
-            return null;
-        }
-
-        return DateOnly.TryParseExact(
-            value.Trim(),
-            ExactDateFormats,
-            CultureInfo.InvariantCulture,
-            DateTimeStyles.None,
-            out var date)
-                ? date
-                : null;
     }
 
     private static string? GetWorkId(string? key)

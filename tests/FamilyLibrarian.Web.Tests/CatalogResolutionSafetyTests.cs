@@ -130,7 +130,7 @@ public sealed class CatalogResolutionSafetyTests
     // ---------------------------------------------------------------- multi-Work ISBN collision
 
     [TestMethod]
-    public async Task ACandidateWhoseIsbnsHitTwoWorksIsAConflictThatWritesNothing()
+    public async Task ACandidateWhoseIsbnsHitTwoWorksCreatesADistinctWorkAndLeavesBothUntouched()
     {
         var connection = await NewDatabaseAsync();
         var provider = new ScriptedProvider(EnabledProvider);
@@ -152,12 +152,33 @@ public sealed class CatalogResolutionSafetyTests
 
         using var response = await ResolveAsync(client, EnabledProvider, "collide-1");
 
-        Assert.AreEqual(HttpStatusCode.Conflict, response.StatusCode, "A multi-Work ISBN hit is a deliberate 409, not an unhandled 500.");
-        Assert.AreEqual("catalog.isbn_collision", await ProblemCodeAsync(response));
+        // The final behavior (P2-D): the record becomes its own Work, so the user is served, and nothing is attached to either held Work.
+        Assert.AreEqual(HttpStatusCode.Created, response.StatusCode, await response.Content.ReadAsStringAsync());
+        Assert.IsNotNull(response.Headers.Location, "A created Work is reported with its location.");
         Assert.AreEqual(1, provider.DetailCalls, "The provider is asked once; the collision is found afterwards.");
-        CollectionAssert.AreEqual(before, await WorkRowsAsync(host), "Every Work row value (timestamps, version, lengths) is unchanged.");
-        Assert.AreEqual(0, await WithDatabaseAsync(host, database =>
-            database.ExternalReferences.CountAsync(reference => reference.ExternalId == "collide-1")), "No reference was written.");
+        var after = await WorkRowsAsync(host);
+        foreach (var row in before)
+        {
+            CollectionAssert.Contains(after, row, "Every pre-existing Work, edition and reference row value (timestamps included) is unchanged.");
+        }
+
+        var created = await WithDatabaseAsync(host, async database =>
+        {
+            var reference = await database.ExternalReferences.SingleAsync(item => item.ExternalId == "collide-1");
+            var editions = await database.Editions.CountAsync(edition => edition.WorkId == reference.EntityId);
+            var observation = await database.SourceObservations.SingleAsync(item => item.WorkId == reference.EntityId);
+            var claims = await database.MetadataClaims.CountAsync(claim => claim.WorkId == reference.EntityId);
+            return (reference.EntityId, editions, observation.Snapshot, claims);
+        });
+        Assert.AreEqual(0, created.editions, "A contested ISBN is never written to the new Work (the global ISBN index stays untouched).");
+        using var snapshot = System.Text.Json.JsonDocument.Parse(created.Snapshot);
+        Assert.AreEqual("Collision", snapshot.RootElement.GetProperty("outcome").GetString());
+        Assert.AreEqual("MultipleWorks", snapshot.RootElement.GetProperty("reason").GetString());
+        var unattached = snapshot.RootElement.GetProperty("unattachedEditions").EnumerateArray().ToArray();
+        CollectionAssert.AreEquivalent(new[] { firstIsbn, secondIsbn }, unattached.Select(edition => edition.GetProperty("isbn13").GetString()).ToArray(),
+            "The contested ISBNs stay as evidence in the snapshot.");
+        Assert.IsTrue(unattached.All(edition => edition.GetProperty("exclusion").GetString() == "OwnedByOtherWork"));
+        StringAssert.Contains(response.Headers.Location!.ToString(), created.EntityId.ToString());
     }
 
     private static Task<string[]> WorkRowsAsync(FamilyLibrarianAppFactory factory) =>
@@ -182,7 +203,7 @@ public sealed class CatalogResolutionSafetyTests
         });
 
     [TestMethod]
-    public async Task AMultiWorkIsbnCollisionIsHandledInChatWithoutAnException()
+    public async Task AMultiWorkIsbnCollisionResolvesInChatToItsOwnDistinctWork()
     {
         var connection = await NewDatabaseAsync();
         var firstIsbn = "9780000200016";
@@ -210,9 +231,11 @@ public sealed class CatalogResolutionSafetyTests
             new FamilyLibrarian.Application.Conversation.ConversationChoiceRef(EnabledProvider, "collide-chat", "Both", "A", null),
             CancellationToken.None);
 
-        Assert.IsNull(workId, "The chat's resolution result for a handled collision is no Work, not an unhandled exception.");
+        Assert.IsNotNull(workId, "The chat resolves a contested record to its own distinct Work, never an unhandled exception.");
+        Assert.AreEqual(1, await WithDatabaseAsync(host, database =>
+            database.ExternalReferences.CountAsync(reference => reference.ExternalId == "collide-chat" && reference.EntityId == workId)));
         Assert.AreEqual(0, await WithDatabaseAsync(host, database =>
-            database.ExternalReferences.CountAsync(reference => reference.ExternalId == "collide-chat")));
+            database.Editions.CountAsync(edition => edition.WorkId == workId)), "The contested ISBNs stay with the Works that hold them.");
     }
 
     // ---------------------------------------------------------------- ambiguous names (U1-1)

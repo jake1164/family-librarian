@@ -92,6 +92,17 @@ internal sealed class CatalogHostProcess : IAsyncDisposable
 
     internal Command Retire() => Send(id => new Dictionary<string, object?> { ["id"] = id, ["op"] = "retire" });
 
+    /// <summary>Tells the helper's provider what record to return next for a reference (no catalog work is done).</summary>
+    internal Command Record(string providerId, string externalId, BookCandidate candidate) =>
+        Send(id => new Dictionary<string, object?>
+        {
+            ["id"] = id, ["op"] = "record", ["provider"] = providerId, ["externalId"] = externalId, ["candidate"] = candidate
+        });
+
+    /// <summary>Runs the production administrator refresh of one Work in the helper process.</summary>
+    internal Command Refresh(Guid workId) =>
+        Send(id => new Dictionary<string, object?> { ["id"] = id, ["op"] = "refresh", ["workId"] = workId });
+
     private Command Send(Func<int, Dictionary<string, object?>> build)
     {
         var id = Interlocked.Increment(ref nextId);

@@ -48,6 +48,10 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options)
 
     public DbSet<ExternalReference> ExternalReferences => Set<ExternalReference>();
 
+    public DbSet<SourceObservation> SourceObservations => Set<SourceObservation>();
+
+    public DbSet<MetadataClaim> MetadataClaims => Set<MetadataClaim>();
+
     public DbSet<ProviderSetting> ProviderSettings => Set<ProviderSetting>();
 
     public DbSet<AuditEvent> AuditEvents => Set<AuditEvent>();
@@ -1950,6 +1954,9 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options)
             entity.Property(work => work.PublicationStatus).HasColumnName("publication_status").HasConversion<string>().HasMaxLength(32);
             entity.Property(work => work.IsRetired).HasColumnName("is_retired");
             entity.Property(work => work.ReplacedById).HasColumnName("replaced_by_id");
+            entity.Property(work => work.VersionClass).HasColumnName("version_class").HasMaxLength(32);
+            entity.Property(work => work.FirstPublicationPrecision).HasColumnName("first_publication_precision").HasConversion<string>().HasMaxLength(16);
+            entity.Property(work => work.FirstPublicationBasis).HasColumnName("first_publication_basis").HasConversion<string>().HasMaxLength(32);
             ConfigureTimestamps(entity);
             entity.HasIndex(work => work.NormalizedTitle);
             entity.HasIndex(work => work.ReplacedById);
@@ -1967,6 +1974,7 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options)
             entity.Property(workAuthor => workAuthor.AuthorId).HasColumnName("author_id");
             entity.Property(workAuthor => workAuthor.Ordinal).HasColumnName("ordinal");
             entity.Property(workAuthor => workAuthor.Role).HasColumnName("role").HasMaxLength(128);
+            entity.Property(workAuthor => workAuthor.BindingBasis).HasColumnName("binding_basis").HasConversion<string>().HasMaxLength(32);
             entity.HasIndex(workAuthor => new { workAuthor.WorkId, workAuthor.Ordinal }).IsUnique();
             entity.HasOne(workAuthor => workAuthor.Work)
                 .WithMany(work => work.Authors)
@@ -1990,6 +1998,9 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options)
             entity.Property(edition => edition.PublicationDate).HasColumnName("publication_date");
             entity.Property(edition => edition.Isbn13).HasColumnName("isbn13").HasMaxLength(13);
             entity.Property(edition => edition.Format).HasColumnName("format").HasConversion<string>().HasMaxLength(32);
+            entity.Property(edition => edition.IdentityBasis).HasColumnName("identity_basis").HasConversion<string>().HasMaxLength(32);
+            entity.Property(edition => edition.SourceProviderId).HasColumnName("source_provider_id").HasMaxLength(128);
+            entity.Property(edition => edition.PublicationPrecision).HasColumnName("publication_precision").HasConversion<string>().HasMaxLength(16);
             ConfigureTimestamps(entity);
             entity.HasIndex(edition => edition.Isbn13).IsUnique().HasFilter("isbn13 IS NOT NULL");
             entity.HasOne(edition => edition.Work)
@@ -2021,6 +2032,8 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options)
             entity.Property(seriesEntry => seriesEntry.PositionLabel).HasColumnName("position_label").HasMaxLength(128);
             entity.Property(seriesEntry => seriesEntry.PositionSort).HasColumnName("position_sort").HasPrecision(10, 3);
             entity.Property(seriesEntry => seriesEntry.IsPrimary).HasColumnName("is_primary");
+            entity.Property(seriesEntry => seriesEntry.BindingBasis).HasColumnName("binding_basis").HasConversion<string>().HasMaxLength(32);
+            entity.Property(seriesEntry => seriesEntry.PositionState).HasColumnName("position_state").HasConversion<string>().HasMaxLength(32);
             ConfigureTimestamps(entity);
             entity.HasIndex(seriesEntry => new { seriesEntry.SeriesId, seriesEntry.WorkId }).IsUnique();
             entity.HasIndex(seriesEntry => new
@@ -2058,6 +2071,67 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options)
                 reference.ExternalId
             }).IsUnique();
             entity.HasIndex(reference => new { reference.EntityType, reference.EntityId });
+        });
+
+        // Provider and external ids are historical text, never foreign keys, so removing a provider's configuration cannot touch
+        // them; the Work foreign key is Restrict because no code path deletes a Work, and retirement keeps its evidence.
+        builder.Entity<SourceObservation>(entity =>
+        {
+            entity.ToTable("source_observations", "catalog");
+            entity.HasKey(observation => observation.Id);
+            entity.Property(observation => observation.Id).HasColumnName("id");
+            entity.Property(observation => observation.WorkId).HasColumnName("work_id");
+            entity.Property(observation => observation.ProviderId).HasColumnName("provider_id").HasMaxLength(128).IsRequired();
+            entity.Property(observation => observation.ExternalId).HasColumnName("external_id").HasMaxLength(512).IsRequired();
+            entity.Property(observation => observation.ObservedAtUtc).HasColumnName("observed_at").HasColumnType("timestamp with time zone");
+            entity.Property(observation => observation.LastSeenAtUtc).HasColumnName("last_seen_at").HasColumnType("timestamp with time zone");
+            entity.Property(observation => observation.SchemaVersion).HasColumnName("schema_version");
+            entity.Property(observation => observation.ContentHash).HasColumnName("content_hash").HasMaxLength(64).IsRequired();
+            entity.Property(observation => observation.Snapshot).HasColumnName("snapshot").HasColumnType("jsonb").IsRequired();
+            entity.Property(observation => observation.Version).HasColumnName("xmin").IsRowVersion();
+            entity.HasIndex(observation => new { observation.WorkId, observation.ProviderId, observation.ExternalId, observation.ContentHash })
+                .IsUnique();
+            entity.HasIndex(observation => new { observation.WorkId, observation.ProviderId, observation.ExternalId, observation.ObservedAtUtc });
+            entity.HasOne<Work>()
+                .WithMany()
+                .HasForeignKey(observation => observation.WorkId)
+                .OnDelete(DeleteBehavior.Restrict);
+        });
+
+        builder.Entity<MetadataClaim>(entity =>
+        {
+            entity.ToTable("metadata_claims", "catalog");
+            entity.HasKey(claim => claim.Id);
+            entity.Property(claim => claim.Id).HasColumnName("id");
+            entity.Property(claim => claim.WorkId).HasColumnName("work_id");
+            entity.Property(claim => claim.Field).HasColumnName("field").HasConversion<string>().HasMaxLength(32);
+            entity.Property(claim => claim.ScopeKey).HasColumnName("scope_key").HasMaxLength(MetadataClaim.MaximumScopeLength).IsRequired();
+            entity.Property(claim => claim.ProviderId).HasColumnName("provider_id").HasMaxLength(128).IsRequired();
+            entity.Property(claim => claim.SourceEntityId).HasColumnName("source_entity_id").HasMaxLength(512).IsRequired();
+            entity.Property(claim => claim.ValueJson).HasColumnName("value_json").HasColumnType("jsonb").IsRequired();
+            entity.Property(claim => claim.ValueHash).HasColumnName("value_hash").HasMaxLength(64).IsRequired();
+            entity.Property(claim => claim.FirstSeenAtUtc).HasColumnName("first_seen_at").HasColumnType("timestamp with time zone");
+            entity.Property(claim => claim.LastSeenAtUtc).HasColumnName("last_seen_at").HasColumnType("timestamp with time zone");
+            entity.Property(claim => claim.IsCurrent).HasColumnName("is_current");
+            entity.Property(claim => claim.IsSelected).HasColumnName("is_selected");
+            entity.Property(claim => claim.Version).HasColumnName("xmin").IsRowVersion();
+            entity.HasIndex(claim => new
+            {
+                claim.WorkId,
+                claim.Field,
+                claim.ScopeKey,
+                claim.ProviderId,
+                claim.SourceEntityId,
+                claim.ValueHash
+            }).IsUnique();
+            entity.HasIndex(claim => new { claim.WorkId, claim.Field, claim.ScopeKey })
+                .IsUnique()
+                .HasFilter("is_selected")
+                .HasDatabaseName("ix_metadata_claims_one_selected");
+            entity.HasOne<Work>()
+                .WithMany()
+                .HasForeignKey(claim => claim.WorkId)
+                .OnDelete(DeleteBehavior.Restrict);
         });
     }
 

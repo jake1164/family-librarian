@@ -70,7 +70,7 @@
                             else
                             {
                                 <text>@series.Name</text>
-                            }@(string.IsNullOrWhiteSpace(series.PositionLabel) ? string.Empty : $" · position {series.PositionLabel}")
+                            }@(string.IsNullOrWhiteSpace(series.PositionLabel) ? string.Empty : $" · position {series.PositionLabel}{(series.PositionState == "Conflicted" ? " (sources disagree)" : string.Empty)}")
                         </MudText>
                         @if (series.Id is { } seriesId)
                         {

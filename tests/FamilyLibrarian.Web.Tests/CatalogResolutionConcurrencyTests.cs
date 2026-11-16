@@ -50,14 +50,18 @@ public sealed class CatalogResolutionConcurrencyTests
             // The shared author and series are new to the catalog; the ISBN is unique per book, except that every "shared-" record
             // carries the one ISBN, whichever provider reports it, so two providers can describe the same book.
             var number = externalId.Replace("book-", string.Empty, StringComparison.Ordinal);
-            var isbn = externalId.StartsWith("shared-", StringComparison.Ordinal) ? SharedIsbn : $"978000000{number.PadLeft(4, '0')}";
+            var shared = externalId.StartsWith("shared-", StringComparison.Ordinal);
+            var isbn = shared ? SharedIsbn : $"978000000{number.PadLeft(4, '0')}";
+            // Two providers describing one book title it the same way: a shared ISBN alone no longer attaches a differently titled
+            // record (that is a contested ISBN, which gets its own Work), so the shared book carries one title.
+            var title = shared ? "Racing Shared Isbn Book" : $"Racing Title {externalId}";
             return new BookCandidate(
-                id, "Racing test source", externalId, $"Racing Title {externalId}",
+                id, "Racing test source", externalId, title,
                 // Own author for the shared-ISBN case: the class shares one database, and a name already carried by several authors
                 // is deliberately ambiguous, which would hide the follower notice this case asserts on.
                 [externalId.StartsWith("shared-", StringComparison.Ordinal) ? "Shared Isbn Author" : "Racing Shared Author"], "Fictional.", null,
                 new DateOnly(2020, 1, 1),
-                [new BookEditionCandidate($"Racing Title {externalId}", isbn, "Ebook", new DateOnly(2020, 1, 1))],
+                [new BookEditionCandidate(title, isbn, "Ebook", new DateOnly(2020, 1, 1))],
                 [new BookSeriesCandidate("Racing Shared Series", number, true)]);
         }
     }

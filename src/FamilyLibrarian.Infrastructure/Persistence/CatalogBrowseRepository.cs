@@ -43,11 +43,11 @@ public sealed class CatalogBrowseRepository(AppDbContext database) : ICatalogBro
         """;
 
     private const string MembershipsSql = """
-        SELECT "WorkId", "SeriesId", "SeriesName", "PositionLabel", "PositionSort", "IsPrimary", "Rank"
+        SELECT "WorkId", "SeriesId", "SeriesName", "PositionLabel", "PositionSort", "IsPrimary", "PositionState", "Rank"
         FROM (
             SELECT se.work_id AS "WorkId", se.series_id AS "SeriesId", s.name AS "SeriesName",
                    se.position_label AS "PositionLabel", se.position_sort AS "PositionSort",
-                   se.is_primary AS "IsPrimary",
+                   se.is_primary AS "IsPrimary", se.position_state AS "PositionState",
                    row_number() OVER (
                        PARTITION BY se.work_id
                        ORDER BY se.is_primary DESC, s.name, se.series_id) AS "Rank"
@@ -133,13 +133,14 @@ public sealed class CatalogBrowseRepository(AppDbContext database) : ICatalogBro
             .Take(take)
             .Select(entry => new MemberRow(
                 entry.Id, entry.PositionLabel, entry.PositionSort, entry.IsPrimary,
-                new WorkRow(entry.WorkId, entry.Work.CanonicalTitle, entry.Work.FirstPublicationDate)))
+                new WorkRow(entry.WorkId, entry.Work.CanonicalTitle, entry.Work.FirstPublicationDate), entry.PositionState))
             .ToArrayAsync(cancellationToken);
 
         var works = await AttachAsync(page.Select(row => row.Work).ToArray(), cancellationToken);
         var byId = works.ToDictionary(work => work.WorkId);
         return page
-            .Select(row => new BrowseSeriesMember(row.EntryId, row.PositionLabel, row.PositionSort, row.IsPrimary, byId[row.Work.WorkId]))
+            .Select(row => new BrowseSeriesMember(
+                row.EntryId, row.PositionLabel, row.PositionSort, row.IsPrimary, byId[row.Work.WorkId], row.PositionState?.ToString()))
             .ToArray();
     }
 
@@ -217,7 +218,7 @@ public sealed class CatalogBrowseRepository(AppDbContext database) : ICatalogBro
             .ToArrayAsync(cancellationToken);
         var memberships = membershipRows.Where(row => row.Rank <= MaximumMembershipsPerWork)
             .ToLookup(row => row.WorkId, row => new BrowseMembership(
-                row.SeriesId, row.SeriesName, row.PositionLabel, row.PositionSort, row.IsPrimary));
+                row.SeriesId, row.SeriesName, row.PositionLabel, row.PositionSort, row.IsPrimary, row.PositionState));
         var membershipsTruncated = membershipRows.Where(row => row.Rank > MaximumMembershipsPerWork).Select(row => row.WorkId).ToHashSet();
 
         var sourceRows = await database.Database
@@ -249,13 +250,15 @@ public sealed class CatalogBrowseRepository(AppDbContext database) : ICatalogBro
 
     private sealed record WorkRow(Guid WorkId, string Title, DateOnly? FirstPublicationDate);
 
-    private sealed record MemberRow(Guid EntryId, string? PositionLabel, decimal? PositionSort, bool IsPrimary, WorkRow Work);
+    private sealed record MemberRow(
+        Guid EntryId, string? PositionLabel, decimal? PositionSort, bool IsPrimary, WorkRow Work, SeriesPositionState? PositionState);
 
     // Unmapped projection types for the bounded SQL above; every column has a matching property (EF Core SqlQuery).
     private sealed record CreditRow(Guid WorkId, int Ordinal, Guid AuthorId, string Name, string? Role, long Rank);
 
     private sealed record MembershipRow(
-        Guid WorkId, Guid SeriesId, string SeriesName, string? PositionLabel, decimal? PositionSort, bool IsPrimary, long Rank);
+        Guid WorkId, Guid SeriesId, string SeriesName, string? PositionLabel, decimal? PositionSort, bool IsPrimary,
+        string? PositionState, long Rank);
 
     private sealed record SourceRow(Guid WorkId, string ProviderId, DateTimeOffset ObservedAtUtc, long Rank);
 

@@ -1,3 +1,4 @@
+using FamilyLibrarian.Application.Catalog;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Storage;
 
@@ -42,6 +43,44 @@ internal static class CatalogWriteLock
             await DisposeQuietlyAsync(transaction);
             throw;
         }
+    }
+
+    /// <summary>
+    /// The id of the current transaction if it has written anything (so the database has assigned it one), otherwise null. Read just
+    /// before COMMIT so that, if the outcome of the COMMIT is ever unknown, the database itself can later say what became of it
+    /// (<c>pg_xact_status</c>) without any clock or row comparison. A read-only attempt is never given an id by asking.
+    /// </summary>
+    internal static async Task<string?> AssignedTransactionIdAsync(AppDbContext database, CancellationToken cancellationToken)
+    {
+        // pg_current_xact_id_if_assigned() returns the 64-bit xid8, which does not wrap, so the id cannot be confused with a later one.
+        var rows = await database.Database
+            .SqlQuery<string>($"SELECT COALESCE(pg_current_xact_id_if_assigned()::text, '') AS \"Value\"")
+            .ToListAsync(cancellationToken);
+        return rows.Count == 1 && rows[0].Length > 0 ? rows[0] : null;
+    }
+
+    /// <summary>
+    /// What PostgreSQL records about a recent transaction: committed, rolled back, still running, or (if the database no longer
+    /// retains it) nothing. Intended to be asked while holding the catalog lock, after which the original transaction, which held
+    /// the same lock, has necessarily ended.
+    /// </summary>
+    internal static async Task<CatalogTransactionStatus> TransactionStatusAsync(
+        AppDbContext database, string? transactionId, CancellationToken cancellationToken)
+    {
+        if (transactionId is null)
+        {
+            return CatalogTransactionStatus.NoWrites;
+        }
+
+        var rows = await database.Database
+            .SqlQuery<string>($"SELECT COALESCE(pg_xact_status(CAST(CAST({transactionId} AS text) AS xid8)), 'unknown') AS \"Value\"")
+            .ToListAsync(cancellationToken);
+        return rows.SingleOrDefault() switch
+        {
+            "committed" => CatalogTransactionStatus.Committed,
+            "aborted" => CatalogTransactionStatus.RolledBack,
+            _ => CatalogTransactionStatus.Unknown
+        };
     }
 
     /// <summary>

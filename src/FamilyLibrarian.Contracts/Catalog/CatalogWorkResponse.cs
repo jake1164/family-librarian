@@ -11,7 +11,14 @@ public sealed record CatalogWorkResponse(
     DateOnly? PublicationDate,
     IReadOnlyList<CatalogEditionResponse> Editions,
     IReadOnlyList<CatalogSeriesResponse> Series,
-    IReadOnlyList<CatalogWorkSourceResponse> Sources);
+    IReadOnlyList<CatalogWorkSourceResponse> Sources)
+{
+    /// <summary>How much of <see cref="PublicationDate"/> was stated (Year, Month or Day); null is a legacy value of unknown precision.</summary>
+    public string? PublicationDatePrecision { get; init; }
+
+    /// <summary>What the date means (Original, EditionDerived or Unknown); null is a legacy value of unknown meaning.</summary>
+    public string? PublicationDateBasis { get; init; }
+}
 
 /// <summary>An author as displayed on a resolved Work — unlike a raw search
 /// candidate's plain name strings, this carries the catalog <c>Author</c>'s

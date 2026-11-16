@@ -207,8 +207,6 @@ internal static class CatalogEndpoints
                 "The selected catalog source has no such record.", "catalog.candidate_not_found", false),
             CatalogResolutionFault.ProviderNotEnabled => (StatusCodes.Status409Conflict, "Catalog source not enabled",
                 "The selected catalog source is switched off, so it was not asked.", "catalog.provider_not_enabled", false),
-            CatalogResolutionFault.IsbnCollision => (StatusCodes.Status409Conflict, "Catalog record is ambiguous",
-                "This record matches more than one saved book, so it was not added.", "catalog.isbn_collision", false),
             CatalogResolutionFault.Conflict => (StatusCodes.Status409Conflict, "Catalog changed at the same time",
                 "The catalog changed at the same time and nothing was added. Try again.", "catalog.conflict", false),
             CatalogResolutionFault.Busy => (StatusCodes.Status503ServiceUnavailable, "Catalog busy",
@@ -514,7 +512,11 @@ internal static class CatalogEndpoints
         candidate.Language,
         BookCandidateVersion.Assess(candidate).Kind,
         BookCandidateVersion.Assess(candidate).Label,
-        BookCandidateVersion.Assess(candidate).Explanation);
+        BookCandidateVersion.Assess(candidate).Explanation)
+    {
+        PublicationDatePrecision = candidate.PublicationDatePrecision?.ToString(),
+        PublicationDateBasis = candidate.PublicationDateBasis?.ToString()
+    };
 
     private static async Task<CatalogWorkResponse> ToWorkResponseAsync(
         Domain.Catalog.Work work,
@@ -549,12 +551,17 @@ internal static class CatalogEndpoints
                     entry.Series.Name,
                     entry.PositionLabel,
                     entry.IsPrimary,
-                    entry.SeriesId))
+                    entry.SeriesId,
+                    entry.PositionState?.ToString()))
                 .ToArray(),
             sources.Select(source => new CatalogWorkSourceResponse(
                 source.ProviderId,
                 source.ExternalId,
-                source.ObservedAtUtc)).ToArray());
+                source.ObservedAtUtc)).ToArray())
+        {
+            PublicationDatePrecision = work.FirstPublicationPrecision?.ToString(),
+            PublicationDateBasis = work.FirstPublicationBasis?.ToString()
+        };
     }
 
 }

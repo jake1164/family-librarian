@@ -36,7 +36,8 @@ public sealed partial class PostgresCatalogWriteScope(
     public async Task<CatalogWriteResult<T>> ExecuteAsync<T>(
         Func<ICatalogWriteSession, CancellationToken, Task<T>> mutation,
         Func<ICatalogWriteSession, T, CancellationToken, Task<T?>> verifyAfterUnknownCommit,
-        CancellationToken cancellationToken) where T : class
+        CancellationToken cancellationToken,
+        CancellationToken deadline = default) where T : class
     {
         ArgumentNullException.ThrowIfNull(mutation);
         ArgumentNullException.ThrowIfNull(verifyAfterUnknownCommit);
@@ -44,11 +45,19 @@ public sealed partial class PostgresCatalogWriteScope(
         var cause = CatalogWriteRetryCause.None;
         for (var attempt = 1; ; attempt++)
         {
-            var outcome = await RunAttemptAsync(mutation, cause, cancellationToken);
+            if (deadline.IsCancellationRequested && !cancellationToken.IsCancellationRequested)
+            {
+                // The overall budget ended between attempts: whatever ran before was rolled back or verified absent.
+                return new CatalogWriteResult<T>(CatalogWriteStatus.DeadlineReached, null);
+            }
+
+            var outcome = await RunAttemptAsync(mutation, cause, cancellationToken, deadline);
             switch (outcome.Kind)
             {
                 case AttemptKind.Committed:
                     return new CatalogWriteResult<T>(CatalogWriteStatus.Committed, outcome.Value);
+                case AttemptKind.DeadlineReached:
+                    return new CatalogWriteResult<T>(CatalogWriteStatus.DeadlineReached, null);
                 case AttemptKind.Busy:
                     return new CatalogWriteResult<T>(CatalogWriteStatus.Busy, null);
                 case AttemptKind.Unavailable:
@@ -64,7 +73,7 @@ public sealed partial class PostgresCatalogWriteScope(
                     continue;
                 default:
                     // The commit's outcome is unknown. Find out, holding the same lock so an in-flight first transaction settles.
-                    var verified = await VerifyAsync(outcome.Value!, verifyAfterUnknownCommit, cancellationToken);
+                    var verified = await VerifyAsync(outcome.Value!, outcome.TransactionId, verifyAfterUnknownCommit, cancellationToken, deadline);
                     switch (verified.Kind)
                     {
                         case VerifyKind.Present:
@@ -88,17 +97,23 @@ public sealed partial class PostgresCatalogWriteScope(
     private async Task<Attempt<T>> RunAttemptAsync<T>(
         Func<ICatalogWriteSession, CancellationToken, Task<T>> mutation,
         CatalogWriteRetryCause cause,
-        CancellationToken cancellationToken) where T : class
+        CancellationToken cancellationToken,
+        CancellationToken deadline) where T : class
     {
         await using var scope = scopes.CreateAsyncScope();
         var database = scope.ServiceProvider.GetRequiredService<AppDbContext>();
 
+        // The caller's cancellation and the overall deadline both end the wait for the lock and the attempt's own reads and writes.
+        // Only the caller's cancellation can interrupt a commit that was already sent: cutting one off at a deadline would leave its
+        // outcome unknown for no reason, and nothing may commit after this method has reported the deadline.
+        using var budget = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, deadline);
+
         IDbContextTransaction transaction;
         try
         {
-            transaction = await CatalogWriteLock.BeginAsync(database, cancellationToken);
+            transaction = await CatalogWriteLock.BeginAsync(database, budget.Token);
         }
-        catch (Exception exception) when (ClassifyBeforeCommit<T>(exception, cancellationToken) is { } classified)
+        catch (Exception exception) when (ClassifyBeforeCommit<T>(exception, cancellationToken, deadline) is { } classified)
         {
             LogFault("begin", classified.Kind, SqlStateOf(exception));
             return classified;
@@ -107,11 +122,15 @@ public sealed partial class PostgresCatalogWriteScope(
         try
         {
             T value;
+            string? transactionId;
             try
             {
-                value = await mutation(new Session(scope.ServiceProvider, cause), cancellationToken);
+                value = await mutation(new Session(scope.ServiceProvider, cause, CatalogTransactionStatus.Unknown), budget.Token);
+
+                // Before COMMIT, so a COMMIT whose reply is lost can later be settled by the database's own record of this transaction.
+                transactionId = await CatalogWriteLock.AssignedTransactionIdAsync(database, budget.Token);
             }
-            catch (Exception exception) when (ClassifyBeforeCommit<T>(exception, cancellationToken) is { } classified)
+            catch (Exception exception) when (ClassifyBeforeCommit<T>(exception, cancellationToken, deadline) is { } classified)
             {
                 LogFault("mutate", classified.Kind, SqlStateOf(exception));
                 return classified;
@@ -121,7 +140,7 @@ public sealed partial class PostgresCatalogWriteScope(
             {
                 await transaction.CommitAsync(cancellationToken);
             }
-            catch (Exception exception) when (ClassifyCommit(exception, value, cancellationToken) is { } classified)
+            catch (Exception exception) when (ClassifyCommit(exception, value, transactionId, cancellationToken) is { } classified)
             {
                 LogFault("commit", classified.Kind, SqlStateOf(exception));
                 return classified;
@@ -137,18 +156,23 @@ public sealed partial class PostgresCatalogWriteScope(
 
     private async Task<Verification<T>> VerifyAsync<T>(
         T attempted,
+        string? transactionId,
         Func<ICatalogWriteSession, T, CancellationToken, Task<T?>> verify,
-        CancellationToken cancellationToken) where T : class
+        CancellationToken cancellationToken,
+        CancellationToken deadline) where T : class
     {
         await using var scope = scopes.CreateAsyncScope();
         var database = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        using var budget = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, deadline);
         try
         {
-            var transaction = await CatalogWriteLock.BeginAsync(database, cancellationToken);
+            var transaction = await CatalogWriteLock.BeginAsync(database, budget.Token);
             try
             {
-                var found = await verify(new Session(scope.ServiceProvider, CatalogWriteRetryCause.UncertainCommit), attempted, cancellationToken);
-                await transaction.CommitAsync(cancellationToken);
+                // Holding the lock, the abandoned transaction (which held it too) has ended, so the database can say how.
+                var status = await CatalogWriteLock.TransactionStatusAsync(database, transactionId, budget.Token);
+                var found = await verify(new Session(scope.ServiceProvider, CatalogWriteRetryCause.UncertainCommit, status), attempted, budget.Token);
+                await transaction.CommitAsync(budget.Token);
                 return found is null ? new Verification<T>(VerifyKind.Absent, null) : new Verification<T>(VerifyKind.Present, found);
             }
             finally
@@ -156,8 +180,15 @@ public sealed partial class PostgresCatalogWriteScope(
                 await CatalogWriteLock.DisposeQuietlyAsync(transaction);
             }
         }
+        catch (CatalogOutcomeUnprovableException)
+        {
+            // Later writers changed what would prove the attempt present or absent: say so, and never replay over them.
+            LogFault("verify", AttemptKind.UnknownCommit, null);
+            return new Verification<T>(VerifyKind.Unprovable, null);
+        }
         catch (Exception exception) when (!IsCallerCancellation(exception, cancellationToken)
-            && (IsLockTimeout(exception) || IsTransportFailure(exception) || IsServerSessionFailure(exception)))
+            && (IsLockTimeout(exception) || IsTransportFailure(exception) || IsServerSessionFailure(exception) ||
+                IsDeadlineCancellation(exception, cancellationToken, deadline)))
         {
             // Neither "it committed" nor "it did not" could be established.
             LogFault("verify", AttemptKind.UnknownCommit, SqlStateOf(exception));
@@ -165,11 +196,18 @@ public sealed partial class PostgresCatalogWriteScope(
         }
     }
 
-    private static Attempt<T>? ClassifyBeforeCommit<T>(Exception exception, CancellationToken cancellationToken) where T : class
+    private static Attempt<T>? ClassifyBeforeCommit<T>(Exception exception, CancellationToken cancellationToken, CancellationToken deadline)
+        where T : class
     {
         if (IsCallerCancellation(exception, cancellationToken))
         {
             return null;
+        }
+
+        if (IsDeadlineCancellation(exception, cancellationToken, deadline))
+        {
+            // Cut off before COMMIT: the transaction is rolled back, so nothing was written.
+            return new Attempt<T>(AttemptKind.DeadlineReached, CatalogWriteRetryCause.None, null);
         }
 
         if (IsLockTimeout(exception))
@@ -188,7 +226,7 @@ public sealed partial class PostgresCatalogWriteScope(
             : null;
     }
 
-    private static Attempt<T>? ClassifyCommit<T>(Exception exception, T value, CancellationToken cancellationToken) where T : class
+    private static Attempt<T>? ClassifyCommit<T>(Exception exception, T value, string? transactionId, CancellationToken cancellationToken) where T : class
     {
         if (IsCallerCancellation(exception, cancellationToken))
         {
@@ -205,12 +243,34 @@ public sealed partial class PostgresCatalogWriteScope(
 
         // The connection or session failed around the COMMIT: it may or may not have been applied.
         return IsTransportFailure(exception) || IsServerSessionFailure(exception) || exception is OperationCanceledException or ObjectDisposedException
-            ? new Attempt<T>(AttemptKind.UnknownCommit, CatalogWriteRetryCause.None, value)
+            ? new Attempt<T>(AttemptKind.UnknownCommit, CatalogWriteRetryCause.None, value, transactionId)
             : null;
     }
 
     private static bool IsCallerCancellation(Exception exception, CancellationToken cancellationToken) =>
         cancellationToken.IsCancellationRequested && (exception is OperationCanceledException || exception.InnerException is OperationCanceledException);
+
+    /// <summary>
+    /// The overall deadline, not the caller, ended the work: the deadline token is cancelled and what was interrupted is a cancellation
+    /// (including the server's "canceling statement due to user request" when a wait for the lock was cancelled).
+    /// </summary>
+    private static bool IsDeadlineCancellation(Exception exception, CancellationToken cancellationToken, CancellationToken deadline)
+    {
+        if (cancellationToken.IsCancellationRequested || !deadline.IsCancellationRequested)
+        {
+            return false;
+        }
+
+        for (var current = exception; current is not null; current = current.InnerException)
+        {
+            if (current is OperationCanceledException || (current is PostgresException postgres && postgres.SqlState == PostgresErrorCodes.QueryCanceled))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
 
     private static PostgresException? FindPostgres(Exception exception)
     {
@@ -278,6 +338,7 @@ public sealed partial class PostgresCatalogWriteScope(
     private enum AttemptKind
     {
         Committed,
+        DeadlineReached,
         Busy,
         Unavailable,
         Retryable,
@@ -291,17 +352,19 @@ public sealed partial class PostgresCatalogWriteScope(
         Unprovable
     }
 
-    private sealed record Attempt<T>(AttemptKind Kind, CatalogWriteRetryCause Cause, T? Value) where T : class;
+    private sealed record Attempt<T>(AttemptKind Kind, CatalogWriteRetryCause Cause, T? Value, string? TransactionId = null) where T : class;
 
     private sealed record Verification<T>(VerifyKind Kind, T? Value) where T : class;
 
     /// <summary>The repositories one attempt may use, all resolved from that attempt's own scope.</summary>
-    private sealed class Session(IServiceProvider services, CatalogWriteRetryCause cause) : ICatalogWriteSession
+    private sealed class Session(IServiceProvider services, CatalogWriteRetryCause cause, CatalogTransactionStatus attempted) : ICatalogWriteSession
     {
         public ICatalogMutationRepository Catalog { get; } = services.GetRequiredService<ICatalogMutationRepository>();
 
         public IFollowRepository Follows { get; } = services.GetRequiredService<IFollowRepository>();
 
         public CatalogWriteRetryCause RetryCause => cause;
+
+        public CatalogTransactionStatus AttemptedTransaction => attempted;
     }
 }

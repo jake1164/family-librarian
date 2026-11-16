@@ -2,6 +2,7 @@ using System.Collections.Concurrent;
 using System.Text.Json;
 using FamilyLibrarian.Application.Abstractions;
 using FamilyLibrarian.Application.Catalog;
+using FamilyLibrarian.Application.Catalog.Observation;
 using FamilyLibrarian.Infrastructure;
 using FamilyLibrarian.Infrastructure.Catalog;
 using FamilyLibrarian.Infrastructure.Persistence;
@@ -15,6 +16,8 @@ using Npgsql;
 // connection string is read from the environment, never from a command-line argument, so it cannot appear in a process listing.
 //   {"id":1,"op":"resolve","provider":"demo","externalId":"x","candidate":{...BookCandidate...}}
 //   {"id":2,"op":"retire"}
+//   {"id":3,"op":"record","provider":"demo","externalId":"x","candidate":{...BookCandidate...}}   (what the provider will return next)
+//   {"id":4,"op":"refresh","workId":"..."}                                                          (administrator refresh, production code)
 //   {"op":"exit"}
 // Events: {"event":"ready","pid":N}, {"event":"started","id":N}, {"event":"result","id":N,...}.
 namespace FamilyLibrarian.CatalogConcurrencyHost;
@@ -123,6 +126,36 @@ internal static class CatalogHost
                     catch (CatalogResolutionException exception)
                     {
                         Emit(new { @event = "result", id, ok = false, fault = exception.Fault.ToString(), providerCalls = Volatile.Read(ref providerCalls) });
+                    }
+                    catch (Exception exception)
+                    {
+                        Emit(new { @event = "result", id, ok = false, error = exception.GetType().FullName });
+                    }
+                }));
+            }
+            else if (op == "record")
+            {
+                var providerId = root.GetProperty("provider").GetString()!;
+                var externalId = root.GetProperty("externalId").GetString()!;
+                candidates[(providerId, externalId)] = root.GetProperty("candidate").Deserialize<BookCandidate>(json)!;
+                Emit(new { @event = "result", id, ok = true });
+            }
+            else if (op == "refresh")
+            {
+                var workId = root.GetProperty("workId").GetGuid();
+                running.Add(Task.Run(async () =>
+                {
+                    Emit(new { @event = "started", id });
+                    await using var scope = provider.CreateAsyncScope();
+                    try
+                    {
+                        var report = await scope.ServiceProvider.GetRequiredService<CatalogObservationService>()
+                            .RefreshWorkAsync(workId, CancellationToken.None);
+                        Emit(new
+                        {
+                            @event = "result", id, ok = true, status = report.Status.ToString(),
+                            steps = report.Providers.Select(step => new { step.ProviderId, step.Phase, status = step.Status.ToString(), step.Reason }).ToArray()
+                        });
                     }
                     catch (Exception exception)
                     {

@@ -35,6 +35,13 @@
                             </MudText>
                         }
 
+                        @if (ShowPosition && IsConflicted(entry.PositionState))
+                        {
+                            <MudText Typo="Typo.caption" Color="Color.Warning" Class="browse-position-conflict">
+                                Sources disagree about this position. The number shown is the one the catalog selected, not the only claim.
+                            </MudText>
+                        }
+
                         @if (ShowPosition && entry.Position is { } tiedPosition && tied.Contains(tiedPosition))
                         {
                             <MudText Typo="Typo.caption" Class="browse-tie">Shares this position with another book on this page.</MudText>
@@ -94,7 +101,7 @@
                                     }
                                     @if (!string.IsNullOrWhiteSpace(membership.PositionLabel))
                                     {
-                                        <text> · position @membership.PositionLabel</text>
+                                        <text> · position @membership.PositionLabel@(IsConflicted(membership.PositionState) ? " (sources disagree)" : string.Empty)</text>
                                     }
                                 }
                             </MudText>
@@ -171,6 +178,8 @@
         membership.SeriesId is { } seriesId ? CatalogBrowseLinks.SeriesHref(seriesId)
         : membership.SubjectId is { } subject && ContextId is { } context ? CatalogBrowseLinks.ObservedSeriesHref(context, subject)
         : null;
+
+    private static bool IsConflicted(string? positionState) => string.Equals(positionState, "Conflicted", StringComparison.Ordinal);
 
     private static string RowKey(CatalogBrowseEntryResponse entry, int index) =>
         $"{entry.Book.WorkId}|{entry.Book.ProviderId}|{entry.Book.ExternalId}|{entry.PositionLabel}|{index}";

@@ -163,7 +163,7 @@ internal static class CatalogBrowseEndpoints
         group.SeriesId, group.SubjectId, group.Name, group.Entries.Select(ToResponse).ToArray());
 
     private static CatalogBrowseEntryResponse ToResponse(BrowseEntry entry) => new(
-        ToResponse(entry.Book), entry.PositionLabel, entry.Position);
+        ToResponse(entry.Book), entry.PositionLabel, entry.Position, entry.PositionState);
 
     private static CatalogBrowseBookResponse ToResponse(BrowseBook book) => new(
         book.WorkId, book.ProviderId, book.ExternalId, book.Title, book.PublicationDate,
@@ -171,7 +171,7 @@ internal static class CatalogBrowseEndpoints
             credit.AuthorId, credit.SubjectId, credit.Name, credit.Role)).ToArray(),
         book.Memberships.Select(membership => new CatalogBrowseMembershipResponse(
             membership.SeriesId, membership.SubjectId, membership.Name, membership.PositionLabel,
-            membership.Position, membership.IsPrimary)).ToArray(),
+            membership.Position, membership.IsPrimary, membership.PositionState)).ToArray(),
         book.Sources.Select(source => new CatalogBrowseSourceResponse(
             source.ProviderId, source.ProviderName, source.ObservedAtUtc)).ToArray(),
         book.Formats, book.VersionKind, book.VersionLabel, book.AssociationsTruncated);
