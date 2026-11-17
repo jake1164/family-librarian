@@ -61,6 +61,71 @@ public sealed class OpenLibraryDiscoveryTests
 
     // ================================================================ book -> series
 
+    // ---- shared series-claims operation (A5a) ----
+
+    private const string WorkWithTwoNativeSeriesAndAnUnboundOne =
+        """{"numFound":1,"start":0,"docs":[{"key":"/works/OL1W","title":"Legacy Book","series_key":["OL10L","OL11L","OL12L"],"series_name":["Legacy","Legacy","Cycle"],"series_position":["1","2.5","three"]}]}""";
+
+    [TestMethod]
+    public async Task TheSharedClaimsOperationCarriesEachNativeSeriesWithItsOwnPositionFromOneRequest()
+    {
+        using var rig = Rig.With(Json(WorkWithTwoNativeSeriesAndAnUnboundOne));
+        var shared = Assert.IsInstanceOfType<IBookMetadataDiscoveryProvider>(rig.Provider);
+
+        var result = await shared.FindSeriesClaimsForBookAsync(
+            new SourceRef("openlibrary", "OL1W", ExternalReferenceEntityType.Work), rig.Op(), CancellationToken.None);
+
+        Assert.AreEqual(DiscoveryOutcome.Ok, result.Outcome);
+        Assert.HasCount(3, result.Items);
+        Assert.AreEqual("OL10L", result.Items[0].Series.Id!.ExternalId);
+        Assert.AreEqual("1", result.Items[0].Position!.Label);
+        Assert.AreEqual(1m, result.Items[0].Position!.Sort);
+        Assert.AreEqual("OL11L", result.Items[1].Series.Id!.ExternalId, "Same-named series under distinct keys stay distinct.");
+        Assert.AreEqual(2.5m, result.Items[1].Position!.Sort);
+        Assert.AreEqual("three", result.Items[2].Position!.Label);
+        Assert.IsNull(result.Items[2].Position!.Sort, "A non-numeric position keeps its label and no sort value.");
+        Assert.AreEqual(result.Items[1].Series.Id, result.Items[1].Position!.Series);
+        Assert.AreEqual(1, rig.Requests);
+        Assert.AreEqual(1, result.Usage.Attempts);
+    }
+
+    [TestMethod]
+    public async Task TheSeriesOnlyViewIsTheSameSingleReadAndKeepsTheNotes()
+    {
+        using var claimsRig = Rig.With(Json(WorkWithTwoNativeSeriesAndAnUnboundOne));
+        using var seriesRig = Rig.With(Json(WorkWithTwoNativeSeriesAndAnUnboundOne));
+        var book = new SourceRef("openlibrary", "OL1W", ExternalReferenceEntityType.Work);
+
+        var claims = await ((IBookMetadataDiscoveryProvider)claimsRig.Provider).FindSeriesClaimsForBookAsync(book, claimsRig.Op(), CancellationToken.None);
+        var series = await ((IBookMetadataDiscoveryProvider)seriesRig.Provider).FindSeriesForBookAsync(book, seriesRig.Op(), CancellationToken.None);
+
+        Assert.AreEqual(claimsRig.Requests, seriesRig.Requests);
+        Assert.HasCount(3, series.Items);
+        CollectionAssert.AreEqual(claims.Items.Select(claim => claim.Series).ToArray(), series.Items.ToArray());
+        CollectionAssert.AreEqual(claims.Notes.ToArray(), series.Notes.ToArray());
+        Assert.AreEqual(claims.Scope, series.Scope);
+    }
+
+    [TestMethod]
+    public async Task UnusableAndLabelOnlyClaimsKeepTheirStateThroughBothViews()
+    {
+        using var mismatch = Rig.With(Json(
+            """{"numFound":1,"docs":[{"key":"/works/OL1W","title":"X","series_key":["OL10L","OL11L"],"series_name":["Only One"],"series_position":["1","2"]}]}"""));
+        using var labelOnly = Rig.With(Json(
+            """{"numFound":1,"docs":[{"key":"/works/OL1W","title":"X","series_name":["Mystery Set"],"series_position":["2"]}]}"""));
+        var book = new SourceRef("openlibrary", "OL1W", ExternalReferenceEntityType.Work);
+
+        var unusable = await ((IBookMetadataDiscoveryProvider)mismatch.Provider).FindSeriesClaimsForBookAsync(book, mismatch.Op(), CancellationToken.None);
+        var unbound = await ((IBookMetadataDiscoveryProvider)labelOnly.Provider).FindSeriesClaimsForBookAsync(book, labelOnly.Op(), CancellationToken.None);
+
+        Assert.AreEqual(DiscoveryOutcome.NoUsableItems, unusable.Outcome);
+        CollectionAssert.Contains(unusable.Notes.ToArray(), "series-arrays-mismatch");
+        Assert.IsFalse(unbound.Items.Single().Series.IsBound);
+        Assert.AreEqual("2", unbound.Items.Single().Position!.Label);
+        Assert.IsNull(unbound.Items.Single().Position!.Series, "A label-only claim never gains a native series reference.");
+        CollectionAssert.Contains(unbound.Notes.ToArray(), DiscoveryCodes.NoNativeSeriesId);
+    }
+
     [TestMethod]
     public async Task ABooksSeriesComeBackAsNativeKeysFromOneRequest()
     {

@@ -47,6 +47,13 @@ public sealed record BookCandidate(
     /// where the provider supplies them. A provider that cannot leaves this empty; nothing is guessed.
     /// </summary>
     public IReadOnlyList<BookAuthorCredit> AuthorCredits { get; init; } = [];
+
+    /// <summary>
+    /// What this provider's own <see cref="ExternalId"/> identifies: a Work or an Edition. Read-only provenance set by the
+    /// adapter that knows (a Google volume is an edition); null means the adapter did not say, and no source-scoped lookup
+    /// is offered for the record. It never feeds the Phase 2 writer.
+    /// </summary>
+    public ExternalReferenceEntityType? SourceKind { get; init; }
 }
 
 /// <summary>

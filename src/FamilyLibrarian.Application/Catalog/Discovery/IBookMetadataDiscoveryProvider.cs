@@ -23,7 +23,20 @@ public interface IBookMetadataDiscoveryProvider
     /// <summary>What this integration implements. Runtime availability (disabled, no key) is decided by the host, not here.</summary>
     DiscoveryCapabilities Capabilities { get; }
 
-    /// <summary>The series a single source book is stated to belong to, one entry per series claim.</summary>
+    /// <summary>
+    /// The series a single source book is stated to belong to, each with that book's own position claim and role. One actual
+    /// provider read answers it. This is the operation host code calls (<see cref="DiscoveryOperation.FindSeriesForBook"/>,
+    /// the same capability, scope and operation budget as <see cref="FindSeriesForBookAsync"/>); a book with several claims for
+    /// one series keeps each, because source disagreement is evidence and is never resolved here.
+    /// </summary>
+    Task<DiscoveryResult<BookSeriesClaim>> FindSeriesClaimsForBookAsync(
+        SourceRef book, IDiscoveryBudget budget, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// The compatible series-only view of <see cref="FindSeriesClaimsForBookAsync"/>: the same single read projected with
+    /// <see cref="DiscoveryResultProjection"/>, so nothing is fetched or charged twice and no partial, truncated, failed or
+    /// unusable state is lost. Do not call both for one lookup.
+    /// </summary>
     Task<DiscoveryResult<SeriesRef>> FindSeriesForBookAsync(
         SourceRef book, IDiscoveryBudget budget, CancellationToken cancellationToken);
 

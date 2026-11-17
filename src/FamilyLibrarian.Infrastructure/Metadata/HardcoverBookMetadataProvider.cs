@@ -268,7 +268,8 @@ public sealed partial class HardcoverBookMetadataProvider(
             PublicationDatePrecision = PublicationDateParser.Stated(released),
             // What Hardcover's release_date means (original publication or one edition) is not verified yet, so it is never read as original.
             PublicationDateBasis = released is null ? null : DateBasis.Unknown,
-            AuthorCredits = authorCredits
+            AuthorCredits = authorCredits,
+            SourceKind = ExternalReferenceEntityType.Work
         };
     }
 

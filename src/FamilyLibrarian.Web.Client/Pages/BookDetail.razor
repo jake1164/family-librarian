@@ -211,6 +211,19 @@
             </MudPaper>
         }
 
+        @if (!isPreview && book.Navigation is { ContextId: { } lookupContext, BookSubjectId: { } lookupSubject })
+        {
+            @* Explicit: nothing here asks the source until a button is pressed. *@
+            <MudPaper Class="pa-4 book-source-lookup" Outlined="true">
+                <MudText Typo="Typo.h6" Class="mb-1">Ask the source</MudText>
+                <MudText Typo="Typo.body2" Class="mb-2">
+                    Ask @book.ProviderName what series it lists this book in. This contacts the source only when you press a
+                    button, shows what it answers for this one question, and saves nothing.
+                </MudText>
+                <SourceLookupActions ContextId="@lookupContext" SubjectId="@lookupSubject" Describe="@book.Title" />
+            </MudPaper>
+        }
+
         @if (!isPreview)
         {
         <MudPaper Class="pa-4" Outlined="true">

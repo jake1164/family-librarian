@@ -126,6 +126,99 @@ public sealed class HardcoverDiscoveryTests
         Assert.AreEqual(Book5, noSeries.Scope.Subject);
     }
 
+    // ---- shared series-claims operation (A5a): one read, positions kept, series-only view is a pure projection ----
+
+    private const string TwoPositionsOfOneSeriesAndAnotherSeries = """
+        {"data":{"books_by_pk":{"id":5,"book_series":[
+          {"position":1.0,"details":null,"compilation":false,"featured":true,"series":{"id":300,"name":"Legacy","canonical_id":null}},
+          {"position":1.5,"details":"Book 1.5","compilation":false,"featured":false,"series":{"id":300,"name":"Legacy","canonical_id":null}},
+          {"position":null,"details":null,"compilation":false,"featured":false,"series":{"id":null,"name":"Mystery Set"}}
+        ]}}}
+        """;
+
+    [TestMethod]
+    public async Task TheSharedClaimsOperationKeepsEachPositionOfASeriesFromOnePhysicalRead()
+    {
+        using var rig = Rig.With(Json(TwoPositionsOfOneSeriesAndAnotherSeries));
+        var shared = Assert.IsInstanceOfType<IBookMetadataDiscoveryProvider>(rig.Provider);
+
+        var result = await shared.FindSeriesClaimsForBookAsync(Book5, rig.Op(), CancellationToken.None);
+
+        Assert.AreEqual(DiscoveryOutcome.Ok, result.Outcome);
+        Assert.HasCount(3, result.Items, "The same series with two numbers keeps both claims.");
+        Assert.AreEqual(1m, result.Items[0].Position!.Sort);
+        Assert.AreEqual("Book 1.5", result.Items[1].Position!.Label);
+        Assert.AreEqual(1.5m, result.Items[1].Position!.Sort);
+        Assert.AreEqual(result.Items[0].Series.Id, result.Items[1].Series.Id);
+        Assert.IsFalse(result.Items[2].Series.IsBound);
+        Assert.IsNull(result.Items[2].Position!.Sort, "An absent position stays unknown.");
+        Assert.AreEqual(MembershipRole.Unknown, result.Items[0].Role, "featured never implies a main novel.");
+        CollectionAssert.Contains(result.Notes.ToArray(), "series-position-conflict");
+        Assert.AreEqual(1, rig.Requests);
+        Assert.AreEqual(1, result.Usage.Attempts);
+    }
+
+    [TestMethod]
+    public async Task TheSeriesOnlyViewIsTheSameSingleReadWithNoStateLostAndEachSeriesOnce()
+    {
+        using var claimsRig = Rig.With(Json(TwoPositionsOfOneSeriesAndAnotherSeries));
+        using var seriesRig = Rig.With(Json(TwoPositionsOfOneSeriesAndAnotherSeries));
+
+        var claims = await ((IBookMetadataDiscoveryProvider)claimsRig.Provider).FindSeriesClaimsForBookAsync(Book5, claimsRig.Op(), CancellationToken.None);
+        var series = await ((IBookMetadataDiscoveryProvider)seriesRig.Provider).FindSeriesForBookAsync(Book5, seriesRig.Op(), CancellationToken.None);
+
+        Assert.AreEqual(claimsRig.Requests, seriesRig.Requests, "The projection never adds or removes a provider read.");
+        Assert.AreEqual(claims.Usage.Attempts, series.Usage.Attempts);
+        Assert.AreEqual(claims.Outcome, series.Outcome);
+        Assert.AreEqual(claims.Completion, series.Completion);
+        Assert.AreEqual(claims.Scope, series.Scope);
+        Assert.HasCount(2, series.Items);
+        Assert.AreEqual("300", series.Items[0].Id!.ExternalId);
+        Assert.IsFalse(series.Items[1].IsBound);
+        foreach (var note in claims.Notes)
+        {
+            CollectionAssert.Contains(series.Notes.ToArray(), note, "Every claims note survives the projection.");
+        }
+
+        CollectionAssert.Contains(series.Notes.ToArray(), DiscoveryCodes.DuplicateDropped);
+    }
+
+    [TestMethod]
+    public async Task CanonicalEvidenceAndPartialFailureSurviveBothViews()
+    {
+        using var canonical = Rig.With(
+            Json("""{"data":{"books_by_pk":{"id":5,"book_series":[{"position":2,"series":{"id":400,"name":"Dark Tower (dup)","canonical_id":401}}]}}}"""),
+            Json("""{"data":{"series":[{"id":401,"name":"The Dark Tower","canonical_id":null}]}}"""));
+        using var partial = Rig.With(Json("""
+            {"data":{"books_by_pk":{"id":5,"book_series":[
+              {"position":1,"series":{"id":300,"name":"Legacy"}},
+              {"position":2,"series":null}
+            ]}},
+             "errors":[{"message":"secret","path":["books_by_pk","book_series",1,"series"]}]}
+            """));
+
+        var withCanonical = await ((IBookMetadataDiscoveryProvider)canonical.Provider).FindSeriesClaimsForBookAsync(Book5, canonical.Op(), CancellationToken.None);
+        var failed = await ((IBookMetadataDiscoveryProvider)partial.Provider).FindSeriesClaimsForBookAsync(Book5, partial.Op(), CancellationToken.None);
+
+        var link = withCanonical.Items.Single().Series.Canonical!;
+        Assert.AreEqual(CanonicalLinkState.Verified, link.State);
+        Assert.AreEqual("401", link.PreferredForPreview.ExternalId);
+        Assert.AreEqual(2m, withCanonical.Items.Single().Position!.Sort);
+        Assert.AreEqual(2, canonical.Requests);
+        Assert.AreEqual(DiscoveryOutcome.Partial, failed.Outcome);
+        Assert.AreEqual(DiscoveryCompletion.ProviderFailedPartial, failed.Completion);
+        Assert.AreEqual("300", failed.Items.Single().Series.Id!.ExternalId);
+        CollectionAssert.Contains(failed.Notes.ToArray(), DiscoveryCodes.PartialFieldError);
+
+        using var again = Rig.With(Json("""
+            {"data":{"books_by_pk":{"id":5,"book_series":[{"position":1,"series":{"id":300,"name":"Legacy"}},{"position":2,"series":null}]}},
+             "errors":[{"message":"secret","path":["books_by_pk","book_series",1,"series"]}]}
+            """));
+        var projected = await ((IBookMetadataDiscoveryProvider)again.Provider).FindSeriesForBookAsync(Book5, again.Op(), CancellationToken.None);
+        Assert.AreEqual(DiscoveryOutcome.Partial, projected.Outcome, "Partial is not dropped by the projection.");
+        Assert.AreEqual("300", projected.Items.Single().Id!.ExternalId);
+    }
+
     // ---- partial and fatal GraphQL data ----
 
     [TestMethod]

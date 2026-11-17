@@ -2,14 +2,16 @@ using System.Globalization;
 using System.Net.Http.Json;
 using System.Text.Json.Serialization;
 using FamilyLibrarian.Application.Catalog;
+using FamilyLibrarian.Application.Catalog.Discovery;
 using FamilyLibrarian.Domain.Catalog;
 using Microsoft.Extensions.Options;
 
 namespace FamilyLibrarian.Infrastructure.Metadata;
 
-public sealed class GoogleBooksBookMetadataProvider(
+public sealed partial class GoogleBooksBookMetadataProvider(
     HttpClient httpClient,
-    IOptions<GoogleBooksMetadataOptions> options) : IBookMetadataProvider
+    IOptions<GoogleBooksMetadataOptions> options,
+    TimeProvider? clock = null) : IBookMetadataProvider, IBookMetadataDiscoveryProvider
 {
     private const int MaximumDescriptionLength = 8_000;
 
@@ -113,7 +115,9 @@ public sealed class GoogleBooksBookMetadataProvider(
         {
             // Google's publishedDate describes this volume (an edition), so as a Work date it is only a labelled fallback.
             PublicationDatePrecision = PublicationDateParser.Stated(published),
-            PublicationDateBasis = publicationDate is null ? null : DateBasis.EditionDerived
+            PublicationDateBasis = publicationDate is null ? null : DateBasis.EditionDerived,
+            // A Google volume is a specific publication (an edition); Google has no Work entity.
+            SourceKind = ExternalReferenceEntityType.Edition
         };
     }
 

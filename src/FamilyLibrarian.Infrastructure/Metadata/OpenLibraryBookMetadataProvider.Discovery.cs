@@ -85,14 +85,20 @@ public sealed partial class OpenLibraryBookMetadataProvider
 
     // ------------------------------------------------------------------------------------------------ book -> series
 
+    /// <summary>The series-only view of <see cref="FindSeriesClaimsForBookAsync"/>: the same single read, projected, never fetched twice.</summary>
     public async Task<DiscoveryResult<SeriesRef>> FindSeriesForBookAsync(
+        SourceRef book, IDiscoveryBudget budget, CancellationToken cancellationToken) =>
+        DiscoveryResultProjection.SeriesOnly(await FindSeriesClaimsForBookAsync(book, budget, cancellationToken));
+
+    /// <summary>One <c>search.json</c> row for the work: each series claim with the work's own position in it.</summary>
+    public async Task<DiscoveryResult<BookSeriesClaim>> FindSeriesClaimsForBookAsync(
         SourceRef book, IDiscoveryBudget budget, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(book);
         var scope = new DiscoveryScope(DiscoveryOperation.FindSeriesForBook, book, "series-claims-in-work-search-index");
         if (!TryNativeId(book, ExternalReferenceEntityType.Work, 'W', out var workId))
         {
-            return Refused<SeriesRef>(scope, budget, DiscoveryCodes.SubjectInvalid);
+            return Refused<BookSeriesClaim>(scope, budget, DiscoveryCodes.SubjectInvalid);
         }
 
         using var work = budget.BeginWork();
@@ -100,39 +106,40 @@ public sealed partial class OpenLibraryBookMetadataProvider
             SearchUri($"key:/works/{workId}", DiscoveryWorkFields, 1, 1), budget, cancellationToken);
         if (!reply.HasData)
         {
-            return Stopped<SeriesRef>(scope, budget, reply.Transport, reply.Code);
+            return Stopped<BookSeriesClaim>(scope, budget, reply.Transport, reply.Code);
         }
 
         if (reply.Data!.Documents is not { } documents)
         {
-            return NotAnswered<SeriesRef>(scope, budget, DiscoveryOutcome.Failed, DiscoveryCodes.ProviderError);
+            return NotAnswered<BookSeriesClaim>(scope, budget, DiscoveryOutcome.Failed, DiscoveryCodes.ProviderError);
         }
 
         if (documents.Count == 0)
         {
-            return Empty<SeriesRef>(scope, budget);
+            return Empty<BookSeriesClaim>(scope, budget);
         }
 
         var document = documents.FirstOrDefault(candidate => string.Equals(candidate?.Key, "/works/" + workId, StringComparison.Ordinal));
         if (document is null)
         {
             // The filter is documented as a key lookup; rows for a different work are never read as this work's claims.
-            return NoUsable<SeriesRef>(scope, budget, DiscoveryCompletion.ExhaustedInCheckedScope, null, [BookAnchorMismatch]);
+            return NoUsable<BookSeriesClaim>(scope, budget, DiscoveryCompletion.ExhaustedInCheckedScope, null, [BookAnchorMismatch]);
         }
 
         var series = ReadSeries(document);
         if (series.Problem is not null)
         {
-            return NoUsable<SeriesRef>(scope, budget, DiscoveryCompletion.ExhaustedInCheckedScope, null, [series.Problem]);
+            return NoUsable<BookSeriesClaim>(scope, budget, DiscoveryCompletion.ExhaustedInCheckedScope, null, [series.Problem]);
         }
 
         if (series.Claims.Count == 0)
         {
-            return Empty<SeriesRef>(scope, budget);
+            return Empty<BookSeriesClaim>(scope, budget);
         }
 
         var notes = new List<string>();
-        var items = series.Claims.Select(claim => ToSeriesRef(claim, notes)).ToArray();
+        // Each claim keeps its own position text and number; a series listed twice with different numbers keeps both.
+        var items = series.Claims.Select(claim => new BookSeriesClaim(ToSeriesRef(claim, notes), PositionOf(claim))).ToArray();
         budget.RecordItems(items.Length);
         return DiscoveryResult.Found(items, scope, DiscoveryCompletion.ExhaustedInCheckedScope, time.GetUtcNow(), budget.Usage, notes: Distinct(notes));
     }

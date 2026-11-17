@@ -403,7 +403,8 @@ public sealed partial class OpenLibraryBookMetadataProvider(
             PublicationDatePrecision = PublicationDateParser.Stated(firstPublished),
             // first_publish_date is Open Library's work-level original publication date.
             PublicationDateBasis = firstPublished is null ? null : DateBasis.Original,
-            AuthorCredits = creditProjection.Credits
+            AuthorCredits = creditProjection.Credits,
+            SourceKind = ExternalReferenceEntityType.Work
         };
     }
 

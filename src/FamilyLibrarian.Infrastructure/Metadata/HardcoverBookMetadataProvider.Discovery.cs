@@ -193,13 +193,19 @@ public sealed partial class HardcoverBookMetadataProvider
 
     // ------------------------------------------------------------------------------------------------ book -> series
 
+    /// <summary>The series-only view of <see cref="FindSeriesClaimsForBookAsync"/>: the same single read, projected, never fetched twice.</summary>
     public async Task<DiscoveryResult<SeriesRef>> FindSeriesForBookAsync(
+        SourceRef book, IDiscoveryBudget budget, CancellationToken cancellationToken) =>
+        DiscoveryResultProjection.SeriesOnly(await FindSeriesClaimsForBookAsync(book, budget, cancellationToken));
+
+    /// <summary>One <c>books_by_pk</c> read: each series claim with this book's position and details text in it.</summary>
+    public async Task<DiscoveryResult<BookSeriesClaim>> FindSeriesClaimsForBookAsync(
         SourceRef book, IDiscoveryBudget budget, CancellationToken cancellationToken)
     {
         var scope = new DiscoveryScope(DiscoveryOperation.FindSeriesForBook, book, "all-series-claims-of-this-book");
         if (!TryNativeId(book, ExternalReferenceEntityType.Work, out var bookId))
         {
-            return Refused<SeriesRef>(scope, budget, DiscoveryCodes.SubjectInvalid);
+            return Refused<BookSeriesClaim>(scope, budget, DiscoveryCodes.SubjectInvalid);
         }
 
         using var work = budget.BeginWork();
@@ -207,7 +213,7 @@ public sealed partial class HardcoverBookMetadataProvider
             httpClient, BookSeriesDiscoveryQuery, new { id = bookId }, budget, cancellationToken);
         if (!first.HasData)
         {
-            return Stopped<SeriesRef>(scope, budget, first.Transport, first.Code);
+            return Stopped<BookSeriesClaim>(scope, budget, first.Transport, first.Code);
         }
 
         var record = first.Data!.Book;
@@ -216,18 +222,19 @@ public sealed partial class HardcoverBookMetadataProvider
         {
             // A null record with no error is a successful look-up that found nothing for this id; with an error it is unknown.
             return hasFieldErrors
-                ? NotAnswered<SeriesRef>(scope, budget, DiscoveryOutcome.Failed, DiscoveryCodes.PartialFieldError)
-                : Empty<SeriesRef>(scope, budget);
+                ? NotAnswered<BookSeriesClaim>(scope, budget, DiscoveryOutcome.Failed, DiscoveryCodes.PartialFieldError)
+                : Empty<BookSeriesClaim>(scope, budget);
         }
 
         if (record.BookSeries is null)
         {
-            return NotAnswered<SeriesRef>(scope, budget, DiscoveryOutcome.Failed, DiscoveryCodes.ProviderError);
+            return NotAnswered<BookSeriesClaim>(scope, budget, DiscoveryOutcome.Failed, DiscoveryCodes.ProviderError);
         }
 
         var notes = new List<string>();
         var rows = new List<DiscSeries>();
-        var seen = new HashSet<string>(StringComparer.Ordinal);
+        var entries = new List<(DiscSeries Series, DiscBookSeries Entry)>();
+        var seenKeys = new HashSet<string>(StringComparer.Ordinal);
         var rowErrors = HardcoverRowErrors.Of(first.Errors, "books_by_pk.book_series");
         for (var index = 0; index < record.BookSeries.Count; index++)
         {
@@ -244,31 +251,52 @@ public sealed partial class HardcoverBookMetadataProvider
             }
 
             var key = entry.Series.Id is > 0 ? "id:" + entry.Series.Id : "name:" + entry.Series.Name.Trim();
-            if (seen.Add(key))
+            if (seenKeys.Add(key))
             {
                 rows.Add(entry.Series);
             }
-            else
-            {
-                notes.Add(DiscoveryCodes.DuplicateDropped);
-            }
+
+            // Every membership row is a claim: the same series listed twice with different positions keeps both.
+            entries.Add((entry.Series, entry));
         }
 
         var canonicalLookup = await LookUpCanonicalAsync(rows, budget, cancellationToken);
-        var items = rows.Select(row => ToSeriesRef(row, canonicalLookup, notes)).ToArray();
-        budget.RecordItems(items.Length);
+        var refs = rows.ToDictionary(
+            row => row.Id is > 0 ? "id:" + row.Id : "name:" + row.Name!.Trim(),
+            row => ToSeriesRef(row, canonicalLookup, notes),
+            StringComparer.Ordinal);
+        var items = new List<BookSeriesClaim>();
+        var seenClaims = new HashSet<(string Series, double? Position, string? Details)>();
+        foreach (var (row, entry) in entries)
+        {
+            var seriesRef = refs[row.Id is > 0 ? "id:" + row.Id : "name:" + row.Name!.Trim()];
+            if (!seenClaims.Add((seriesRef.Id?.ExternalId ?? "name:" + seriesRef.Label, entry.Position, entry.Details)))
+            {
+                notes.Add(DiscoveryCodes.DuplicateDropped);
+                continue;
+            }
+
+            items.Add(new BookSeriesClaim(seriesRef, PositionOf(entry.Position, entry.Details, seriesRef.Id)));
+        }
+
+        if (items.GroupBy(claim => claim.Series.Id?.ExternalId ?? "name:" + claim.Series.Label).Any(group => group.Count() > 1))
+        {
+            notes.Add("series-position-conflict");
+        }
+
+        budget.RecordItems(items.Count);
 
         if (hasFieldErrors)
         {
             notes.Add(DiscoveryCodes.PartialFieldError);
-            return items.Length == 0
-                ? NotAnswered<SeriesRef>(scope, budget, DiscoveryOutcome.Failed, DiscoveryCodes.PartialFieldError)
+            return items.Count == 0
+                ? NotAnswered<BookSeriesClaim>(scope, budget, DiscoveryOutcome.Failed, DiscoveryCodes.PartialFieldError)
                 : DiscoveryResult.PartialSuccess(items, scope, time.GetUtcNow(), budget.Usage, Distinct(notes));
         }
 
-        if (items.Length == 0)
+        if (items.Count == 0)
         {
-            return Empty<SeriesRef>(scope, budget, Distinct(notes));
+            return Empty<BookSeriesClaim>(scope, budget, Distinct(notes));
         }
 
         var completion = record.BookSeries.Count >= MaximumSeriesPerBook ? DiscoveryCompletion.ItemTruncated : DiscoveryCompletion.ExhaustedInCheckedScope;
