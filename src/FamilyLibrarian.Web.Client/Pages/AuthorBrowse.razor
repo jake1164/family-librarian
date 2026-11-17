@@ -54,6 +54,9 @@
 
         <BrowseNotes Limitations="@observed.Limitations" Observed="true" />
 
+        @* Explicit lookups for this credit. Offered only when the source supplied an id, or a book to anchor the name; a name alone never selects a person. *@
+        <SourceLookupActions ContextId="@observed.ContextId" SubjectId="@observed.SubjectId" Describe="@observed.Label" Eager="true" />
+
         <BrowseGroups Groups="@observed.Groups" NoKnownSeries="@observed.NoKnownSeries" Return="@ReturnHere(observed.Page)"
                       ContextId="@observed.ContextId"
                       EmptyText="@(observed.Page > 1 ? "There are no more books in this preview after the previous page." : "This source has not shown any books for this name in your recent search or book view.")" />

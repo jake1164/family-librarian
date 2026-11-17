@@ -391,6 +391,276 @@ public sealed class CatalogResolutionSafetyTests
         });
     }
 
+    // ---------------------------------------------------------------- source credits that name-matching cannot keep apart (R1)
+
+    /// <summary>
+    /// The real Hardcover detail mapper over a scripted transport (hand-built JSON, not a captured response), presented under an
+    /// enabled test provider id so the production resolver, writer and PostgreSQL repository run unchanged.
+    /// </summary>
+    private sealed class HardcoverMapped(string id, string booksByPkJsonForId42, string booksByPkJsonForId43)
+        : IBookMetadataProvider, IDisposable
+    {
+        private readonly HttpClient client = new(new Transport(booksByPkJsonForId42, booksByPkJsonForId43))
+        {
+            BaseAddress = new Uri("https://unit.invalid/graphql")
+        };
+
+        public string Id => id;
+
+        public string DisplayName => "Mapped Hardcover";
+
+        public Task<BookCandidateSearchPage> SearchAsync(BookSearchQuery query, CancellationToken cancellationToken) =>
+            Task.FromResult(new BookCandidateSearchPage([], false));
+
+        public async Task<BookCandidate?> GetDetailsAsync(string externalId, CancellationToken cancellationToken)
+        {
+            var mapper = new FamilyLibrarian.Infrastructure.Metadata.HardcoverBookMetadataProvider(
+                client, new FamilyLibrarian.Infrastructure.Metadata.HardcoverLanguageLookupCache(new NoFactory()));
+            var candidate = await mapper.GetDetailsAsync(externalId, cancellationToken);
+            return candidate is null ? null : candidate with { ProviderId = id, ProviderName = DisplayName };
+        }
+
+        public void Dispose() => client.Dispose();
+
+        private sealed class NoFactory : IHttpClientFactory
+        {
+            public HttpClient CreateClient(string name) => throw new InvalidOperationException("No language lookup is expected.");
+        }
+
+        private sealed class Transport(string forId42, string forId43) : HttpMessageHandler
+        {
+            protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+            {
+                var body = await request.Content!.ReadAsStringAsync(cancellationToken);
+                var json = body.Contains("\"id\":43", StringComparison.Ordinal) ? forId43 : forId42;
+                return new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent(json, System.Text.Encoding.UTF8, "application/json") };
+            }
+        }
+    }
+
+    [TestMethod]
+    public async Task ASourceRecordWithTwoSameNamedAuthorsNeverCreditsASavedNamesakeAndANormalCreditStillResolves()
+    {
+        var connection = await NewDatabaseAsync();
+        var twinName = Unique("Alex Twin");
+        var soloName = Unique("Sam Solo");
+        using var mapped = new HardcoverMapped(
+            EnabledProvider,
+            """{"data":{"books_by_pk":{"id":42,"title":"Twin Credit Book","contributions":[{"author":{"id":7,"name":"NAME"}},{"author":{"id":8,"name":"NAME"}}]}}}""".Replace("NAME", twinName, StringComparison.Ordinal),
+            """{"data":{"books_by_pk":{"id":43,"title":"Solo Credit Book","contributions":[{"author":{"id":9,"name":"NAME"}}]}}}""".Replace("NAME", soloName, StringComparison.Ordinal));
+        await using var factory = Host(connection, [], services =>
+        {
+            services.RemoveAll<IBookMetadataProvider>();
+            services.AddSingleton<IBookMetadataProvider>(mapped);
+        });
+        var reader = await ReaderIdAsync(factory);
+        var seeded = await WithDatabaseAsync(factory, database =>
+        {
+            var twin = new Author(twinName, null, Past);
+            var solo = new Author(soloName, null, Past);
+            database.Authors.AddRange(twin, solo);
+            var prior = SeedWork(database, Unique("Prior twin work"));
+            prior.AddAuthor(twin, 0);
+            database.Follows.Add(new Follow(reader, FollowSubjectType.Author, twin.Id, Past));
+            database.Follows.Add(new Follow(reader, FollowSubjectType.Author, solo.Id, Past));
+            return Task.FromResult((Twin: twin.Id, Solo: solo.Id));
+        });
+        using var client = await SignedInAsync(factory);
+        var worksBefore = await WithDatabaseAsync(factory, database => database.Works.CountAsync());
+
+        using var twinResponse = await ResolveAsync(client, EnabledProvider, "42");
+
+        Assert.AreNotEqual(HttpStatusCode.Created, twinResponse.StatusCode, "The ambiguous record must not become a Work credited to a namesake.");
+        Assert.AreEqual(worksBefore, await WithDatabaseAsync(factory, database => database.Works.CountAsync()));
+        await WithDatabaseAsync(factory, async database =>
+        {
+            Assert.AreEqual(1, await database.Set<WorkAuthor>().CountAsync(link => link.AuthorId == seeded.Twin), "The saved namesake gained no Work.");
+            Assert.AreEqual(0, await database.ExternalReferences.CountAsync(reference => reference.ExternalId == "42"));
+            Assert.AreEqual(0, await database.NotificationEvents.CountAsync(), "No follower of the namesake is told about a Work it did not write.");
+            return 0;
+        });
+
+        using var soloResponse = await ResolveAsync(client, EnabledProvider, "43");
+
+        Assert.AreEqual(HttpStatusCode.Created, soloResponse.StatusCode, await soloResponse.Content.ReadAsStringAsync());
+        await WithDatabaseAsync(factory, async database =>
+        {
+            Assert.AreEqual(1, await database.Set<WorkAuthor>().CountAsync(link => link.AuthorId == seeded.Solo), "A single unambiguous credit still binds.");
+            Assert.AreEqual(1, await database.NotificationEvents.CountAsync(e => e.Category == NotificationCategories.AuthorNewWorkDetected));
+            return 0;
+        });
+    }
+
+    /// <summary>
+    /// The real Open Library detail mapper over a scripted transport (hand-built search documents, not captured responses),
+    /// presented under an enabled test provider id so the production resolver, writer and PostgreSQL repository run unchanged.
+    /// </summary>
+    private sealed class OpenLibraryMapped(string id, string searchJsonForOl42W, string searchJsonForOl43W)
+        : IBookMetadataProvider, IDisposable
+    {
+        private readonly HttpClient client = new(new Transport(searchJsonForOl42W, searchJsonForOl43W))
+        {
+            BaseAddress = new Uri("https://unit.invalid/")
+        };
+
+        public string Id => id;
+
+        public string DisplayName => "Mapped Open Library";
+
+        public Task<BookCandidateSearchPage> SearchAsync(BookSearchQuery query, CancellationToken cancellationToken) =>
+            Task.FromResult(new BookCandidateSearchPage([], false));
+
+        public async Task<BookCandidate?> GetDetailsAsync(string externalId, CancellationToken cancellationToken)
+        {
+            var mapper = new FamilyLibrarian.Infrastructure.Metadata.OpenLibraryBookMetadataProvider(
+                client, Microsoft.Extensions.Options.Options.Create(new FamilyLibrarian.Infrastructure.Metadata.OpenLibraryMetadataOptions { Enabled = true }));
+            var candidate = await mapper.GetDetailsAsync(externalId, cancellationToken);
+            return candidate is null ? null : candidate with { ProviderId = id, ProviderName = DisplayName };
+        }
+
+        public void Dispose() => client.Dispose();
+
+        private sealed class Transport(string forOl42W, string forOl43W) : HttpMessageHandler
+        {
+            protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+            {
+                var url = Uri.UnescapeDataString(request.RequestUri!.PathAndQuery);
+                var json = url.Contains("editions.json", StringComparison.Ordinal)
+                    ? """{"entries":[]}"""
+                    : url.Contains("/works/OL43W", StringComparison.Ordinal) ? forOl43W : forOl42W;
+                return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent(json, System.Text.Encoding.UTF8, "application/json") });
+            }
+        }
+    }
+
+    [TestMethod]
+    public async Task AnOpenLibraryRecordWithTwoSameNamedAuthorsNeverCreditsASavedNamesakeAndANormalCreditStillResolves()
+    {
+        var connection = await NewDatabaseAsync();
+        var twinName = Unique("Alex Twin");
+        var soloName = Unique("Sam Solo");
+        using var mapped = new OpenLibraryMapped(
+            EnabledProvider,
+            """{"num_found":1,"docs":[{"key":"/works/OL42W","title":"Twin Credit Book","author_name":["NAME","NAME"],"author_key":["OL1A","OL2A"]}]}""".Replace("NAME", twinName, StringComparison.Ordinal),
+            """{"num_found":1,"docs":[{"key":"/works/OL43W","title":"Solo Credit Book","author_name":["NAME"],"author_key":["OL3A"]}]}""".Replace("NAME", soloName, StringComparison.Ordinal));
+        await using var factory = Host(connection, [], services =>
+        {
+            services.RemoveAll<IBookMetadataProvider>();
+            services.AddSingleton<IBookMetadataProvider>(mapped);
+        });
+        var reader = await ReaderIdAsync(factory);
+        var seeded = await WithDatabaseAsync(factory, database =>
+        {
+            var twin = new Author(twinName, null, Past);
+            var solo = new Author(soloName, null, Past);
+            database.Authors.AddRange(twin, solo);
+            var prior = SeedWork(database, Unique("Prior twin work"));
+            prior.AddAuthor(twin, 0);
+            database.Follows.Add(new Follow(reader, FollowSubjectType.Author, twin.Id, Past));
+            database.Follows.Add(new Follow(reader, FollowSubjectType.Author, solo.Id, Past));
+            return Task.FromResult((Twin: twin.Id, Solo: solo.Id));
+        });
+        using var client = await SignedInAsync(factory);
+        var worksBefore = await WithDatabaseAsync(factory, database => database.Works.CountAsync());
+
+        using var twinResponse = await ResolveAsync(client, EnabledProvider, "OL42W");
+
+        Assert.AreNotEqual(HttpStatusCode.Created, twinResponse.StatusCode, "The ambiguous record must not become a Work credited to a namesake.");
+        Assert.AreEqual(worksBefore, await WithDatabaseAsync(factory, database => database.Works.CountAsync()));
+        await WithDatabaseAsync(factory, async database =>
+        {
+            Assert.AreEqual(1, await database.Set<WorkAuthor>().CountAsync(link => link.AuthorId == seeded.Twin), "The saved namesake gained no Work.");
+            Assert.AreEqual(0, await database.ExternalReferences.CountAsync(reference => reference.ExternalId == "OL42W"));
+            Assert.AreEqual(0, await database.NotificationEvents.CountAsync(), "No follower of the namesake is told about a Work it did not write.");
+            return 0;
+        });
+
+        using var soloResponse = await ResolveAsync(client, EnabledProvider, "OL43W");
+
+        Assert.AreEqual(HttpStatusCode.Created, soloResponse.StatusCode, await soloResponse.Content.ReadAsStringAsync());
+        await WithDatabaseAsync(factory, async database =>
+        {
+            Assert.AreEqual(1, await database.Set<WorkAuthor>().CountAsync(link => link.AuthorId == seeded.Solo), "A single unambiguous credit still binds.");
+            Assert.AreEqual(1, await database.NotificationEvents.CountAsync(e => e.Category == NotificationCategories.AuthorNewWorkDetected));
+            return 0;
+        });
+    }
+
+    [TestMethod]
+    public async Task AHardcoverFirstOfJanuaryOrOfAMonthIsSavedAsAYearOrMonthNeverAnExactDayOrPrematurelyPublished()
+    {
+        var connection = await NewDatabaseAsync();
+        var author = Unique("Placeholder Author");
+        // 42: a Work released "2099-01-01" with an edition "2099-06-01" (a future year / month interval);
+        // 43: a Work released "1965-06-14" (a genuine non-first day).
+        using var mapped = new HardcoverMapped(
+            EnabledProvider,
+            """{"data":{"books_by_pk":{"id":42,"title":"Placeholder Dated Book","release_date":"2099-01-01","contributions":[{"author":{"id":9,"name":"NAME"}}],"editions":[{"isbn_13":"9780743506977","edition_format":"Hardcover","release_date":"2099-06-01"}]}}}""".Replace("NAME", author, StringComparison.Ordinal),
+            """{"data":{"books_by_pk":{"id":43,"title":"Exact Dated Book","release_date":"1965-06-14","contributions":[{"author":{"id":9,"name":"NAME"}}]}}}""".Replace("NAME", author, StringComparison.Ordinal));
+        await using var factory = Host(connection, [], services =>
+        {
+            services.RemoveAll<IBookMetadataProvider>();
+            services.AddSingleton<IBookMetadataProvider>(mapped);
+        });
+        using var client = await SignedInAsync(factory);
+
+        using var coarse = await ResolveAsync(client, EnabledProvider, "42");
+        using var exact = await ResolveAsync(client, EnabledProvider, "43");
+
+        Assert.AreEqual(HttpStatusCode.Created, coarse.StatusCode, await coarse.Content.ReadAsStringAsync());
+        Assert.AreEqual(HttpStatusCode.Created, exact.StatusCode, await exact.Content.ReadAsStringAsync());
+        await WithDatabaseAsync(factory, async database =>
+        {
+            var work = await database.Works.SingleAsync(w => w.CanonicalTitle == "Placeholder Dated Book");
+            Assert.AreEqual(new DateOnly(2099, 1, 1), work.FirstPublicationDate, "The stated value is kept.");
+            Assert.AreEqual(DatePrecision.Year, work.FirstPublicationPrecision, "A January 1 is saved as a year, never as an exact day.");
+            Assert.AreEqual(DateBasis.Unknown, work.FirstPublicationBasis);
+            Assert.AreNotEqual(PublicationStatus.Published, work.PublicationStatus, "A future year is never published.");
+            var edition = await database.Editions.SingleAsync(e => e.WorkId == work.Id);
+            Assert.AreEqual(new DateOnly(2099, 6, 1), edition.PublicationDate);
+            Assert.AreEqual(DatePrecision.Month, edition.PublicationPrecision, "A month-start edition date is saved as a month.");
+            var day = await database.Works.SingleAsync(w => w.CanonicalTitle == "Exact Dated Book");
+            Assert.AreEqual(new DateOnly(1965, 6, 14), day.FirstPublicationDate);
+            Assert.AreEqual(DatePrecision.Day, day.FirstPublicationPrecision, "A genuine non-first day stays a day.");
+            Assert.AreEqual(PublicationStatus.Published, day.PublicationStatus);
+            return 0;
+        });
+    }
+
+    [TestMethod]
+    public async Task AnOpenLibraryWorkWithOnlyAFirstPublishYearIsSavedAsAYearOnlyOriginalDateNeverAnExactDay()
+    {
+        var connection = await NewDatabaseAsync();
+        var author = Unique("Year Only Author");
+        using var mapped = new OpenLibraryMapped(
+            EnabledProvider,
+            """{"num_found":1,"docs":[{"key":"/works/OL42W","title":"Year Only Book","author_name":["NAME"],"author_key":["OL9A"],"first_publish_year":1965}]}""".Replace("NAME", author, StringComparison.Ordinal),
+            """{"num_found":1,"docs":[{"key":"/works/OL43W","title":"Dated Book","author_name":["NAME"],"author_key":["OL9A"],"first_publish_date":["1965-08-01"],"first_publish_year":1965}]}""".Replace("NAME", author, StringComparison.Ordinal));
+        await using var factory = Host(connection, [], services =>
+        {
+            services.RemoveAll<IBookMetadataProvider>();
+            services.AddSingleton<IBookMetadataProvider>(mapped);
+        });
+        using var client = await SignedInAsync(factory);
+
+        using var yearOnly = await ResolveAsync(client, EnabledProvider, "OL42W");
+        using var dated = await ResolveAsync(client, EnabledProvider, "OL43W");
+
+        Assert.AreEqual(HttpStatusCode.Created, yearOnly.StatusCode, await yearOnly.Content.ReadAsStringAsync());
+        Assert.AreEqual(HttpStatusCode.Created, dated.StatusCode, await dated.Content.ReadAsStringAsync());
+        await WithDatabaseAsync(factory, async database =>
+        {
+            var year = await database.Works.SingleAsync(work => work.CanonicalTitle == "Year Only Book");
+            Assert.AreEqual(new DateOnly(1965, 1, 1), year.FirstPublicationDate);
+            Assert.AreEqual(DatePrecision.Year, year.FirstPublicationPrecision, "A year is saved as a year, never as an exact first of January.");
+            Assert.AreEqual(DateBasis.Original, year.FirstPublicationBasis);
+            var exact = await database.Works.SingleAsync(work => work.CanonicalTitle == "Dated Book");
+            Assert.AreEqual(new DateOnly(1965, 8, 1), exact.FirstPublicationDate, "An exact date, when Open Library sends one, wins.");
+            Assert.AreEqual(DatePrecision.Day, exact.FirstPublicationPrecision, "A full date is stored at Day precision, as Phase 2 already does for every provider.");
+            return 0;
+        });
+    }
+
     // ---------------------------------------------------------------- provider lifecycle and security
 
     [TestMethod]

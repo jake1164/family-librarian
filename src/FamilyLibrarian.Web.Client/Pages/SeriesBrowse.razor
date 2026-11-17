@@ -60,6 +60,9 @@
 
         <BrowseNotes Limitations="@observed.Limitations" Observed="true" Noun="series entries" />
 
+        @* Explicit lookup for this series, offered only when the source supplied its own id for it. A label is never used. *@
+        <SourceLookupActions ContextId="@observed.ContextId" SubjectId="@observed.SubjectId" Describe="@observed.Label" Eager="true" />
+
         @if (observed.Entries.Count == 0)
         {
             <MudAlert Severity="Severity.Info" Class="browse-empty">

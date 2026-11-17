@@ -1,0 +1,40 @@
+@* What one explicit source lookup returned, with the weight that fits it and the reviewed notes. Shown in the page body next to the
+   list (never only a tooltip). It states the source's answer and its limits; it never states more than that. *@
+@{
+    var statement = CatalogDiscoveryCopy.Describe(Result);
+    var notes = CatalogDiscoveryCopy.NoteLines(Result.Notes, Result.ProviderName);
+    var severity = statement.Severity switch
+    {
+        "Warning" => Severity.Warning,
+        "Error" => Severity.Error,
+        _ => Severity.Info
+    };
+}
+<MudAlert Severity="@severity" Variant="Variant.Outlined" Class="lookup-outcome" role="status" data-outcome="@Result.Outcome" data-completion="@Result.Completion">
+    <MudText Typo="Typo.subtitle1">@statement.Headline</MudText>
+    <MudText Typo="Typo.body2">@statement.Detail</MudText>
+    @if (notes.Count > 0)
+    {
+        <ul class="lookup-notes" style="margin: 4px 0 0; padding-left: 20px;">
+            @foreach (var note in notes)
+            {
+                <li>@note</li>
+            }
+        </ul>
+    }
+    <MudText Typo="Typo.caption" Class="lookup-usage">
+        @(Result.Attempts == 1 ? "1 request" : $"{Result.Attempts} requests") made to @Result.ProviderName@(Result.Retries > 0 ? $", including {Result.Retries} retry" : string.Empty).
+        @if (Result.ExpiresAtUtc is { } expires)
+        {
+            <text>Temporary: kept until about @expires.ToLocalTime().ToString("h:mm tt", System.Globalization.CultureInfo.InvariantCulture). Nothing is saved.</text>
+        }
+        else
+        {
+            <text>Nothing is saved.</text>
+        }
+    </MudText>
+</MudAlert>
+
+@code {
+    [Parameter, EditorRequired] public CatalogDiscoveryResponse Result { get; set; } = default!;
+}

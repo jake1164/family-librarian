@@ -4,19 +4,25 @@ using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using FamilyLibrarian.Application.Catalog;
+using FamilyLibrarian.Application.Catalog.Discovery;
 using FamilyLibrarian.Domain.Catalog;
 using Microsoft.Extensions.Options;
 
 namespace FamilyLibrarian.Infrastructure.Metadata;
 
-public sealed class OpenLibraryBookMetadataProvider(
+public sealed partial class OpenLibraryBookMetadataProvider(
     HttpClient httpClient,
-    IOptions<OpenLibraryMetadataOptions> options) : IBookMetadataProvider
+    IOptions<OpenLibraryMetadataOptions> options,
+    TimeProvider? clock = null) : IBookMetadataProvider, IBookMetadataDiscoveryProvider
 {
     private const int MaximumDescriptionLength = 8_000;
     private const int MaximumSubjects = 8;
+
+    // author_key is requested so each credit can carry Open Library's own author id. It pairs with author_name by position
+    // only when both arrays have the same length (see ProjectCredits); series fields are deliberately not requested here:
+    // ordinary search/detail candidates keep an empty series list, so what Resolve writes is unchanged.
     private const string SearchFields =
-        "key,title,author_name,first_publish_date,cover_i,editions," +
+        "key,title,author_name,author_key,first_publish_date,first_publish_year,cover_i,editions," +
         "editions.key,editions.title,editions.isbn,editions.publish_date,editions.format," +
         "editions.cover_i,editions.publisher,editions.language," +
         "publisher,subject,number_of_pages_median,description,language";
@@ -311,6 +317,16 @@ public sealed class OpenLibraryBookMetadataProvider(
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .ToArray() ?? [];
 
+        // The unchanged Phase 2 writer matches AuthorCredits to Authors by normalised name, so a record whose same-named
+        // credits carry different Open Library author ids would let a bare name bind to whichever saved author has it. Leaving
+        // the ids out does not help (the name still resolves), so such a record is not offered as an ordinary candidate at
+        // all. The discovery operations still return it, read-only, with every credit and id kept apart.
+        var creditProjection = ProjectCredits(document);
+        if (!creditProjection.Projectable)
+        {
+            return null;
+        }
+
         // The work-level title/cover/publisher/language fields are aggregated
         // across every edition OL has ever indexed for this work (every
         // translation, reprint, and format), so a work can be titled in one
@@ -360,7 +376,13 @@ public sealed class OpenLibraryBookMetadataProvider(
             ? PreferredLanguage
             : LanguageCodeNormalizer.Normalize(FirstString(document.Languages));
 
-        var firstPublished = PublicationDateParser.Parse(FirstString(document.FirstPublishDates), ExactDateFormats);
+        // first_publish_date was not returned for any sampled live row even when requested, while first_publish_year was (a
+        // 2026-11-17 sample of 22 rows), so a work with no date still carries its stated year: Year precision, never an invented day, and the
+        // same original-publication meaning the date has. An exact date, when Open Library does send one, always wins.
+        var firstPublished = PublicationDateParser.Parse(FirstString(document.FirstPublishDates), ExactDateFormats)
+            ?? (document.FirstPublishYear is >= 1 and <= 9999
+                ? PublicationDateParser.Parse(document.FirstPublishYear.Value.ToString(System.Globalization.CultureInfo.InvariantCulture), ExactDateFormats)
+                : null);
 
         return new BookCandidate(
             Id,
@@ -386,8 +408,35 @@ public sealed class OpenLibraryBookMetadataProvider(
         {
             PublicationDatePrecision = PublicationDateParser.Stated(firstPublished),
             // first_publish_date is Open Library's work-level original publication date.
-            PublicationDateBasis = firstPublished is null ? null : DateBasis.Original
+            PublicationDateBasis = firstPublished is null ? null : DateBasis.Original,
+            AuthorCredits = creditProjection.Credits,
+            SourceKind = ExternalReferenceEntityType.Work
         };
+    }
+
+    // Ids are attached only when author_name and author_key are the same length, so position i of one is position i of the
+    // other. Missing or mismatched arrays give no ids (the names still stand, as before); nothing is guessed from order.
+    private static LegacyCreditProjection ProjectCredits(OpenLibrarySearchDocument document)
+    {
+        var names = document.AuthorNames ?? [];
+        var keys = Aligned(document.AuthorKeys);
+        if (keys.Count == 0 || keys.Count != names.Count)
+        {
+            return new LegacyCreditProjection([], [], true, null);
+        }
+
+        var credits = new List<CreditRef>();
+        for (var ordinal = 0; ordinal < names.Count; ordinal++)
+        {
+            if (string.IsNullOrWhiteSpace(names[ordinal]))
+            {
+                continue;
+            }
+
+            credits.Add(new CreditRef(ordinal, names[ordinal].Trim(), null, AuthorRefOf(keys[ordinal])));
+        }
+
+        return LegacyCreditProjection.From(credits);
     }
 
     private static BookEditionCandidate[] GetEditions(
@@ -585,11 +634,17 @@ public sealed class OpenLibraryBookMetadataProvider(
         [JsonPropertyName("author_name")]
         public IReadOnlyList<string>? AuthorNames { get; init; }
 
+        [JsonPropertyName("author_key")]
+        public JsonElement AuthorKeys { get; init; }
+
         [JsonPropertyName("description")]
         public JsonElement Description { get; init; }
 
         [JsonPropertyName("first_publish_date")]
         public JsonElement FirstPublishDates { get; init; }
+
+        [JsonPropertyName("first_publish_year")]
+        public int? FirstPublishYear { get; init; }
 
         [JsonPropertyName("isbn")]
         public JsonElement Isbns { get; init; }

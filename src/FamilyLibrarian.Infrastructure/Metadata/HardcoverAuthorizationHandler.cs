@@ -20,6 +20,9 @@ public sealed class HardcoverAuthorizationHandler(IMetadataCredentialAccessor cr
 {
     private const string BearerPrefix = "Bearer ";
 
+    /// <summary>The exact message of the missing-token failure, so discovery can report it as unavailable setup rather than an error.</summary>
+    public const string MissingTokenMessage = "The Hardcover personal access token is not configured.";
+
     protected override async Task<HttpResponseMessage> SendAsync(
         HttpRequestMessage request,
         CancellationToken cancellationToken)
@@ -32,8 +35,7 @@ public sealed class HardcoverAuthorizationHandler(IMetadataCredentialAccessor cr
         {
             // Mirrors GoogleBooksApiKeyHandler: the provider was resolved as
             // usable but the token vanished between that check and this call.
-            throw new InvalidOperationException(
-                "The Hardcover personal access token is not configured.");
+            throw new InvalidOperationException(MissingTokenMessage);
         }
 
         token = token.Trim();

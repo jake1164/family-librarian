@@ -21,6 +21,9 @@ namespace FamilyLibrarian.Infrastructure.Metadata;
 public sealed class GoogleBooksApiKeyHandler(IMetadataCredentialAccessor credentials)
     : DelegatingHandler
 {
+    /// <summary>The exact message of the missing-key failure, so discovery can report it as unavailable setup rather than an error.</summary>
+    public const string MissingKeyMessage = "The Google Books API key is not configured.";
+
     protected override async Task<HttpResponseMessage> SendAsync(
         HttpRequestMessage request,
         CancellationToken cancellationToken)
@@ -37,8 +40,7 @@ public sealed class GoogleBooksApiKeyHandler(IMetadataCredentialAccessor credent
             // vanished between that check and the call — a cleared credential
             // racing an in-flight search. Fail loudly rather than sending an
             // unauthenticated request that returns a confusing 403 from Google.
-            throw new InvalidOperationException(
-                "The Google Books API key is not configured.");
+            throw new InvalidOperationException(MissingKeyMessage);
         }
 
         var separator = string.IsNullOrEmpty(request.RequestUri.Query) ? "?" : "&";

@@ -617,6 +617,9 @@ public static class DependencyInjection
             .ValidateOnStart();
 
         services.AddTransient<HardcoverAuthorizationHandler>();
+        // One instance for the process: Hardcover's RateLimit header describes the shared credential, so every request made
+        // with it (search, detail, language lookup, discovery) must feed the same state.
+        services.AddSingleton<HardcoverRateState>();
         services.AddTransient<HardcoverRateLimitHandler>();
 
         // Hardcover has no app-level key: the request-scoped admin's own

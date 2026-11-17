@@ -2,6 +2,7 @@ using System.Globalization;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using FamilyLibrarian.Application.Catalog;
+using FamilyLibrarian.Application.Catalog.Discovery;
 using FamilyLibrarian.Domain.Catalog;
 
 namespace FamilyLibrarian.Infrastructure.Metadata;
@@ -28,9 +29,10 @@ namespace FamilyLibrarian.Infrastructure.Metadata;
 /// not been confirmed against a live response in this codebase.
 /// </para>
 /// </remarks>
-public sealed class HardcoverBookMetadataProvider(
+public sealed partial class HardcoverBookMetadataProvider(
     HttpClient httpClient,
-    HardcoverLanguageLookupCache languageLookup) : IBookMetadataProvider
+    HardcoverLanguageLookupCache languageLookup,
+    TimeProvider? clock = null) : IBookMetadataProvider, IBookMetadataDiscoveryProvider
 {
     private const int MaximumDescriptionLength = 8_000;
 
@@ -46,6 +48,7 @@ public sealed class HardcoverBookMetadataProvider(
         cached_image
         contributions {
           author {
+            id
             name
           }
         }
@@ -53,6 +56,7 @@ public sealed class HardcoverBookMetadataProvider(
           position
           featured
           series {
+            id
             name
             is_completed
           }
@@ -202,6 +206,18 @@ public sealed class HardcoverBookMetadataProvider(
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .ToArray();
 
+        // The unchanged Phase 2 writer matches AuthorCredits to Authors by normalised name, so a record whose same-named
+        // credits carry different native ids would let a bare name bind to whichever saved author has it. Leaving the ids out
+        // does not help (the name still resolves), so such a record is not offered as an ordinary candidate at all. The
+        // discovery operations still return it, read-only, with every credit and id kept apart.
+        var creditProjection = ProjectCredits(book);
+        if (!creditProjection.Projectable)
+        {
+            return null;
+        }
+
+        var authorCredits = creditProjection.Credits;
+
         var editions = BuildEditions(book, title);
         var series = BuildSeries(book);
         var description = GetDescription(book.Description);
@@ -228,7 +244,7 @@ public sealed class HardcoverBookMetadataProvider(
             ? await languageLookup.GetIsoCodeAsync(languageId, cancellationToken)
             : null;
 
-        var released = PublicationDateParser.Parse(book.ReleaseDate, DateFormats);
+        var released = PublicationDateParser.ParseHardcoverRelease(book.ReleaseDate);
 
         return new BookCandidate(
             Id,
@@ -251,9 +267,34 @@ public sealed class HardcoverBookMetadataProvider(
         {
             PublicationDatePrecision = PublicationDateParser.Stated(released),
             // What Hardcover's release_date means (original publication or one edition) is not verified yet, so it is never read as original.
-            PublicationDateBasis = released is null ? null : DateBasis.Unknown
+            PublicationDateBasis = released is null ? null : DateBasis.Unknown,
+            AuthorCredits = authorCredits,
+            SourceKind = ExternalReferenceEntityType.Work
         };
     }
+
+    // Source author ids reach the unchanged Phase 2 writer only when its name-matching lookup cannot cross-assign them: two
+    // same-named contributions with different ids make the whole list unprojectable (see the caller for what happens then).
+    private static LegacyCreditProjection ProjectCredits(HardcoverBook book)
+    {
+        var credits = new List<CreditRef>();
+        var contributions = book.Contributions ?? [];
+        for (var ordinal = 0; ordinal < contributions.Count; ordinal++)
+        {
+            var author = contributions[ordinal].Author;
+            if (string.IsNullOrWhiteSpace(author?.Name))
+            {
+                continue;
+            }
+
+            credits.Add(new CreditRef(ordinal, author.Name.Trim(), null, AuthorRefOf(author.Id)));
+        }
+
+        return LegacyCreditProjection.From(credits);
+    }
+
+    private static SourceRef? AuthorRefOf(int? id) =>
+        id is > 0 ? new SourceRef("hardcover", id.Value.ToString(CultureInfo.InvariantCulture), ExternalReferenceEntityType.Author) : null;
 
     private static BookEditionCandidate[] BuildEditions(HardcoverBook book, string workTitle) =>
         (book.Editions ?? [])
@@ -270,7 +311,7 @@ public sealed class HardcoverBookMetadataProvider(
         var format = string.IsNullOrWhiteSpace(edition.EditionFormat)
             ? "Unknown format"
             : edition.EditionFormat.Trim();
-        var released = PublicationDateParser.Parse(edition.ReleaseDate, DateFormats);
+        var released = PublicationDateParser.ParseHardcoverRelease(edition.ReleaseDate);
         var publicationDate = released?.Date;
 
         return isbn13 is null && publicationDate is null &&
@@ -307,7 +348,10 @@ public sealed class HardcoverBookMetadataProvider(
                 FormatPositionLabel(entry.Position),
                 entry.Featured,
                 (decimal?)entry.Position,
-                entry.Series.IsCompleted == true))
+                entry.Series.IsCompleted == true)
+            {
+                SourceSeriesId = entry.Series.Id is > 0 ? entry.Series.Id.Value.ToString(CultureInfo.InvariantCulture) : null
+            })
             .ToArray();
 
     private static string? FormatPositionLabel(double? position) =>
@@ -344,8 +388,6 @@ public sealed class HardcoverBookMetadataProvider(
                 ? uri.AbsoluteUri
                 : null;
     }
-
-    private static readonly string[] DateFormats = ["yyyy-MM-dd"];
 
     private const int MaxResultsPerPage = 10;
 
@@ -423,6 +465,9 @@ public sealed class HardcoverBookMetadataProvider(
 
     private sealed class HardcoverAuthor
     {
+        [JsonPropertyName("id")]
+        public int? Id { get; init; }
+
         [JsonPropertyName("name")]
         public string? Name { get; init; }
     }
@@ -441,6 +486,9 @@ public sealed class HardcoverBookMetadataProvider(
 
     private sealed class HardcoverSeriesRef
     {
+        [JsonPropertyName("id")]
+        public int? Id { get; init; }
+
         [JsonPropertyName("name")]
         public string? Name { get; init; }
 

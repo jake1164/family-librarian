@@ -1,0 +1,337 @@
+@page "/browse/lookup/{ContextId:guid}"
+@attribute [Authorize]
+@implements IDisposable
+@using System.Globalization
+@inject CatalogDiscoveryApiClient Discovery
+@inject NavigationManager Navigation
+
+<PageTitle>@(Title) · Family Librarian</PageTitle>
+
+@* One explicit source lookup's result. Reading it is a GET of the user's own temporary data; it never contacts the source. The
+   only buttons that do are the lookup actions and "load the next page", each an explicit press. Nothing here follows, requests,
+   resolves, imports, notifies or saves. *@
+<MudStack Spacing="3">
+    <MudStack Row="true">
+        <MudButton Variant="Variant.Text" Href="search" StartIcon="@Icons.Material.Filled.ArrowBack">Back to search</MudButton>
+    </MudStack>
+
+    @if (isLoading)
+    {
+        <div role="status" aria-live="polite" class="browse-loading">
+            <MudProgressCircular Indeterminate="true" Color="Color.Primary" aria-label="Loading the lookup result" />
+            <MudText Typo="Typo.body2">Loading the lookup result…</MudText>
+        </div>
+    }
+    else if (problem is { } outcome)
+    {
+        @switch (outcome)
+        {
+            case LookupOutcome.NotFound:
+                <MudAlert Severity="Severity.Warning" Class="browse-problem browse-expired">
+                    <MudText Typo="Typo.subtitle1">This lookup result has expired or is no longer available</MudText>
+                    <MudText Typo="Typo.body2">
+                        Lookup results are temporary. They are kept for no longer than the search or book view that started them
+                        (about 10 minutes) and are cleared if the app restarts. Search again to start fresh. Nothing was saved,
+                        requested or imported.
+                    </MudText>
+                    <MudButton Variant="Variant.Filled" Color="Color.Primary" Href="search" Class="mt-2">Search again</MudButton>
+                </MudAlert>
+                break;
+            case LookupOutcome.Unauthorized:
+                <MudAlert Severity="Severity.Warning" Class="browse-problem browse-signed-out">
+                    <MudText Typo="Typo.subtitle1">Your session has ended</MudText>
+                    <MudButton Variant="Variant.Filled" Color="Color.Primary" Href="login" Class="mt-2">Sign in</MudButton>
+                </MudAlert>
+                break;
+            default:
+                <MudAlert Severity="Severity.Error" Class="browse-problem browse-unavailable">
+                    <MudText Typo="Typo.subtitle1">This could not be loaded right now</MudText>
+                    <MudText Typo="Typo.body2">The app did not answer. Nothing was changed.</MudText>
+                    <MudButton Variant="Variant.Outlined" OnClick="LoadAsync" Class="mt-2">Try again</MudButton>
+                </MudAlert>
+                break;
+        }
+    }
+    else if (result is not null)
+    {
+        var provider = result.ProviderName;
+        <div>
+            <MudText Typo="Typo.overline">Answer from @provider</MudText>
+            <MudText Typo="Typo.h4" HtmlTag="h1" Class="browse-heading" Style="overflow-wrap: anywhere;">@CatalogDiscoveryCopy.Title(result.Operation, provider)</MudText>
+            <MudText Typo="Typo.body2" Class="browse-source-context">
+                Asked about
+                @if (string.IsNullOrWhiteSpace(result.SubjectLabel))
+                {
+                    <text>a series with no name from @provider</text>
+                }
+                else
+                {
+                    <text>“@result.SubjectLabel”</text>
+                }
+                at @result.ObservedAtUtc.ToLocalTime().ToString("h:mm tt", CultureInfo.InvariantCulture).
+                This is one source's answer to one question, not the family catalog. Viewing it saves nothing.
+            </MudText>
+        </div>
+
+        <LookupOutcomeAlert Result="@result" />
+
+        @if (result.Books.Count > 0)
+        {
+            <ul class="lookup-books" aria-label="Books in this answer" style="list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px;">
+                @foreach (var (book, index) in result.Books.Select((book, index) => (book, index)))
+                {
+                    <li @key="@($"{book.Title}|{index}")" class="lookup-book">
+                        <MudPaper Outlined="true" Class="pa-3">
+                            <MudStack Spacing="1" Style="min-width: 0;">
+                                <MudText Typo="Typo.subtitle1" Style="overflow-wrap: anywhere;">@book.Title</MudText>
+                                <MudText Typo="Typo.caption" Class="lookup-date">
+                                    @* A series lookup describes the book already on screen, so it carries no date of its own and none is claimed. *@
+                                    @if (result.Operation != "FindSeriesForBook")
+                                    {
+                                        <text>@CatalogDiscoveryCopy.DateText(book.PublicationDate, book.DatePrecision, book.DateBasis)</text>
+                                    }
+                                    @if (!string.IsNullOrWhiteSpace(book.SourceKind))
+                                    {
+                                        <text>@(result.Operation != "FindSeriesForBook" ? " · " : string.Empty)this source's @(book.SourceKind == "Edition" ? "edition" : "work") record</text>
+                                    }
+                                    @if (!string.IsNullOrWhiteSpace(book.VersionLabel))
+                                    {
+                                        <text> · @book.VersionLabel</text>
+                                    }
+                                </MudText>
+
+                                <MudText Typo="Typo.body2" Color="Color.Secondary" Class="lookup-credits">
+                                    @CatalogDiscoveryCopy.CreditLine(book.Credits)
+                                </MudText>
+
+                                @if (book.Memberships.Count > 0)
+                                {
+                                    <ul class="lookup-memberships" style="margin: 0; padding-left: 20px;">
+                                        @foreach (var (membership, memberIndex) in book.Memberships.Select((membership, memberIndex) => (membership, memberIndex)))
+                                        {
+                                            <li @key="@($"{membership.SubjectId}")" class="lookup-membership">
+                                                <MudText Typo="Typo.body2" Style="overflow-wrap: anywhere;">
+                                                    @if (membership.NameMissing)
+                                                    {
+                                                        <em class="lookup-name-missing">Series name not provided by @provider</em>
+                                                    }
+                                                    else
+                                                    {
+                                                        <text>@membership.Label</text>
+                                                    }
+                                                    · @CatalogDiscoveryCopy.PositionText(membership.PositionLabel, membership.Position)
+                                                </MudText>
+                                                @if (CatalogDiscoveryCopy.RelationshipText(membership.Relationship) is { } derived)
+                                                {
+                                                    <MudText Typo="Typo.caption" Class="lookup-derived">@derived</MudText>
+                                                }
+                                                @if (CatalogDiscoveryCopy.CanonicalText(membership.CanonicalState) is { } canonical)
+                                                {
+                                                    <MudText Typo="Typo.caption" Class="lookup-canonical">@canonical</MudText>
+                                                }
+                                                @if (result.ContextId is { } windowForSeries && membership.HasSourceId)
+                                                {
+                                                    <SourceLookupActions ContextId="@windowForSeries" SubjectId="@membership.SubjectId"
+                                                                         Describe="@(membership.NameMissing ? "a series" : membership.Label)" />
+                                                }
+                                            </li>
+                                        }
+                                    </ul>
+                                }
+
+                                @if (book.AssociationsTruncated)
+                                {
+                                    <MudText Typo="Typo.caption" Color="Color.Warning">Some credits or series were left out to keep this small, so the lists above may be incomplete.</MudText>
+                                }
+
+                                @if (result.ContextId is { } window && book.BookSubjectId is { } bookSubject && result.Operation != "FindSeriesForBook")
+                                {
+                                    <SourceLookupActions ContextId="@window" SubjectId="@bookSubject" Describe="@book.Title" />
+                                }
+                            </MudStack>
+                        </MudPaper>
+                    </li>
+                }
+            </ul>
+        }
+
+        @if (result.Refs.Count > 0)
+        {
+            <ul class="lookup-refs" aria-label="@(result.Refs[0].Kind == "Author" ? "People in this answer" : "Series in this answer")" style="list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px;">
+                @foreach (var reference in result.Refs)
+                {
+                    <li @key="reference.SubjectId" class="lookup-ref">
+                        <MudPaper Outlined="true" Class="pa-3">
+                            <MudStack Spacing="1" Style="min-width: 0;">
+                                <MudText Typo="Typo.subtitle1" Style="overflow-wrap: anywhere;">
+                                    @if (reference.NameMissing)
+                                    {
+                                        <em class="lookup-name-missing">Series name not provided by @provider</em>
+                                    }
+                                    else
+                                    {
+                                        <text>@reference.Label</text>
+                                    }
+                                </MudText>
+                                @if (!string.IsNullOrWhiteSpace(reference.Disambiguation) || reference.WorkCount is not null)
+                                {
+                                    <MudText Typo="Typo.caption" Class="lookup-ref-details">
+                                        @reference.Disambiguation
+                                        @if (reference.WorkCount is { } count)
+                                        {
+                                            <text>@(string.IsNullOrWhiteSpace(reference.Disambiguation) ? string.Empty : " · ")@count work@(count == 1 ? string.Empty : "s") listed. A larger count is not evidence this is the person you mean.</text>
+                                        }
+                                    </MudText>
+                                }
+                                @if (reference.IsCompleted is { } completed || reference.PrimaryBooksCount is not null)
+                                {
+                                    <MudText Typo="Typo.caption" Class="lookup-ref-series">
+                                        The source says
+                                        @if (reference.PrimaryBooksCount is { } primary)
+                                        {
+                                            <text>it has @primary main book@(primary == 1 ? string.Empty : "s")</text>
+                                        }
+                                        @if (reference.IsCompleted is { } done)
+                                        {
+                                            <text>@(reference.PrimaryBooksCount is null ? string.Empty : " and ")it is @(done ? "marked complete" : "not marked complete"). That is the source's statement, not a promise of what is published.</text>
+                                        }
+                                    </MudText>
+                                }
+                                @if (CatalogDiscoveryCopy.RelationshipText(reference.Relationship) is { } derivedLink)
+                                {
+                                    <MudText Typo="Typo.caption" Class="lookup-derived">@derivedLink</MudText>
+                                }
+                                @if (CatalogDiscoveryCopy.CanonicalText(reference.CanonicalState) is { } canonicalLink)
+                                {
+                                    <MudText Typo="Typo.caption" Class="lookup-canonical">@canonicalLink</MudText>
+                                }
+                                @if (result.ContextId is { } windowForRef && reference.HasSourceId)
+                                {
+                                    <SourceLookupActions ContextId="@windowForRef" SubjectId="@reference.SubjectId"
+                                                         Describe="@(reference.NameMissing ? "a series" : reference.Label)" />
+                                }
+                            </MudStack>
+                        </MudPaper>
+                    </li>
+                }
+            </ul>
+        }
+
+        @if (result.Books.Count == 0 && result.Refs.Count == 0 && result.Outcome is "Ok" or "Partial" or "Ambiguous")
+        {
+            <MudAlert Severity="Severity.Info" Class="browse-empty">Nothing from this answer could be kept in the temporary preview.</MudAlert>
+        }
+
+        @if (result.CanContinue && result.ContextId is { } current)
+        {
+            <MudStack Spacing="1" Class="lookup-continue">
+                <MudButton Variant="Variant.Filled" Color="Color.Primary" Disabled="@continuing" OnClick="() => ContinueAsync(current)">
+                    Load the next page from @provider
+                </MudButton>
+                @if (continueProblem is not null)
+                {
+                    <MudAlert Severity="Severity.Warning" role="alert">@continueProblem</MudAlert>
+                }
+                @if (continuing)
+                {
+                    <div role="status" aria-live="polite">
+                        <MudProgressCircular Indeterminate="true" Size="Size.Small" aria-label="Asking the source" />
+                        <MudText Typo="Typo.caption">Asking the source…</MudText>
+                    </div>
+                }
+            </MudStack>
+        }
+    }
+</MudStack>
+
+@code {
+    [Parameter] public Guid ContextId { get; set; }
+
+    private CatalogDiscoveryResponse? result;
+    private LookupOutcome? problem;
+    private bool isLoading = true;
+    private bool continuing;
+    private string? continueProblem;
+    private Guid loadedFor;
+    private CancellationTokenSource? loading;
+
+    private string Title => result is null ? "Source lookup" : CatalogDiscoveryCopy.Title(result.Operation, result.ProviderName);
+
+    protected override async Task OnParametersSetAsync()
+    {
+        if (loadedFor == ContextId) return;
+        loadedFor = ContextId;
+        await LoadAsync();
+    }
+
+    private async Task LoadAsync()
+    {
+        loading?.Cancel();
+        loading?.Dispose();
+        loading = new CancellationTokenSource();
+        var token = loading.Token;
+        result = null;
+        problem = null;
+        continueProblem = null;
+        isLoading = true;
+        try
+        {
+            var read = await Discovery.GetWindowAsync(ContextId, token);
+            if (token.IsCancellationRequested) return;
+            result = read.Value;
+            problem = read.IsOk ? null : read.Outcome;
+        }
+        catch (OperationCanceledException)
+        {
+            return;
+        }
+
+        isLoading = false;
+    }
+
+    private async Task ContinueAsync(Guid windowContext)
+    {
+        if (continuing) return;
+        continuing = true;
+        continueProblem = null;
+        try
+        {
+            var next = await Discovery.ContinueAsync(windowContext, loading?.Token ?? CancellationToken.None);
+            switch (next.Outcome)
+            {
+                case LookupOutcome.Ok when next.Value!.ContextId is { } window:
+                    Navigation.NavigateTo($"browse/lookup/{window}");
+                    return;
+                case LookupOutcome.Ok:
+                    result = next.Value;
+                    break;
+                case LookupOutcome.NotFound:
+                    continueProblem = "This result has expired, so there is no next page. Search again to start fresh.";
+                    break;
+                case LookupOutcome.RateLimited or LookupOutcome.Busy:
+                    continueProblem = CatalogDiscoveryCopy.ThrottleText(next.Outcome, next.RetryAfter);
+                    break;
+                case LookupOutcome.Refused:
+                    continueProblem = CatalogDiscoveryCopy.RefusalText(next.Code, result?.ProviderName ?? "the source");
+                    break;
+                default:
+                    continueProblem = "The next page could not be loaded. Nothing was changed. You can try again.";
+                    break;
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            return;
+        }
+        finally
+        {
+            continuing = false;
+        }
+    }
+
+    public void Dispose()
+    {
+        loading?.Cancel();
+        loading?.Dispose();
+    }
+}

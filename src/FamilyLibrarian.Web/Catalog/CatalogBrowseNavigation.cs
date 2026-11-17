@@ -103,7 +103,7 @@ public sealed partial class CatalogBrowseNavigation(
             .ToArray();
 
         if (authors.Length < record.Credits.Count || series.Length < record.Memberships.Count) limitations.Add(CatalogBrowseLimitations.NavigationPartial);
-        return new CatalogBookNavigationResponse(lease.ContextId, found.ExpiresAtUtc, authors, series, limitations);
+        return new CatalogBookNavigationResponse(lease.ContextId, found.ExpiresAtUtc, authors, series, limitations, record.BookSubjectId);
     }
 
     private static CatalogBookNavigationResponse Unavailable() => new(

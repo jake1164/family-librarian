@@ -131,10 +131,12 @@ public sealed record CatalogNavigationReferenceResponse(int Ordinal, string Labe
 /// <summary>
 /// Optional navigation attached to a candidate. <see cref="ContextId"/> is null (with a limitation code) when the
 /// temporary cache could not admit the context; that never makes the search or detail response fail.
+/// <see cref="BookSubjectId"/> names this book for an explicit source lookup; it is null when the source did not say what its id identifies.
 /// </summary>
 public sealed record CatalogBookNavigationResponse(
     Guid? ContextId,
     DateTimeOffset? ExpiresAtUtc,
     IReadOnlyList<CatalogNavigationReferenceResponse> Authors,
     IReadOnlyList<CatalogNavigationReferenceResponse> Series,
-    IReadOnlyList<string> Limitations);
+    IReadOnlyList<string> Limitations,
+    Guid? BookSubjectId = null);

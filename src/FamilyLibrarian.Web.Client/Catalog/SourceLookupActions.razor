@@ -1,0 +1,210 @@
+@implements IDisposable
+@inject CatalogDiscoveryApiClient Discovery
+@inject NavigationManager Navigation
+
+@* Explicit source lookups for one temporary subject. Nothing here runs on render: offers are read only when the person asks (or,
+   for Eager, on load), and a provider is contacted only by a button press. The host decides every rule; this component only
+   shows what it said. A lookup that is not supported has no button, only a reason. *@
+<div class="source-lookup" data-subject="@SubjectId">
+    @if (!opened && !Eager)
+    {
+        <MudButton Variant="Variant.Outlined" Size="Size.Small" StartIcon="@Icons.Material.Filled.TravelExplore"
+                   OnClick="OpenAsync" aria-label="@($"Look up more about {Describe} from its source")">
+            Look up from the source…
+        </MudButton>
+    }
+    else if (loading)
+    {
+        <div role="status" aria-live="polite" class="lookup-loading">
+            <MudProgressCircular Indeterminate="true" Size="Size.Small" aria-label="Checking what this source offers" />
+            <MudText Typo="Typo.caption">Checking what this source offers…</MudText>
+        </div>
+    }
+    else if (offersProblem)
+    {
+        <MudAlert Severity="Severity.Warning" Class="lookup-offers-problem">
+            <MudText Typo="Typo.body2">What this source offers could not be checked right now. Nothing was changed.</MudText>
+            <MudButton Variant="Variant.Outlined" Size="Size.Small" OnClick="OpenAsync" Class="mt-1">Try again</MudButton>
+        </MudAlert>
+    }
+    else if (offers is { Count: > 0 })
+    {
+        <MudStack Spacing="1" Class="lookup-offers">
+            @foreach (var offer in offers)
+            {
+                <div @key="offer.Kind" class="lookup-offer">
+                    @if (offer.CanStart)
+                    {
+                        <MudButton Variant="Variant.Filled" Color="Color.Primary" Size="Size.Small" Disabled="@running"
+                                   OnClick="() => StartAsync(offer)" data-kind="@offer.Kind">
+                            @CatalogDiscoveryCopy.OfferLabel(offer.Kind, offer.ProviderName)
+                        </MudButton>
+                        @if (CatalogDiscoveryCopy.CapabilityText(offer.Capability, offer.ReasonCode, offer.ProviderName) is { } caveat)
+                        {
+                            <MudText Typo="Typo.caption" Class="lookup-caveat">@caveat</MudText>
+                        }
+                    }
+                    else
+                    {
+                        <MudText Typo="Typo.body2" Class="lookup-unavailable" data-kind="@offer.Kind">
+                            @CatalogDiscoveryCopy.OfferLabel(offer.Kind, offer.ProviderName) is not available.
+                            @(CatalogDiscoveryCopy.CapabilityText(offer.Capability, offer.ReasonCode, offer.ProviderName)
+                              ?? CatalogDiscoveryCopy.ReasonText(offer.ReasonCode, offer.ProviderName))
+                        </MudText>
+                    }
+                </div>
+            }
+        </MudStack>
+    }
+    else if (offers is not null && !Eager)
+    {
+        <MudText Typo="Typo.caption" Class="lookup-none">
+            This source gave nothing here that can be looked up further. A name or a label alone is never used to pick a record.
+        </MudText>
+    }
+
+    @if (running)
+    {
+        <div role="status" aria-live="polite" class="lookup-running mt-2">
+            <MudProgressCircular Indeterminate="true" Size="Size.Small" aria-label="Asking the source" />
+            <MudText Typo="Typo.caption">Asking the source… this can take several seconds. Nothing is saved.</MudText>
+        </div>
+    }
+
+    @if (refusal is not null)
+    {
+        <MudAlert Severity="Severity.Warning" Class="lookup-refusal mt-2" role="alert">@refusal</MudAlert>
+    }
+
+    @if (inline is not null)
+    {
+        <div class="mt-2">
+            <LookupOutcomeAlert Result="@inline" />
+            <MudText Typo="Typo.body2" Class="mt-1">
+                The temporary preview could not keep this result, so it cannot be opened as a page. Ask again to see it.
+            </MudText>
+        </div>
+    }
+</div>
+
+@code {
+    [Parameter, EditorRequired] public Guid ContextId { get; set; }
+    [Parameter, EditorRequired] public Guid SubjectId { get; set; }
+
+    /// <summary>What the subject is called, for the accessible name only.</summary>
+    [Parameter] public string Describe { get; set; } = "this record";
+
+    /// <summary>Read what the source offers when the component loads rather than on the first press. Still no provider call.</summary>
+    [Parameter] public bool Eager { get; set; }
+
+    private IReadOnlyList<CatalogExpansionOfferResponse>? offers;
+    private CatalogDiscoveryResponse? inline;
+    private string? refusal;
+    private bool opened;
+    private bool loading;
+    private bool offersProblem;
+    private bool running;
+    private string? loadedKey;
+    private CancellationTokenSource? cancel;
+
+    protected override async Task OnParametersSetAsync()
+    {
+        var key = $"{ContextId}|{SubjectId}";
+        if (key == loadedKey) return;
+        loadedKey = key;
+        offers = null;
+        inline = null;
+        refusal = null;
+        opened = false;
+        if (Eager) await OpenAsync();
+    }
+
+    private async Task OpenAsync()
+    {
+        opened = true;
+        loading = true;
+        offersProblem = false;
+        cancel?.Cancel();
+        cancel?.Dispose();
+        cancel = new CancellationTokenSource();
+        var token = cancel.Token;
+        try
+        {
+            var result = await Discovery.GetOffersAsync(ContextId, SubjectId, token);
+            if (token.IsCancellationRequested) return;
+            if (result.IsOk)
+            {
+                offers = result.Value!.Offers;
+            }
+            else
+            {
+                // An expired or foreign subject has nothing to offer; any other failure is shown as unavailable.
+                offers = result.Outcome == LookupOutcome.NotFound ? [] : null;
+                offersProblem = result.Outcome != LookupOutcome.NotFound;
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            return;
+        }
+        finally
+        {
+            loading = false;
+        }
+    }
+
+    private async Task StartAsync(CatalogExpansionOfferResponse offer)
+    {
+        if (running) return;
+        running = true;
+        refusal = null;
+        inline = null;
+        cancel?.Cancel();
+        cancel?.Dispose();
+        cancel = new CancellationTokenSource();
+        var token = cancel.Token;
+        try
+        {
+            var result = await Discovery.ExpandAsync(ContextId, SubjectId, offer.Kind, token);
+            if (token.IsCancellationRequested) return;
+            switch (result.Outcome)
+            {
+                case LookupOutcome.Ok when result.Value!.ContextId is { } window:
+                    Navigation.NavigateTo($"browse/lookup/{window}");
+                    return;
+                case LookupOutcome.Ok:
+                    inline = result.Value;
+                    break;
+                case LookupOutcome.NotFound:
+                    refusal = "This preview has expired. Search again to start fresh. Nothing was saved.";
+                    break;
+                case LookupOutcome.Unauthorized:
+                    refusal = "Your session has ended. Sign in again to continue.";
+                    break;
+                case LookupOutcome.RateLimited or LookupOutcome.Busy:
+                    refusal = CatalogDiscoveryCopy.ThrottleText(result.Outcome, result.RetryAfter);
+                    break;
+                case LookupOutcome.Refused:
+                    refusal = CatalogDiscoveryCopy.RefusalText(result.Code, offer.ProviderName);
+                    break;
+                default:
+                    refusal = "The lookup could not be completed. Nothing was changed. You can try again.";
+                    break;
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            return;
+        }
+        finally
+        {
+            running = false;
+        }
+    }
+
+    public void Dispose()
+    {
+        cancel?.Cancel();
+        cancel?.Dispose();
+    }
+}

@@ -44,6 +44,7 @@ builder.Services.AddScoped<AntiforgeryTokenProvider>();
 builder.Services.AddScoped<AccountsApiClient>();
 builder.Services.AddScoped<CatalogApiClient>();
 builder.Services.AddScoped<CatalogBrowseApiClient>();
+builder.Services.AddScoped<CatalogDiscoveryApiClient>();
 builder.Services.AddScoped(sp => new CatalogSearchState(sp.GetRequiredService<AuthenticationStateProvider>()));
 builder.Services.AddScoped<MetadataIntegrationsApiClient>();
 builder.Services.AddScoped<GutenbergCatalogApiClient>();
