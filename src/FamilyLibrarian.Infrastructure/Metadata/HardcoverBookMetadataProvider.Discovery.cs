@@ -15,8 +15,12 @@ namespace FamilyLibrarian.Infrastructure.Metadata;
 /// Every document below uses one top-level GraphQL field, because Hardcover charges one request per top-level field and
 /// rejects an over-wide document with 403 <c>request_exceeds_capacity</c>. Selection is always by native id; a name is never
 /// used to pick a series. Field names come from Hardcover's published schema pages (book_series, series, contributions
-/// filters); the id filters, the <c>contributor_role</c> relation on contributions and the <c>series.author_id</c> filter have
-/// <b>not</b> been exercised against the live API by this codebase, which is why their capabilities are declared Unverified.
+/// filters). All five operations were exercised once against the live service on 2026-11-17 (Frank Herbert / Dune: author
+/// identity, one works page, one book's series claims, one members page, one author-series page; six requests, no error or
+/// partial field error), including the id filters, the <c>contributor_role</c> relation and the <c>series.author_id</c> filter,
+/// which is why all five are declared Supported. That is one sample, not a coverage promise: author-series is the primary author's
+/// series only (a series reached through another credit is not listed), a page is one provider page with a stated look-ahead, and
+/// nothing here claims completeness for any author or series.
 /// </para>
 /// <para>
 /// Pages are 99 rows read with one look-ahead row, because the provider caps a request at 100 rows: that makes "another
@@ -181,8 +185,8 @@ public sealed partial class HardcoverBookMetadataProvider
         new(DiscoveryOperation.FindSeriesForBook, DiscoveryCapability.Supported),
         new(DiscoveryOperation.ResolveAuthor, DiscoveryCapability.Supported),
         new(DiscoveryOperation.GetAuthorWorks, DiscoveryCapability.Supported),
-        new(DiscoveryOperation.GetSeriesMembers, DiscoveryCapability.Unverified("documented-first-party-live-unverified")),
-        new(DiscoveryOperation.GetAuthorSeries, DiscoveryCapability.Unverified("documented-field-live-unverified"))
+        new(DiscoveryOperation.GetSeriesMembers, DiscoveryCapability.Supported),
+        new(DiscoveryOperation.GetAuthorSeries, DiscoveryCapability.Supported)
     ]);
 
     private readonly TimeProvider time = clock ?? TimeProvider.System;
@@ -769,7 +773,7 @@ public sealed partial class HardcoverBookMetadataProvider
             credits.Add(new CreditRef(ordinal, author.Name.Trim(), role, AuthorRefOf(author.Id)));
         }
 
-        var released = PublicationDateParser.Parse(book.ReleaseDate, DateFormats);
+        var released = PublicationDateParser.ParseHardcoverRelease(book.ReleaseDate);
         // What Hardcover's release_date means (original or one edition) is unverified, so the basis stays Unknown.
         var publication = released is { } date
             ? PublicationEvidence.Dated(date.Date, date.Precision, DateBasis.Unknown)

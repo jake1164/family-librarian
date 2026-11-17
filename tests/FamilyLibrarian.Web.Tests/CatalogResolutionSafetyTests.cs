@@ -587,6 +587,47 @@ public sealed class CatalogResolutionSafetyTests
     }
 
     [TestMethod]
+    public async Task AHardcoverFirstOfJanuaryOrOfAMonthIsSavedAsAYearOrMonthNeverAnExactDayOrPrematurelyPublished()
+    {
+        var connection = await NewDatabaseAsync();
+        var author = Unique("Placeholder Author");
+        // 42: a Work released "2099-01-01" with an edition "2099-06-01" (a future year / month interval);
+        // 43: a Work released "1965-06-14" (a genuine non-first day).
+        using var mapped = new HardcoverMapped(
+            EnabledProvider,
+            """{"data":{"books_by_pk":{"id":42,"title":"Placeholder Dated Book","release_date":"2099-01-01","contributions":[{"author":{"id":9,"name":"NAME"}}],"editions":[{"isbn_13":"9780743506977","edition_format":"Hardcover","release_date":"2099-06-01"}]}}}""".Replace("NAME", author, StringComparison.Ordinal),
+            """{"data":{"books_by_pk":{"id":43,"title":"Exact Dated Book","release_date":"1965-06-14","contributions":[{"author":{"id":9,"name":"NAME"}}]}}}""".Replace("NAME", author, StringComparison.Ordinal));
+        await using var factory = Host(connection, [], services =>
+        {
+            services.RemoveAll<IBookMetadataProvider>();
+            services.AddSingleton<IBookMetadataProvider>(mapped);
+        });
+        using var client = await SignedInAsync(factory);
+
+        using var coarse = await ResolveAsync(client, EnabledProvider, "42");
+        using var exact = await ResolveAsync(client, EnabledProvider, "43");
+
+        Assert.AreEqual(HttpStatusCode.Created, coarse.StatusCode, await coarse.Content.ReadAsStringAsync());
+        Assert.AreEqual(HttpStatusCode.Created, exact.StatusCode, await exact.Content.ReadAsStringAsync());
+        await WithDatabaseAsync(factory, async database =>
+        {
+            var work = await database.Works.SingleAsync(w => w.CanonicalTitle == "Placeholder Dated Book");
+            Assert.AreEqual(new DateOnly(2099, 1, 1), work.FirstPublicationDate, "The stated value is kept.");
+            Assert.AreEqual(DatePrecision.Year, work.FirstPublicationPrecision, "A January 1 is saved as a year, never as an exact day.");
+            Assert.AreEqual(DateBasis.Unknown, work.FirstPublicationBasis);
+            Assert.AreNotEqual(PublicationStatus.Published, work.PublicationStatus, "A future year is never published.");
+            var edition = await database.Editions.SingleAsync(e => e.WorkId == work.Id);
+            Assert.AreEqual(new DateOnly(2099, 6, 1), edition.PublicationDate);
+            Assert.AreEqual(DatePrecision.Month, edition.PublicationPrecision, "A month-start edition date is saved as a month.");
+            var day = await database.Works.SingleAsync(w => w.CanonicalTitle == "Exact Dated Book");
+            Assert.AreEqual(new DateOnly(1965, 6, 14), day.FirstPublicationDate);
+            Assert.AreEqual(DatePrecision.Day, day.FirstPublicationPrecision, "A genuine non-first day stays a day.");
+            Assert.AreEqual(PublicationStatus.Published, day.PublicationStatus);
+            return 0;
+        });
+    }
+
+    [TestMethod]
     public async Task AnOpenLibraryWorkWithOnlyAFirstPublishYearIsSavedAsAYearOnlyOriginalDateNeverAnExactDay()
     {
         var connection = await NewDatabaseAsync();

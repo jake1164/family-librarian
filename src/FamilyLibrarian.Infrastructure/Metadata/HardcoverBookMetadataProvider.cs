@@ -244,7 +244,7 @@ public sealed partial class HardcoverBookMetadataProvider(
             ? await languageLookup.GetIsoCodeAsync(languageId, cancellationToken)
             : null;
 
-        var released = PublicationDateParser.Parse(book.ReleaseDate, DateFormats);
+        var released = PublicationDateParser.ParseHardcoverRelease(book.ReleaseDate);
 
         return new BookCandidate(
             Id,
@@ -311,7 +311,7 @@ public sealed partial class HardcoverBookMetadataProvider(
         var format = string.IsNullOrWhiteSpace(edition.EditionFormat)
             ? "Unknown format"
             : edition.EditionFormat.Trim();
-        var released = PublicationDateParser.Parse(edition.ReleaseDate, DateFormats);
+        var released = PublicationDateParser.ParseHardcoverRelease(edition.ReleaseDate);
         var publicationDate = released?.Date;
 
         return isbn13 is null && publicationDate is null &&
@@ -388,8 +388,6 @@ public sealed partial class HardcoverBookMetadataProvider(
                 ? uri.AbsoluteUri
                 : null;
     }
-
-    private static readonly string[] DateFormats = ["yyyy-MM-dd"];
 
     private const int MaxResultsPerPage = 10;
 

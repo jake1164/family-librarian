@@ -115,9 +115,9 @@ internal sealed class HardcoverRateLimitHandler(
     }
 
     /// <summary>
-    /// Asks the shared state for a slot, pausing once for the announced wait when <paramref name="mayPause"/> allows it. The
-    /// pause honours cancellation, and a single pause is all there is: if the state still has no slot afterwards the caller is
-    /// told how long the wait is rather than looping.
+    /// Asks the shared state for a slot, finishing one announced wait within a bounded allowance when <paramref name="mayPause"/>
+    /// allows it. Scheduled pauses use whole milliseconds rounded up, so a positive remainder cannot become a completed
+    /// zero-duration delay. Both the caller's budget and the allowance apply to the actual scheduled duration.
     /// </summary>
     private async Task<(HardcoverRateState.Reservation? Reservation, TimeSpan Wait)> ReserveAsync(
         Func<TimeSpan, bool> mayPause, CancellationToken cancellationToken)
@@ -134,8 +134,16 @@ internal sealed class HardcoverRateLimitHandler(
         var paused = TimeSpan.Zero;
         for (var pass = 0; pass < MaximumPausePasses; pass++)
         {
-            await _delay(admission.Wait, cancellationToken);
-            paused += admission.Wait;
+            // Task.Delay truncates a TimeSpan to whole milliseconds. Finish fractional remainders instead of spending all
+            // passes on immediate completions, without rounding past the caller's remaining work or this wait's allowance.
+            var scheduled = TimeSpan.FromMilliseconds(Math.Ceiling(admission.Wait.TotalMilliseconds));
+            if (!mayPause(scheduled) || paused + scheduled > allowance)
+            {
+                return admission;
+            }
+
+            await _delay(scheduled, cancellationToken);
+            paused += scheduled;
             admission = _rateState.TryReserve();
             if (admission.Reservation is not null ||
                 admission.Wait > PauseRoundingTolerance ||

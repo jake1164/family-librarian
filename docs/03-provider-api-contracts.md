@@ -399,11 +399,16 @@ from an author. Rules that every implementation keeps:
   action: a source lookup, or expanding a window into a book's series, a series' members or an author's works or series. Each such
   action is bounded by the budgets above and a per-user start limit.
 - **Dates and titles.** A publication date keeps its precision and whether it describes the original or one edition; unstated stays
-  unstated. A title keeps the source's reported form, any explicit normalization with its rule, and any alternate titles the source
+  unstated. Hardcover's published-date guidance lets a year-only date be recorded as January 1 and a month-only date as that month's
+  first day, so a Hardcover `release_date` is never reported as more precise than that allows: January 1 is a year, another
+  first-of-month a month, any other full date a day. The stated value is kept; the bound is not a claim that a given value was a
+  placeholder, and the same rule applies to the ordinary Work and Edition mapping.
+  A title keeps the source's reported form, any explicit normalization with its rule, and any alternate titles the source
   states with their field, language (when stated) and Work-or-Edition scope.
 
-Current integrations: Open Library implements all five (series-author listings derived, never native); Hardcover implements all five,
-with series-by-id and author-series declared unverified against its live service; Google Books implements only the book-to-series
+Current integrations: Open Library implements all five (series-author listings derived, never native); Hardcover implements all five
+and declares them supported after one bounded live run (a single author and series; the author-series listing covers the primary
+author only, and no completeness is claimed for any author or series); Google Books implements only the book-to-series
 read (volume-level series ids without names, declared unverified) and declares the series, author and bibliography operations
 unsupported. Throttling is remembered per integration: Hardcover reads its documented `RateLimit` header; Open Library, which
 publishes no quota, refuses further requests locally after a 429 for the response's full `Retry-After` (seconds or HTTP-date), or an

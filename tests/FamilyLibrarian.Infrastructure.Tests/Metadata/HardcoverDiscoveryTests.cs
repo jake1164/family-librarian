@@ -583,6 +583,30 @@ public sealed class HardcoverDiscoveryTests
     }
 
     [TestMethod]
+    public async Task DiscoveryAppliesTheSameConservativePrecisionAsTheOrdinaryMapping()
+    {
+        using var rig = Rig.With(Json("""
+            {"data":{"authors":[{"id":7,"name":"Rebecca Yarros","contributions":[
+              {"book":{"id":51,"title":"Year Start","release_date":"1965-01-01","contributions":[],"book_series":[]}},
+              {"book":{"id":52,"title":"Month Start","release_date":"1965-06-01","contributions":[],"book_series":[]}},
+              {"book":{"id":53,"title":"Exact Day","release_date":"1965-06-14","contributions":[],"book_series":[]}},
+              {"book":{"id":54,"title":"Partial Month","release_date":"1965-06","contributions":[],"book_series":[]}},
+              {"book":{"id":55,"title":"Bad Date","release_date":"1965-02-30","contributions":[],"book_series":[]}}
+            ]}]}}
+            """));
+
+        var result = await rig.Provider.GetAuthorWorksAsync(new AuthorRef("Rebecca Yarros", Author7), null, rig.Op(), CancellationToken.None);
+
+        Assert.AreEqual(DatePrecision.Year, PublicationDatePrecisionOf(result.Items[0]));
+        Assert.AreEqual(new DateOnly(1965, 1, 1), result.Items[0].Book.Publication.Date, "The stated value is kept; only the precision is bounded.");
+        Assert.AreEqual(DatePrecision.Month, PublicationDatePrecisionOf(result.Items[1]));
+        Assert.AreEqual(DatePrecision.Day, PublicationDatePrecisionOf(result.Items[2]));
+        Assert.AreEqual(DatePrecision.Month, PublicationDatePrecisionOf(result.Items[3]));
+        Assert.AreEqual(PublicationDateState.NotStated, result.Items[4].Book.Publication.State, "An invalid date is not guessed.");
+        Assert.IsTrue(result.Items.Take(4).All(item => item.Book.Publication.Basis == DateBasis.Unknown));
+    }
+
+    [TestMethod]
     public async Task AuthorWorksCarrySeriesClaimsRolesAndAKnownNextPage()
     {
         using var rig = Rig.With(Json("""
@@ -642,15 +666,17 @@ public sealed class HardcoverDiscoveryTests
     // ---- capability, documents and the unchanged search/detail mapping ----
 
     [TestMethod]
-    public void CapabilitiesSeparateWhatIsVerifiedFromWhatIsOnlyDocumented()
+    public void EveryHardcoverOperationIsDeclaredSupportedAfterTheSampledLiveRun()
     {
         using var rig = Rig.With();
         var capabilities = ((IBookMetadataDiscoveryProvider)rig.Provider).Capabilities;
 
         Assert.AreEqual(CapabilityState.Supported, capabilities.Get(DiscoveryOperation.FindSeriesForBook).State);
         Assert.AreEqual(CapabilityState.Supported, capabilities.Get(DiscoveryOperation.ResolveAuthor).State);
-        Assert.AreEqual(CapabilityState.Unverified, capabilities.Get(DiscoveryOperation.GetSeriesMembers).State);
-        Assert.AreEqual(CapabilityState.Unverified, capabilities.Get(DiscoveryOperation.GetAuthorSeries).State);
+        Assert.AreEqual(CapabilityState.Supported, capabilities.Get(DiscoveryOperation.GetAuthorWorks).State);
+        Assert.AreEqual(CapabilityState.Supported, capabilities.Get(DiscoveryOperation.GetSeriesMembers).State, "Observed live once (Dune, 2026-11-17).");
+        Assert.AreEqual(CapabilityState.Supported, capabilities.Get(DiscoveryOperation.GetAuthorSeries).State, "Observed live once; primary author only.");
+        Assert.AreEqual("supported", capabilities.Get(DiscoveryOperation.GetAuthorSeries).ReasonCode);
         Assert.IsInstanceOfType<IBookMetadataProvider>(rig.Provider);
     }
 
@@ -1061,6 +1087,92 @@ public sealed class HardcoverDiscoveryTests
         Assert.AreEqual(TimeSpan.FromSeconds(1), pauses[0]);
         Assert.AreEqual(TimeSpan.FromMilliseconds(5), pauses[1], "Only the sliver the timer left is waited.");
         Assert.IsGreaterThanOrEqualTo(reset, clockAtRequest, "The announced wait is never shortened: the request goes at or after the reset instant.");
+    }
+
+    [TestMethod]
+    [DataRow(1_000, false)]
+    [DataRow(5_000, false)]
+    [DataRow(9_000, false)]
+    [DataRow(10_000, false)]
+    [DataRow(1_000, true)]
+    [DataRow(5_000, true)]
+    [DataRow(9_000, true)]
+    [DataRow(10_000, true)]
+    public async Task ASubMillisecondRemainderIsWaitedWithoutSendingEarlyOrReturningASynthetic429(int remainderTicks, bool discovery)
+    {
+        var pauses = new List<TimeSpan>();
+        var remainder = TimeSpan.FromTicks(remainderTicks);
+        using var rig = Rig.WithPause((rig, wait, _) =>
+        {
+            pauses.Add(wait);
+            // A timer can return just before the wall-clock reset. Task.Delay truncates subsequent waits to whole milliseconds.
+            rig.Clock.Advance(pauses.Count == 1 ? wait - remainder : TimeSpan.FromMilliseconds((long)wait.TotalMilliseconds));
+            return Task.CompletedTask;
+        }, Json("""{"data":{"books_by_pk":null}}"""));
+        rig.State.Observe(WithRateHeader("\"Free\";r=0;t=1"));
+        var reset = rig.Clock.GetUtcNow() + TimeSpan.FromSeconds(1);
+
+        if (discovery)
+        {
+            var result = await rig.Provider.FindSeriesClaimsForBookAsync(Book5, rig.Op(), CancellationToken.None);
+            Assert.AreEqual(DiscoveryOutcome.Empty, result.Outcome);
+            Assert.AreEqual(1, result.Usage.Attempts);
+        }
+        else
+        {
+            Assert.IsNull(await rig.Provider.GetDetailsAsync("42", CancellationToken.None));
+        }
+
+        Assert.AreEqual(1, rig.Requests, "Only the actual admitted request reaches the transport.");
+        Assert.HasCount(2, pauses);
+        Assert.AreEqual(TimeSpan.FromMilliseconds(1), pauses[1], "A positive fraction must not become a zero-duration delay.");
+        Assert.IsGreaterThanOrEqualTo(reset, rig.Clock.GetUtcNow(), "The reset must pass before dispatch.");
+    }
+
+    [TestMethod]
+    public async Task ARoundedFinishingPauseThatDoesNotFitTheDiscoveryBudgetIsRefusedWithoutAnotherPauseOrRequest()
+    {
+        var pauses = 0;
+        using var rig = Rig.WithPause((rig, wait, _) =>
+        {
+            pauses++;
+            rig.Clock.Advance(wait - TimeSpan.FromTicks(5_000));
+            return Task.CompletedTask;
+        }, Json("""{"data":{"books_by_pk":null}}"""));
+        rig.State.Observe(WithRateHeader("\"Free\";r=0;t=1"));
+        var budget = rig.Op(new DiscoveryLimits { OperationMaxWork = TimeSpan.FromSeconds(1) + TimeSpan.FromTicks(2_000) });
+
+        var result = await rig.Provider.FindSeriesClaimsForBookAsync(Book5, budget, CancellationToken.None);
+
+        Assert.AreEqual(DiscoveryOutcome.Throttled, result.Outcome);
+        CollectionAssert.Contains(result.Notes.ToArray(), DiscoveryCodes.RetryAfterTooLong);
+        Assert.AreEqual(1, pauses, "The 0.5 ms remainder fits, but its 1 ms scheduled delay exceeds the remaining 0.7 ms budget.");
+        Assert.AreEqual(0, rig.Requests);
+        Assert.AreEqual(0, result.Usage.Attempts);
+    }
+
+    [TestMethod]
+    public async Task ASubMillisecondFinishingPauseStillPropagatesCancellationWithoutSending()
+    {
+        var pauses = 0;
+        using var cancellation = new CancellationTokenSource();
+        using var rig = Rig.WithPause((rig, wait, token) =>
+        {
+            if (++pauses == 1)
+            {
+                rig.Clock.Advance(wait - TimeSpan.FromTicks(5_000));
+                return Task.CompletedTask;
+            }
+
+            cancellation.Cancel();
+            return Task.FromCanceled(token);
+        }, Json("""{"data":{"books_by_pk":null}}"""));
+        rig.State.Observe(WithRateHeader("\"Free\";r=0;t=1"));
+
+        await Assert.ThrowsAsync<OperationCanceledException>(() => rig.Provider.FindSeriesClaimsForBookAsync(Book5, rig.Op(), cancellation.Token));
+
+        Assert.AreEqual(2, pauses);
+        Assert.AreEqual(0, rig.Requests);
     }
 
     [TestMethod]

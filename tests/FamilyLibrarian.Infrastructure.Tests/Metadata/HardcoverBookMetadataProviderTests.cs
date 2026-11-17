@@ -1,6 +1,7 @@
 using System.Net;
 using System.Text;
 using FamilyLibrarian.Application.Catalog;
+using FamilyLibrarian.Domain.Catalog;
 using FamilyLibrarian.Infrastructure.Integrations;
 using FamilyLibrarian.Infrastructure.Metadata;
 
@@ -254,6 +255,36 @@ public sealed class HardcoverBookMetadataProviderTests
         Assert.AreEqual(1m, series.PositionSort);
         Assert.AreEqual("1", series.PositionLabel);
         Assert.IsTrue(series.IsCompleted);
+    }
+
+    [TestMethod]
+    [DataRow("1965-01-01", DatePrecision.Year)]
+    [DataRow("1965-06-01", DatePrecision.Month)]
+    [DataRow("1965-06-14", null)]
+    [DataRow("1965", DatePrecision.Year)]
+    [DataRow("1965-06", DatePrecision.Month)]
+    public async Task AWorkAndItsEditionCarryTheSameConservativeHardcoverPrecision(string releaseDate, DatePrecision? expected)
+    {
+        using var handler = new StubHttpMessageHandler((request, ct) =>
+        {
+            var body = request.Content!.ReadAsStringAsync(ct).GetAwaiter().GetResult();
+            if (body.Contains("languages {", StringComparison.Ordinal))
+            {
+                return Task.FromResult(JsonResponse("""{"data":{"languages":[]}}"""));
+            }
+
+            return Task.FromResult(JsonResponse(
+                """{"data":{"books_by_pk":{"id":1,"title":"Placeholder Dated","release_date":"DATE","contributions":[{"author":{"id":5,"name":"A. Writer"}}],"editions":[{"isbn_13":"9780743506977","edition_format":"Hardcover","release_date":"DATE"}]}}}"""
+                    .Replace("DATE", releaseDate, StringComparison.Ordinal)));
+        });
+        var provider = CreateProvider(handler);
+
+        var candidate = await provider.GetDetailsAsync("1", CancellationToken.None);
+
+        Assert.IsNotNull(candidate);
+        Assert.AreEqual(expected, candidate.PublicationDatePrecision, "The Work's precision follows the one Hardcover policy.");
+        Assert.AreEqual(expected, candidate.Editions[0].PublicationDatePrecision, "So does its Edition's.");
+        Assert.AreEqual(DateBasis.Unknown, candidate.PublicationDateBasis, "The basis is unchanged: what the field means is still unverified.");
     }
 
     [TestMethod]
