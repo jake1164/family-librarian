@@ -1,4 +1,5 @@
 using System.Net;
+using FamilyLibrarian.Application.Catalog.Discovery;
 using Microsoft.Extensions.Options;
 
 namespace FamilyLibrarian.Infrastructure.Metadata;
@@ -15,19 +16,37 @@ namespace FamilyLibrarian.Infrastructure.Metadata;
 /// misbehaving or unexpectedly large value) rather than guessing a delay or
 /// implementing exponential backoff of its own.
 /// </remarks>
-internal sealed class HardcoverRateLimitHandler(IOptions<HardcoverMetadataOptions> options)
-    : DelegatingHandler
+internal sealed class HardcoverRateLimitHandler(
+    IOptions<HardcoverMetadataOptions> options,
+    HardcoverRateState? rateState = null) : DelegatingHandler
 {
     private readonly HardcoverMetadataOptions _options = options.Value;
+    private readonly HardcoverRateState _rateState = rateState ?? new HardcoverRateState();
 
     protected override async Task<HttpResponseMessage> SendAsync(
         HttpRequestMessage request,
         CancellationToken cancellationToken)
     {
+        // A discovery request carries its server-owned budget. It never inherits this handler's general retry policy: the
+        // budget decides every attempt and the single permitted retry.
+        if (request.Options.TryGetValue(HardcoverGraphQlClient.DiscoveryBudgetKey, out var budget))
+        {
+            return await SendWithinBudgetAsync(request, budget, cancellationToken);
+        }
+
+        var maximumPause = TimeSpan.FromSeconds(_options.MaxRetryDelaySeconds);
         for (var attempt = 0; ; attempt++)
         {
-            var requestToSend = attempt == 0 ? request : await CloneAsync(request, cancellationToken);
-            var response = await base.SendAsync(requestToSend, cancellationToken);
+            // Every request made with the shared credential asks the shared state first, so ordinary traffic honours a wait
+            // Hardcover has already announced, and cannot spend a slot a concurrent request already holds. A short wait is
+            // served; one beyond the retry cap is reported as the rate-limit failure it is, without a request.
+            var (reservation, blockedFor) = await ReserveAsync(wait => wait <= maximumPause, cancellationToken);
+            if (reservation is null)
+            {
+                return RateLimited(request, blockedFor);
+            }
+
+            var response = await SendReservedAsync(request, attempt, reservation, cancellationToken);
 
             if (response.StatusCode != HttpStatusCode.TooManyRequests ||
                 attempt >= _options.MaxRetryAttempts)
@@ -41,7 +60,99 @@ internal sealed class HardcoverRateLimitHandler(IOptions<HardcoverMetadataOption
         }
     }
 
-    private TimeSpan GetRetryDelay(HttpResponseMessage response)
+    /// <summary>
+    /// Every physical attempt is reserved from <paramref name="budget"/> before it is dispatched. A 429 is retried at most
+    /// once, and only when Hardcover's own <c>Retry-After</c> fits the time left: a longer wait is reported, never shortened.
+    /// A wait Hardcover has already announced for an emptied bucket is honoured the same way.
+    /// </summary>
+    private async Task<HttpResponseMessage> SendWithinBudgetAsync(
+        HttpRequestMessage request, IDiscoveryBudget budget, CancellationToken cancellationToken)
+    {
+        HttpResponseMessage? throttled = null;
+        for (var attempt = 0; ; attempt++)
+        {
+            var (reservation, _) = await ReserveAsync(wait => wait < budget.RemainingWork, cancellationToken);
+            if (reservation is null)
+            {
+                return throttled ?? throw new DiscoveryTransportRefusedException(null, DiscoveryCodes.RetryAfterTooLong);
+            }
+
+            var admission = budget.TryAdmitAttempt(isRetry: attempt > 0);
+            if (admission != AttemptAdmission.Admitted)
+            {
+                reservation.Dispose();
+                return throttled ?? throw new DiscoveryTransportRefusedException(admission, string.Empty);
+            }
+
+            throttled?.Dispose();
+            throttled = null;
+            var response = await SendReservedAsync(request, attempt, reservation, cancellationToken);
+            if (response.StatusCode != HttpStatusCode.TooManyRequests)
+            {
+                return response;
+            }
+
+            var delay = GetRetryDelay(response, capped: false);
+            if (delay >= budget.RemainingWork)
+            {
+                return response;
+            }
+
+            throttled = response;
+            await Task.Delay(delay, cancellationToken);
+        }
+    }
+
+    /// <summary>
+    /// Asks the shared state for a slot, pausing once for the announced wait when <paramref name="mayPause"/> allows it. The
+    /// pause honours cancellation, and a single pause is all there is: if the state still has no slot afterwards the caller is
+    /// told how long the wait is rather than looping.
+    /// </summary>
+    private async Task<(HardcoverRateState.Reservation? Reservation, TimeSpan Wait)> ReserveAsync(
+        Func<TimeSpan, bool> mayPause, CancellationToken cancellationToken)
+    {
+        var admission = _rateState.TryReserve();
+        if (admission.Reservation is not null || !mayPause(admission.Wait))
+        {
+            return admission;
+        }
+
+        await Task.Delay(admission.Wait, cancellationToken);
+        return _rateState.TryReserve();
+    }
+
+    // The reservation is settled, together with whatever the response says about the allowance, on every path. Everything that
+    // can fail before dispatch (building the retry copy, a token already cancelled) happens inside the try and leaves the
+    // reservation unmarked, so it is returned unspent. Once marked, a transport failure or cancellation is charged: the server
+    // may have counted the request even though no answer came back.
+    private async Task<HttpResponseMessage> SendReservedAsync(
+        HttpRequestMessage original, int attempt, HardcoverRateState.Reservation reservation, CancellationToken cancellationToken)
+    {
+        HttpResponseMessage? response = null;
+        try
+        {
+            var request = attempt == 0 ? original : await CloneAsync(original, cancellationToken);
+            cancellationToken.ThrowIfCancellationRequested();
+            reservation.MarkDispatched();
+            response = await base.SendAsync(request, cancellationToken);
+            return response;
+        }
+        finally
+        {
+            reservation.Complete(response);
+        }
+    }
+
+    // The failure an exhausted announced bucket would have produced anyway, without spending a request on it.
+    private static HttpResponseMessage RateLimited(HttpRequestMessage request, TimeSpan wait)
+    {
+        var response = new HttpResponseMessage(HttpStatusCode.TooManyRequests) { RequestMessage = request };
+        response.Headers.RetryAfter = new System.Net.Http.Headers.RetryConditionHeaderValue(
+            TimeSpan.FromSeconds(Math.Ceiling(wait.TotalSeconds)));
+        return response;
+    }
+
+    private TimeSpan GetRetryDelay(HttpResponseMessage response, bool capped = true)
     {
         var maximum = TimeSpan.FromSeconds(_options.MaxRetryDelaySeconds);
         var retryAfterHeader = response.Headers.RetryAfter;
@@ -53,7 +164,7 @@ internal sealed class HardcoverRateLimitHandler(IOptions<HardcoverMetadataOption
             return TimeSpan.FromSeconds(1);
         }
 
-        return retryAfter > maximum ? maximum : retryAfter.Value;
+        return capped && retryAfter > maximum ? maximum : retryAfter.Value;
     }
 
     // A sent HttpRequestMessage cannot be sent again, so a retry needs its own
@@ -67,6 +178,12 @@ internal sealed class HardcoverRateLimitHandler(IOptions<HardcoverMetadataOption
         {
             Version = request.Version
         };
+
+        // Options carry the discovery budget; a retried copy must be charged to the same one.
+        foreach (var option in request.Options)
+        {
+            ((IDictionary<string, object?>)clone.Options)[option.Key] = option.Value;
+        }
 
         if (request.Content is not null)
         {
@@ -85,4 +202,13 @@ internal sealed class HardcoverRateLimitHandler(IOptions<HardcoverMetadataOption
 
         return clone;
     }
+}
+
+/// <summary>Thrown by the pipeline when the budget refuses an attempt before dispatch. No request was sent.</summary>
+internal sealed class DiscoveryTransportRefusedException(AttemptAdmission? admission, string code)
+    : InvalidOperationException("The discovery budget refused the request.")
+{
+    public AttemptAdmission? Admission { get; } = admission;
+
+    public string Code { get; } = code;
 }

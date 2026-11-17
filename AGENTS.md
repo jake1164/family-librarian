@@ -13,9 +13,9 @@ file before proposing, changing, or reviewing code.
 
 ## Documentation and dependencies
 
-- When a task needs an external tool or service, first inspect the available `mcpjungle` MCP tools and prefer them when they provide the required capability. `mslearn` and `context7` are available through that bridge.
-- For Microsoft/.NET/C#/ASP.NET Core/Blazor/EF Core topics, use the configured `mcpjungle` Microsoft Learn tools to confirm current official documentation before implementing or advising.
-- Before adding, upgrading, configuring, or using a library, resolve it and retrieve its current documentation through the `mcpjungle` Context7 tools. This includes MudBlazor, EF Core/Npgsql, PostgreSQL-related libraries, test libraries, and any new dependency.
+- When a task needs an external tool or service, first inspect the tools exposed by the `litellm-dev` MCP server (`https://litellm.sydneyelvis.net/mcp`, OAuth) and prefer them when they provide the required capability. Its Microsoft Learn (`mslearn`) and `context7` tools are the documentation sources. If the server reports "Needs authentication", ask the user to run `/mcp` and sign in rather than skipping the check silently.
+- For Microsoft/.NET/C#/ASP.NET Core/Blazor/EF Core topics, use the `litellm-dev` Microsoft Learn tools to confirm current official documentation before implementing or advising.
+- Before adding, upgrading, configuring, or using a library, resolve it and retrieve its current documentation through the `litellm-dev` Context7 tools. This includes MudBlazor, EF Core/Npgsql, PostgreSQL-related libraries, test libraries, and any new dependency.
 - If Context7 is unavailable, say so in the work summary and use the library's official documentation as the fallback. Do not invent current APIs or version compatibility.
 - Prefer official Microsoft Learn documentation for .NET/C# framework behavior even when Context7 has a summary.
 - Pin production dependencies to reviewed compatible versions; do not use floating versions.
