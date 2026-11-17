@@ -1148,7 +1148,8 @@ internal sealed record EvidenceEffects(IReadOnlyList<ClaimKey> Claims, string? N
 /// <summary>
 /// What one attempt wrote, and the source record's evidence revision it started from. After a commit of unknown outcome the
 /// database's own record of the attempt's transaction says whether any of it is there; this revision says, when it is not, whether
-/// anything else has changed the record since (in which case the attempt must not be replayed over it).
+/// anything else has changed the record since (in which case the attempt must not be replayed over it). Material changes include
+/// selected values updated from existing evidence, even when no snapshot or claim value was added.
 /// </summary>
 internal sealed record ExpectedEffects(
     Guid WorkId,
@@ -1157,9 +1158,10 @@ internal sealed record ExpectedEffects(
     bool ReferenceAdded,
     string? NewSnapshotHash,
     IReadOnlyList<ClaimKey> Claims,
-    string SourceRevision)
+    string SourceRevision,
+    bool MaterialContentChanged)
 {
-    public bool HasContentEffects => ReferenceAdded || NewSnapshotHash is not null || Claims.Count > 0;
+    public bool HasContentEffects => MaterialContentChanged || ReferenceAdded || NewSnapshotHash is not null || Claims.Count > 0;
 }
 
 /// <summary>What one write attempt decided. Attempt-local by construction: an abandoned attempt's instance is simply discarded.</summary>
@@ -1197,7 +1199,7 @@ internal sealed record ObservationAttempt(
         ObservationDetail? detail) =>
         new(
             ObservationKind.Created, work, true, null,
-            new ExpectedEffects(work.Id, providerId, externalId, true, evidence.NewSnapshotHash, evidence.Claims, evidence.SourceRevision),
+            new ExpectedEffects(work.Id, providerId, externalId, true, evidence.NewSnapshotHash, evidence.Claims, evidence.SourceRevision, true),
             authorNotices, seriesNotices, resolutionDiagnostics, detail, detail?.Reason, []);
 
     /// <summary>
@@ -1219,7 +1221,7 @@ internal sealed record ObservationAttempt(
         var resolved = kind == ObservationKind.Refreshed && !changed ? ObservationKind.Unchanged : kind;
         return new(
             resolved, work, false, null,
-            new ExpectedEffects(work.Id, providerId, externalId, referenceAdded, evidence.NewSnapshotHash, evidence.Claims, evidence.SourceRevision),
+            new ExpectedEffects(work.Id, providerId, externalId, referenceAdded, evidence.NewSnapshotHash, evidence.Claims, evidence.SourceRevision, changed),
             [], [], resolutionDiagnostics, null, null, contradictedIsbns);
     }
 
@@ -1228,6 +1230,6 @@ internal sealed record ObservationAttempt(
         Work work, string providerId, string externalId, string reason, string? newSnapshotHash, string sourceRevision) =>
         new(
             ObservationKind.Contradiction, work, false, null,
-            new ExpectedEffects(work.Id, providerId, externalId, false, newSnapshotHash, [], sourceRevision),
+            new ExpectedEffects(work.Id, providerId, externalId, false, newSnapshotHash, [], sourceRevision, false),
             [], [], CatalogResolutionDiagnostics.None, null, reason, []);
 }

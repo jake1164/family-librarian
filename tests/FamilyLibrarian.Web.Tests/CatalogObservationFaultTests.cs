@@ -107,6 +107,53 @@ public sealed class CatalogObservationFaultTests
     // ---------------------------------------------------------------------------------------------------- refresh
 
     [TestMethod]
+    [DataRow(true, "none")]
+    [DataRow(true, "before")]
+    [DataRow(true, "after")]
+    [DataRow(false, "none")]
+    [DataRow(false, "before")]
+    [DataRow(false, "after")]
+    public async Task ARefreshWithExistingEvidenceRecoversMaterialChangesWithoutReplayingBookkeeping(bool publicationChanges, string failure)
+    {
+        var (rig, commits, _) = await NewRigAsync();
+        await using var disposableRig = rig;
+        rig.Demo.Records["r1"] = Base() with
+        {
+            PublicationDate = publicationChanges ? new DateOnly(2026, 6, 2) : new DateOnly(1990, 1, 1),
+            PublicationDatePrecision = DatePrecision.Day
+        };
+        var workId = (await rig.ResolveAsync("demo", "r1")).Work.Id;
+        Assert.AreEqual(publicationChanges ? PublicationStatus.Forthcoming : PublicationStatus.Published,
+            (await rig.LoadWorkAsync(workId)).PublicationStatus);
+        var claimCount = (await rig.ClaimsAsync(workId)).Count;
+        var snapshotCount = (await rig.ObservationsAsync(workId)).Count;
+        var noticesBefore = await rig.DbAsync(database => database.NotificationEvents.CountAsync());
+        rig.Clock.Advance(TimeSpan.FromDays(2));
+        var commitAttempts = 0;
+        commits.Arm();
+        commits.BeforeCommit = (_, ordinal) =>
+        {
+            commitAttempts = ordinal;
+            if (failure == "before" && ordinal == 1) throw TransportFailure();
+            return Task.CompletedTask;
+        };
+        commits.AfterCommit = ordinal => failure == "after" && ordinal == 1 ? throw TransportFailure() : Task.CompletedTask;
+
+        var report = await rig.RefreshAsync(workId);
+
+        Assert.AreEqual(publicationChanges ? ProviderRefreshStatus.Refreshed : ProviderRefreshStatus.Unchanged, DemoStep(report).Status);
+        Assert.AreEqual(PublicationStatus.Published, (await rig.LoadWorkAsync(workId)).PublicationStatus,
+            "A reported refresh must include its publication-status change even when every evidence value already existed.");
+        var expectedCommits = failure == "none" ? 1 : publicationChanges && failure == "before" ? 3 : 2;
+        Assert.AreEqual(expectedCommits, commitAttempts,
+            "Recovery also commits its read-only verification transaction; only a rolled-back material change adds a retry.");
+        Assert.AreEqual(2, rig.Demo.DetailCalls, "Recovery reuses the fetched record rather than calling the provider again.");
+        Assert.HasCount(claimCount, await rig.ClaimsAsync(workId), "The identical record adds no claim values.");
+        Assert.HasCount(snapshotCount, await rig.ObservationsAsync(workId), "The identical record adds no snapshot.");
+        Assert.AreEqual(noticesBefore, await rig.DbAsync(database => database.NotificationEvents.CountAsync()));
+    }
+
+    [TestMethod]
     public async Task ARefreshCommitThatNeverReachedTheServerIsVerifiedAbsentByItsNewClaimsThenRetriedOnce()
     {
         var (rig, commits, _) = await NewRigAsync();
