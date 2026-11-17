@@ -13,7 +13,8 @@ public sealed record BrowseMembership(
     string SeriesName,
     string? PositionLabel,
     decimal? PositionSort,
-    bool IsPrimary);
+    bool IsPrimary,
+    string? PositionState = null);
 
 /// <summary>The provider and time of a saved source observation for a Work. Not field-level provenance.</summary>
 public sealed record BrowseSource(string ProviderId, DateTimeOffset ObservedAtUtc);
@@ -42,7 +43,8 @@ public sealed record BrowseSeriesMember(
     string? PositionLabel,
     decimal? PositionSort,
     bool IsPrimary,
-    BrowseWork Work);
+    BrowseWork Work,
+    string? PositionState = null);
 
 /// <summary>A saved author or series whose normalized name equals an observed label. A navigation aid, not an identity claim.</summary>
 public sealed record BrowseNameChoice(Guid Id, string Name, int KnownBookCount, IReadOnlyList<string> SampleTitles);

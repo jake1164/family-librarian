@@ -2,6 +2,7 @@ using System.Globalization;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using FamilyLibrarian.Application.Catalog;
+using FamilyLibrarian.Domain.Catalog;
 
 namespace FamilyLibrarian.Infrastructure.Metadata;
 
@@ -227,6 +228,8 @@ public sealed class HardcoverBookMetadataProvider(
             ? await languageLookup.GetIsoCodeAsync(languageId, cancellationToken)
             : null;
 
+        var released = PublicationDateParser.Parse(book.ReleaseDate, DateFormats);
+
         return new BookCandidate(
             Id,
             DisplayName,
@@ -235,7 +238,7 @@ public sealed class HardcoverBookMetadataProvider(
             authors,
             description,
             coverUrl,
-            TryParseExactDate(book.ReleaseDate),
+            released?.Date,
             editions,
             series,
             Publisher: null,
@@ -244,7 +247,12 @@ public sealed class HardcoverBookMetadataProvider(
             SourceUrl: string.IsNullOrWhiteSpace(book.Slug)
                 ? $"https://hardcover.app/books/{book.Id.ToString(CultureInfo.InvariantCulture)}"
                 : $"https://hardcover.app/books/{Uri.EscapeDataString(book.Slug)}",
-            Language: language);
+            Language: language)
+        {
+            PublicationDatePrecision = PublicationDateParser.Stated(released),
+            // What Hardcover's release_date means (original publication or one edition) is not verified yet, so it is never read as original.
+            PublicationDateBasis = released is null ? null : DateBasis.Unknown
+        };
     }
 
     private static BookEditionCandidate[] BuildEditions(HardcoverBook book, string workTitle) =>
@@ -262,12 +270,16 @@ public sealed class HardcoverBookMetadataProvider(
         var format = string.IsNullOrWhiteSpace(edition.EditionFormat)
             ? "Unknown format"
             : edition.EditionFormat.Trim();
-        var publicationDate = TryParseExactDate(edition.ReleaseDate);
+        var released = PublicationDateParser.Parse(edition.ReleaseDate, DateFormats);
+        var publicationDate = released?.Date;
 
         return isbn13 is null && publicationDate is null &&
             string.Equals(format, "Unknown format", StringComparison.Ordinal)
                 ? null
-                : new BookEditionCandidate(workTitle, isbn13, format, publicationDate);
+                : new BookEditionCandidate(workTitle, isbn13, format, publicationDate)
+                {
+                    PublicationDatePrecision = PublicationDateParser.Stated(released)
+                };
     }
 
     private static string? FirstNormalizedIsbn13(string? isbn13, string? isbn10)
@@ -333,15 +345,7 @@ public sealed class HardcoverBookMetadataProvider(
                 : null;
     }
 
-    private static DateOnly? TryParseExactDate(string? value) =>
-        DateOnly.TryParseExact(
-            value,
-            "yyyy-MM-dd",
-            CultureInfo.InvariantCulture,
-            DateTimeStyles.None,
-            out var date)
-                ? date
-                : null;
+    private static readonly string[] DateFormats = ["yyyy-MM-dd"];
 
     private const int MaxResultsPerPage = 10;
 

@@ -35,6 +35,8 @@ public sealed class CatalogSearchServiceTests
 
         public Task<IBookMetadataProvider?> FindActiveProviderAsync(string providerId, CancellationToken cancellationToken) =>
             Task.FromResult(providers.FirstOrDefault(provider => provider.Id == providerId));
+
+        public bool IsRegistered(string providerId) => providers.Any(provider => provider.Id == providerId);
     }
 
     private static StubProvider Returning(string id, bool hasMore, params BookCandidate[] candidates) =>

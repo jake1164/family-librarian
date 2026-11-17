@@ -395,4 +395,39 @@ public sealed class CatalogBrowseRenderTests
             count++;
         return count;
     }
+
+    // ---- Position uncertainty (additive positionState) ----------------------------------------------------------
+
+    [TestMethod]
+    public async Task AConflictedPositionIsShownAsDisagreementAndAnAgreedOrLegacyOneIsNot()
+    {
+        var conflicted = Saved(WorkA, "Contested", memberships: [new(SeriesOne, null, "The Cycle", "2", 2m, true, "Conflicted")]);
+        var agreed = Saved(WorkB, "Agreed", memberships: [new(SeriesOne, null, "The Cycle", "3", 3m, true, "Agreed")]);
+        var legacy = Saved(Guid.NewGuid(), "Legacy", memberships: [new(SeriesOne, null, "The Cycle", "4", 4m, true)]);
+
+        var html = await RenderAsync<BrowseBookList>(new()
+        {
+            ["Entries"] = new[]
+            {
+                new CatalogBrowseEntryResponse(conflicted, "2", 2m, "Conflicted"),
+                new CatalogBrowseEntryResponse(agreed, "3", 3m, "Agreed"),
+                new CatalogBrowseEntryResponse(legacy, "4", 4m)
+            }
+        });
+
+        Assert.AreEqual(1, CountOf(html, "Sources disagree about this position."), "only the conflicted row says so");
+        Assert.AreEqual(1, CountOf(html, "(sources disagree)"), "the membership line of the conflicted row only");
+        StringAssert.Contains(html, "Position 2");
+        StringAssert.Contains(html, "Position 3");
+        StringAssert.Contains(html, "Position 4");
+    }
+
+    [TestMethod]
+    public void TheConflictedLimitationCodeHasReviewedCopyAndUnknownCodesStayUnshown()
+    {
+        var shown = CatalogBrowseCopy.Describe(["position-conflicted", "something-new"], observed: false, "books");
+
+        Assert.AreEqual(1, shown.Count);
+        StringAssert.Contains(shown[0], "Sources disagree");
+    }
 }

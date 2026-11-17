@@ -257,7 +257,15 @@ public sealed class SeriesPositionService(ICatalogSearchService search, ICatalog
 
         if (name.Length > 0)
         {
-            known.AddRange(await RecordedSeriesAsync(name, cancellationToken));
+            var recorded = await RecordedSeriesAsync(name, cancellationToken);
+            if (recorded.AmbiguousNames.Count > 0)
+            {
+                // Several saved series share this name and the name does not say which is meant. Nothing is chosen, merged or
+                // guessed: the caller is told to ask.
+                return new SeriesLookupResult(SeriesLookupKind.AmbiguousSeries, null, [], recorded.AmbiguousNames, []);
+            }
+
+            known.AddRange(recorded.Books);
         }
 
         return title is { Length: > 0 }
@@ -266,14 +274,35 @@ public sealed class SeriesPositionService(ICatalogSearchService search, ICatalog
     }
 
     /// <summary>Series already recorded for works the household resolved, reached through the work's own catalog reference.</summary>
-    private async Task<IEnumerable<SeriesBook>> RecordedSeriesAsync(string name, CancellationToken cancellationToken)
+    private async Task<RecordedSeries> RecordedSeriesAsync(string name, CancellationToken cancellationToken)
     {
-        var recorded = await catalog.FindSeriesByNormalizedNameAsync(CatalogText.NormalizeForMatch(name), cancellationToken);
-        if (recorded is null)
+        var matches = await catalog.ListSeriesByNormalizedNameAsync(CatalogText.NormalizeForMatch(name), cancellationToken);
+        if (matches.Count == 0)
         {
-            return [];
+            return new RecordedSeries([], []);
         }
 
+        if (matches.Count > 1)
+        {
+            // Name each namesake by something that tells them apart (a book it holds), never by its position in a list.
+            var names = new List<string>(Math.Min(matches.Count, 5));
+            foreach (var namesake in matches.Take(5))
+            {
+                var holder = await catalog.GetSeriesAsync(namesake.Id, cancellationToken);
+                var firstTitle = holder?.Entries
+                    .Where(entry => entry.Work is not null)
+                    .OrderBy(entry => entry.PositionSort is null)
+                    .ThenBy(entry => entry.PositionSort)
+                    .ThenBy(entry => entry.Work.CanonicalTitle, StringComparer.Ordinal)
+                    .Select(entry => entry.Work.CanonicalTitle)
+                    .FirstOrDefault();
+                names.Add(firstTitle is null ? namesake.Name : $"{namesake.Name} (including \"{firstTitle}\")");
+            }
+
+            return new RecordedSeries([], names);
+        }
+
+        var recorded = matches[0];
         var loaded = await catalog.GetSeriesAsync(recorded.Id, cancellationToken);
         var books = new List<SeriesBook>();
         foreach (var entry in loaded?.Entries ?? [])
@@ -290,6 +319,8 @@ public sealed class SeriesPositionService(ICatalogSearchService search, ICatalog
                 source.ProviderId, source.ExternalId));
         }
 
-        return books;
+        return new RecordedSeries(books, []);
     }
+
+    private sealed record RecordedSeries(IReadOnlyList<SeriesBook> Books, IReadOnlyList<string> AmbiguousNames);
 }

@@ -31,4 +31,10 @@ public sealed class WorkAuthor
     public int Ordinal { get; private set; }
 
     public string? Role { get; private set; }
+
+    /// <summary>Why this credit is bound to the Author. Null is a legacy credit nobody classified.</summary>
+    public AuthorBindingBasis? BindingBasis { get; private set; }
+
+    /// <summary>Records why the credit is bound to the Author, when the credit is created. Never changed afterwards.</summary>
+    public void MarkBinding(AuthorBindingBasis basis) => BindingBasis ??= basis;
 }

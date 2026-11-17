@@ -2,6 +2,7 @@ using FamilyLibrarian.Application.Abstractions;
 using FamilyLibrarian.Application.Accounts;
 using FamilyLibrarian.Application.Acquisition;
 using FamilyLibrarian.Application.Catalog;
+using FamilyLibrarian.Application.Catalog.Observation;
 using FamilyLibrarian.Application.Communications;
 using FamilyLibrarian.Application.Conversation;
 using FamilyLibrarian.Application.Delivery;
@@ -209,9 +210,17 @@ public static class DependencyInjection
                 });
 
         services.AddScoped<IClock, SystemClock>();
-        services.AddScoped<ICatalogRepository, CatalogRepository>();
+        services.AddScoped<CatalogRepository>();
+        services.AddScoped<ICatalogRepository>(provider => provider.GetRequiredService<CatalogRepository>());
+        services.AddScoped<ICatalogMutationRepository>(provider => provider.GetRequiredService<CatalogRepository>());
+        // Singleton: it holds no state and creates a fresh scope (context, connection, transaction) for every attempt.
+        services.AddSingleton<ICatalogWriteScope, PostgresCatalogWriteScope>();
+        services.AddSingleton<ICatalogResolutionDiagnostics, CatalogResolutionLog>();
         services.AddScoped<OrphanedWorkRetirement>();
         services.AddScoped<CatalogWorkResolver>();
+        services.AddScoped<CatalogObservationService>();
+        services.AddScoped<ICatalogEvidenceReader, CatalogEvidenceReader>();
+        services.AddScoped<CatalogEvidenceInspector>();
         services.AddScoped<ICatalogSearchService, CatalogSearchService>();
         services.AddScoped<ICatalogBrowseRepository, CatalogBrowseRepository>();
         services.AddScoped<CatalogBrowseService>();

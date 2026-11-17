@@ -292,7 +292,7 @@ public sealed class OpenLibraryBookMetadataProviderTests
     }
 
     [TestMethod]
-    public async Task SearchAsyncUsesValidatedIsbnQueryAndDoesNotInventYearPrecision()
+    public async Task SearchAsyncUsesValidatedIsbnQueryAndKeepsAYearOnlyDateAtYearPrecision()
     {
         Uri? requestedUri = null;
         using var handler = new StubHttpMessageHandler((request, _) =>
@@ -321,7 +321,10 @@ public sealed class OpenLibraryBookMetadataProviderTests
             CancellationToken.None);
 
         Assert.HasCount(1, results.Candidates);
-        Assert.IsNull(results.Candidates[0].PublicationDate);
+        // first_publish_date is the work-level original date; a year alone stays a year, never an exact day.
+        Assert.AreEqual(new DateOnly(1937, 1, 1), results.Candidates[0].PublicationDate);
+        Assert.AreEqual(FamilyLibrarian.Domain.Catalog.DatePrecision.Year, results.Candidates[0].PublicationDatePrecision);
+        Assert.AreEqual(FamilyLibrarian.Domain.Catalog.DateBasis.Original, results.Candidates[0].PublicationDateBasis);
         Assert.HasCount(1, results.Candidates[0].Editions);
         Assert.AreEqual("9780547928227", results.Candidates[0].Editions[0].Isbn13);
         Assert.IsNotNull(requestedUri);

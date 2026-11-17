@@ -250,6 +250,18 @@ all EF Core migrations, do not downgrade a production database casually: a
 rollback executes migration `Down` operations and may lose data. See
 [Microsoft's migration deployment guidance](https://learn.microsoft.com/ef/core/managing-schemas/migrations/applying).
 
+### Catalog evidence migration
+
+The catalog-evidence migration is additive: two new tables (`catalog.source_observations`, `catalog.metadata_claims`) and nullable
+columns on existing catalog tables. No existing value is rewritten and nothing is back-filled, so books saved before the upgrade
+simply show no provenance. Its `Down` step drops only what it added and so discards every observation and claim written since the
+upgrade; after the application has written evidence, recover with a restore from backup or a forward fix, not `Down`.
+
+Catalog writes (resolving a book, an administrator refresh, and the start-up sweep that retires orphaned Works) take a
+transaction-scoped PostgreSQL advisory lock, key `(831705, 0)`, with a five-second `lock_timeout`; request creation uses a separate
+lock. The lock is released by commit, rollback or the connection ending. A refresh or resolve that cannot get it in time answers
+`503` and writes nothing; it is safe to try again. If a commit's reply is lost, the outcome is settled from PostgreSQL's own record of that transaction (`pg_xact_status`, PostgreSQL 13 or later; the bundled image is 17), not from timestamps; where it cannot be settled the request reports an unknown outcome instead of repeating the write. There is no scheduler: metadata is refreshed only when an administrator asks.
+
 ## Versions
 
 The running Family Librarian version is shown in the status footer for every
@@ -515,6 +527,11 @@ scripts/backups/restore-backup.sh \
   --audiobookshelf-configuration-target /srv/restore/audiobookshelf-config \
   --audiobookshelf-library-target /srv/restore/audiobookshelf-library
 ```
+
+Restore into an empty PostgreSQL database (a new volume or a freshly created database). `pg_restore --clean` only drops
+objects that are in the dump, so restoring an older backup over a database that already has newer tables fails (for example,
+it cannot drop `catalog.works` while the evidence tables, added later, still reference it); the restore then needs a clean
+target, after which the migration job brings the schema forward again.
 
 Omit a destination pair only if the backup manifest records that integration as
 disabled. The destination directories must be new or empty; after the restore,

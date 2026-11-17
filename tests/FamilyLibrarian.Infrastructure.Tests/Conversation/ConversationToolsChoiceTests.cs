@@ -75,6 +75,8 @@ public sealed class ConversationToolsChoiceTests
 
         public Task<IBookMetadataProvider?> FindActiveProviderAsync(string providerId, CancellationToken cancellationToken) =>
             Task.FromResult(provider is not null && provider.Id == providerId ? provider : null);
+
+        public bool IsRegistered(string providerId) => provider is not null && provider.Id == providerId;
     }
 
     private static BookCandidate Candidate(string externalId, string title, string author, string? isbn = null, params BookSeriesCandidate[] series) =>

@@ -2,6 +2,7 @@ using System.Globalization;
 using System.Net.Http.Json;
 using System.Text.Json.Serialization;
 using FamilyLibrarian.Application.Catalog;
+using FamilyLibrarian.Domain.Catalog;
 using Microsoft.Extensions.Options;
 
 namespace FamilyLibrarian.Infrastructure.Metadata;
@@ -81,7 +82,8 @@ public sealed class GoogleBooksBookMetadataProvider(
             .Select(author => author.Trim())
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .ToArray() ?? [];
-        var publicationDate = TryParseExactDate(volume.VolumeInfo?.PublishedDate);
+        var published = PublicationDateParser.Parse(volume.VolumeInfo?.PublishedDate, DateFormats);
+        var publicationDate = published?.Date;
         var isbn13 = GetIsbn13(volume.VolumeInfo?.IndustryIdentifiers);
         var subjects = volume.VolumeInfo?.Categories?
             .Where(category => !string.IsNullOrWhiteSpace(category))
@@ -98,13 +100,21 @@ public sealed class GoogleBooksBookMetadataProvider(
             GetDescription(volume.VolumeInfo?.Description),
             GetCoverUrl(volume.VolumeInfo?.ImageLinks),
             publicationDate,
-            [new BookEditionCandidate(title, isbn13, "Unknown format", publicationDate)],
+            [new BookEditionCandidate(title, isbn13, "Unknown format", publicationDate)
+            {
+                PublicationDatePrecision = PublicationDateParser.Stated(published)
+            }],
             [],
             volume.VolumeInfo?.Publisher?.Trim() is { Length: > 0 } publisher ? publisher : null,
             volume.VolumeInfo?.PageCount is > 0 ? volume.VolumeInfo.PageCount : null,
             subjects,
             SourceUrl: $"https://books.google.com/books?id={Uri.EscapeDataString(externalId!)}",
-            Language: LanguageCodeNormalizer.Normalize(volume.VolumeInfo?.Language));
+            Language: LanguageCodeNormalizer.Normalize(volume.VolumeInfo?.Language))
+        {
+            // Google's publishedDate describes this volume (an edition), so as a Work date it is only a labelled fallback.
+            PublicationDatePrecision = PublicationDateParser.Stated(published),
+            PublicationDateBasis = publicationDate is null ? null : DateBasis.EditionDerived
+        };
     }
 
     private static string? GetTitle(GoogleBooksVolumeInfo? volumeInfo)
@@ -174,15 +184,7 @@ public sealed class GoogleBooksBookMetadataProvider(
         return builder.Uri.AbsoluteUri;
     }
 
-    private static DateOnly? TryParseExactDate(string? value) =>
-        DateOnly.TryParseExact(
-            value,
-            "yyyy-MM-dd",
-            CultureInfo.InvariantCulture,
-            DateTimeStyles.None,
-            out var date)
-                ? date
-                : null;
+    private static readonly string[] DateFormats = ["yyyy-MM-dd"];
 
     private static bool IsValidExternalId(string? externalId) =>
         !string.IsNullOrWhiteSpace(externalId) &&
