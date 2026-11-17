@@ -18,10 +18,21 @@ namespace FamilyLibrarian.Infrastructure.Metadata;
 /// </remarks>
 internal sealed class HardcoverRateLimitHandler(
     IOptions<HardcoverMetadataOptions> options,
-    HardcoverRateState? rateState = null) : DelegatingHandler
+    HardcoverRateState? rateState = null,
+    Func<TimeSpan, CancellationToken, Task>? pauseFor = null) : DelegatingHandler
 {
+    /// <summary>
+    /// How much of an announced wait may remain after a pause before it is treated as a new wait. A timer can fire a few
+    /// milliseconds before the rate state's wall-clock reset instant, so a pause for exactly the announced wait can return with a
+    /// sliver left; that sliver is waited out, while a genuinely new wait (another request used the slot) is not.
+    /// </summary>
+    internal static readonly TimeSpan PauseRoundingTolerance = TimeSpan.FromMilliseconds(250);
+
+    private const int MaximumPausePasses = 3;
+
     private readonly HardcoverMetadataOptions _options = options.Value;
     private readonly HardcoverRateState _rateState = rateState ?? new HardcoverRateState();
+    private readonly Func<TimeSpan, CancellationToken, Task> _delay = pauseFor ?? ((wait, token) => Task.Delay(wait, token));
 
     protected override async Task<HttpResponseMessage> SendAsync(
         HttpRequestMessage request,
@@ -56,7 +67,7 @@ internal sealed class HardcoverRateLimitHandler(
 
             var delay = GetRetryDelay(response);
             response.Dispose();
-            await Task.Delay(delay, cancellationToken);
+            await _delay(delay, cancellationToken);
         }
     }
 
@@ -99,7 +110,7 @@ internal sealed class HardcoverRateLimitHandler(
             }
 
             throttled = response;
-            await Task.Delay(delay, cancellationToken);
+            await _delay(delay, cancellationToken);
         }
     }
 
@@ -117,8 +128,25 @@ internal sealed class HardcoverRateLimitHandler(
             return admission;
         }
 
-        await Task.Delay(admission.Wait, cancellationToken);
-        return _rateState.TryReserve();
+        // One announced wait is paused for, and nothing more: the loop only finishes a sliver the timer left (see
+        // PauseRoundingTolerance), never a new wait, and the total never exceeds the announced wait plus that tolerance.
+        var allowance = admission.Wait + PauseRoundingTolerance;
+        var paused = TimeSpan.Zero;
+        for (var pass = 0; pass < MaximumPausePasses; pass++)
+        {
+            await _delay(admission.Wait, cancellationToken);
+            paused += admission.Wait;
+            admission = _rateState.TryReserve();
+            if (admission.Reservation is not null ||
+                admission.Wait > PauseRoundingTolerance ||
+                paused + admission.Wait > allowance ||
+                !mayPause(admission.Wait))
+            {
+                return admission;
+            }
+        }
+
+        return admission;
     }
 
     // The reservation is settled, together with whatever the response says about the allowance, on every path. Everything that

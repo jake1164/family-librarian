@@ -586,6 +586,40 @@ public sealed class CatalogResolutionSafetyTests
         });
     }
 
+    [TestMethod]
+    public async Task AnOpenLibraryWorkWithOnlyAFirstPublishYearIsSavedAsAYearOnlyOriginalDateNeverAnExactDay()
+    {
+        var connection = await NewDatabaseAsync();
+        var author = Unique("Year Only Author");
+        using var mapped = new OpenLibraryMapped(
+            EnabledProvider,
+            """{"num_found":1,"docs":[{"key":"/works/OL42W","title":"Year Only Book","author_name":["NAME"],"author_key":["OL9A"],"first_publish_year":1965}]}""".Replace("NAME", author, StringComparison.Ordinal),
+            """{"num_found":1,"docs":[{"key":"/works/OL43W","title":"Dated Book","author_name":["NAME"],"author_key":["OL9A"],"first_publish_date":["1965-08-01"],"first_publish_year":1965}]}""".Replace("NAME", author, StringComparison.Ordinal));
+        await using var factory = Host(connection, [], services =>
+        {
+            services.RemoveAll<IBookMetadataProvider>();
+            services.AddSingleton<IBookMetadataProvider>(mapped);
+        });
+        using var client = await SignedInAsync(factory);
+
+        using var yearOnly = await ResolveAsync(client, EnabledProvider, "OL42W");
+        using var dated = await ResolveAsync(client, EnabledProvider, "OL43W");
+
+        Assert.AreEqual(HttpStatusCode.Created, yearOnly.StatusCode, await yearOnly.Content.ReadAsStringAsync());
+        Assert.AreEqual(HttpStatusCode.Created, dated.StatusCode, await dated.Content.ReadAsStringAsync());
+        await WithDatabaseAsync(factory, async database =>
+        {
+            var year = await database.Works.SingleAsync(work => work.CanonicalTitle == "Year Only Book");
+            Assert.AreEqual(new DateOnly(1965, 1, 1), year.FirstPublicationDate);
+            Assert.AreEqual(DatePrecision.Year, year.FirstPublicationPrecision, "A year is saved as a year, never as an exact first of January.");
+            Assert.AreEqual(DateBasis.Original, year.FirstPublicationBasis);
+            var exact = await database.Works.SingleAsync(work => work.CanonicalTitle == "Dated Book");
+            Assert.AreEqual(new DateOnly(1965, 8, 1), exact.FirstPublicationDate, "An exact date, when Open Library sends one, wins.");
+            Assert.AreEqual(DatePrecision.Day, exact.FirstPublicationPrecision, "A full date is stored at Day precision, as Phase 2 already does for every provider.");
+            return 0;
+        });
+    }
+
     // ---------------------------------------------------------------- provider lifecycle and security
 
     [TestMethod]

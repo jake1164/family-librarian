@@ -45,6 +45,8 @@ public static class CatalogDiscoveryCopy
         "no-author-id-query" => $"{provider} cannot list an author's works by an author id.",
         "no-author-to-series-query" => $"{provider} has no way to list an author's series.",
         "live-probe-not-run-coverage-uneven" => $"This lookup is built but not yet verified against {provider}, and {provider}'s coverage is uneven.",
+        "documented-first-party-live-unverified" or "documented-field-live-unverified" =>
+            $"{provider}'s own documentation describes this lookup, but it has not been checked against {provider}'s live service.",
         "not-declared" => $"This lookup has not been verified for {provider}.",
         _ => null
     };

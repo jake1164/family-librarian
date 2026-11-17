@@ -22,7 +22,7 @@ public sealed partial class OpenLibraryBookMetadataProvider(
     // only when both arrays have the same length (see ProjectCredits); series fields are deliberately not requested here:
     // ordinary search/detail candidates keep an empty series list, so what Resolve writes is unchanged.
     private const string SearchFields =
-        "key,title,author_name,author_key,first_publish_date,cover_i,editions," +
+        "key,title,author_name,author_key,first_publish_date,first_publish_year,cover_i,editions," +
         "editions.key,editions.title,editions.isbn,editions.publish_date,editions.format," +
         "editions.cover_i,editions.publisher,editions.language," +
         "publisher,subject,number_of_pages_median,description,language";
@@ -376,7 +376,13 @@ public sealed partial class OpenLibraryBookMetadataProvider(
             ? PreferredLanguage
             : LanguageCodeNormalizer.Normalize(FirstString(document.Languages));
 
-        var firstPublished = PublicationDateParser.Parse(FirstString(document.FirstPublishDates), ExactDateFormats);
+        // first_publish_date was not returned for any sampled live row even when requested, while first_publish_year was (a
+        // 2026-11-17 sample of 22 rows), so a work with no date still carries its stated year: Year precision, never an invented day, and the
+        // same original-publication meaning the date has. An exact date, when Open Library does send one, always wins.
+        var firstPublished = PublicationDateParser.Parse(FirstString(document.FirstPublishDates), ExactDateFormats)
+            ?? (document.FirstPublishYear is >= 1 and <= 9999
+                ? PublicationDateParser.Parse(document.FirstPublishYear.Value.ToString(System.Globalization.CultureInfo.InvariantCulture), ExactDateFormats)
+                : null);
 
         return new BookCandidate(
             Id,
@@ -636,6 +642,9 @@ public sealed partial class OpenLibraryBookMetadataProvider(
 
         [JsonPropertyName("first_publish_date")]
         public JsonElement FirstPublishDates { get; init; }
+
+        [JsonPropertyName("first_publish_year")]
+        public int? FirstPublishYear { get; init; }
 
         [JsonPropertyName("isbn")]
         public JsonElement Isbns { get; init; }

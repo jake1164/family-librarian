@@ -1,3 +1,4 @@
+#pragma warning disable CA1861
 using System.Globalization;
 using System.Net;
 using System.Net.Http.Headers;
@@ -58,6 +59,282 @@ public sealed class OpenLibraryDiscoveryTests
 
     private const string AnchorBookWrittenByTheSmallerCatalogue =
         """{"numFound":1,"docs":[{"author_key":["OL1758387A"],"author_name":["Frank Herbert"],"key":"/works/OL893414W"}]}""";
+
+    // ================================================================ alternate titles (A6)
+
+    [TestMethod]
+    public async Task AlternateTitlesAreKeptAsWorkScopedEvidenceWithTheirSourceFieldAndNeverMergedIntoTheReportedTitle()
+    {
+        // hand-built: no live response has returned these fields (22 sampled rows, 2026-11-17)
+        using var rig = Rig.With(Json(
+            """{"numFound":1,"docs":[{"key":"/works/OL1W","title":"Dune","alternative_title":["Frank Herbert's Dune","Dune","  Duna  ",""],"alternative_subtitle":["Book One"],"series_key":["OL10L"],"series_name":["Dune"],"series_position":["1"]}]}"""));
+
+        var claims = await rig.Provider.GetSeriesMembersAsync(new SeriesRef("Dune", new SourceRef("openlibrary", "OL10L", ExternalReferenceEntityType.Series)), null, rig.Op(), CancellationToken.None);
+
+        var title = claims.Items.Single().Book.Title;
+        Assert.AreEqual("Dune", title.Reported);
+        Assert.IsFalse(title.WasNormalized, "Alternates never change the reported title.");
+        CollectionAssert.AreEqual(new[] { "Frank Herbert's Dune", "Duna", "Book One" }, title.Alternates.Select(alternate => alternate.Text).ToArray(),
+            "Source order, trimmed, no repeat of the reported title, no empties.");
+        CollectionAssert.AreEqual(new[] { "alternative_title", "alternative_title", "alternative_subtitle" }, title.Alternates.Select(alternate => alternate.SourceField).ToArray());
+        Assert.IsTrue(title.Alternates.All(alternate => alternate.Scope == TitleScope.Work && alternate.Language is null),
+            "A Work row states no language for an alternate, and none is guessed; a translation is never folded in.");
+        StringAssert.Contains(rig.Uris[0], "alternative_title");
+    }
+
+    [TestMethod]
+    public async Task ARowWithNoAlternateFieldsHasNoAlternatesAndTitleFormsCompareByContent()
+    {
+        using var rig = Rig.With(Json("""{"numFound":1,"docs":[{"key":"/works/OL1W","title":"Dune","series_key":["OL10L"],"series_name":["Dune"],"series_position":["1"]}]}"""));
+
+        var result = await rig.Provider.GetSeriesMembersAsync(new SeriesRef("Dune", new SourceRef("openlibrary", "OL10L", ExternalReferenceEntityType.Series)), null, rig.Op(), CancellationToken.None);
+
+        Assert.IsEmpty(result.Items.Single().Book.Title.Alternates, "Absent fields say nothing about whether alternates exist.");
+        var a = new TitleForm("T") { Alternates = [new AlternateTitle("U", "alternative_title", null, TitleScope.Work)] };
+        var b = new TitleForm("T") { Alternates = [new AlternateTitle("U", "alternative_title", null, TitleScope.Work)] };
+        Assert.AreEqual(a, b);
+        Assert.AreNotEqual(a, new TitleForm("T"));
+        Assert.AreEqual(new TitleForm("T"), new TitleForm("T"));
+    }
+
+    // ================================================================ shared 429 cooldown (A6)
+
+    private static readonly SourceRef CooldownBook = new("openlibrary", "OL1W", ExternalReferenceEntityType.Work);
+
+    [TestMethod]
+    public async Task A429IsRememberedByEveryCallerOfTheSharedInstanceAndNothingIsSentUntilTheCooldownEnds()
+    {
+        using var rig = Rig.With(Plain(HttpStatusCode.TooManyRequests, retryAfterSeconds: 120), Json("""{"numFound":0,"docs":[]}"""), Json("""{"numFound":0,"docs":[]}"""));
+
+        var first = await rig.Provider.FindSeriesForBookAsync(CooldownBook, rig.Op(), CancellationToken.None);
+        var discovery = await rig.Provider.GetSeriesMembersAsync(new SeriesRef("S", Empyrean), null, rig.Op(), CancellationToken.None);
+        await Assert.ThrowsExactlyAsync<HttpRequestException>(() => rig.Provider.SearchAsync(new BookSearchQuery("Dune"), CancellationToken.None));
+
+        Assert.AreEqual(DiscoveryOutcome.Throttled, first.Outcome);
+        Assert.AreEqual(DiscoveryOutcome.Throttled, discovery.Outcome, "A different discovery operation is refused from memory.");
+        Assert.AreEqual(1, rig.Requests, "Only the request that was throttled reached Open Library; ordinary search and discovery made none.");
+
+        rig.Clock.Advance(TimeSpan.FromSeconds(119));
+        await Assert.ThrowsExactlyAsync<HttpRequestException>(() => rig.Provider.SearchAsync(new BookSearchQuery("Dune"), CancellationToken.None));
+        Assert.AreEqual(1, rig.Requests, "One second before the stated Retry-After, still nothing is sent.");
+
+        rig.Clock.Advance(TimeSpan.FromSeconds(2));
+        var after = await rig.Provider.FindSeriesForBookAsync(CooldownBook, rig.Op(), CancellationToken.None);
+        Assert.AreEqual(DiscoveryOutcome.Empty, after.Outcome);
+        Assert.AreEqual(2, rig.Requests, "After the cooldown the next request is sent normally.");
+    }
+
+    [TestMethod]
+    public async Task A429WithoutAUsableRetryAfterUsesTheApplicationDefault()
+    {
+        // Absent, malformed (neither delay-seconds nor a date), zero and already-past values carry no usable wait.
+        var past = new ManualClock().GetUtcNow() - TimeSpan.FromHours(1);
+        var cases = new Action<HttpResponseMessage>?[]
+        {
+            null,
+            r => r.Headers.TryAddWithoutValidation("Retry-After", "soon"),
+            r => r.Headers.RetryAfter = new RetryConditionHeaderValue(TimeSpan.Zero),
+            r => r.Headers.RetryAfter = new RetryConditionHeaderValue(past),
+        };
+        foreach (var header in cases)
+        {
+            var response = Plain(HttpStatusCode.TooManyRequests);
+            header?.Invoke(response);
+            using var rig = Rig.With(response, Json("""{"numFound":0,"docs":[]}"""));
+
+            await rig.Provider.FindSeriesForBookAsync(CooldownBook, rig.Op(), CancellationToken.None);
+            rig.Clock.Advance(OpenLibraryRequestGate.DefaultCooldown - TimeSpan.FromSeconds(1));
+            var stillCooling = await rig.Provider.FindSeriesForBookAsync(CooldownBook, rig.Op(), CancellationToken.None);
+            rig.Clock.Advance(TimeSpan.FromSeconds(2));
+            var reopened = await rig.Provider.FindSeriesForBookAsync(CooldownBook, rig.Op(), CancellationToken.None);
+
+            Assert.AreEqual(DiscoveryOutcome.Throttled, stillCooling.Outcome);
+            Assert.AreEqual(DiscoveryOutcome.Empty, reopened.Outcome);
+            Assert.AreEqual(2, rig.Requests);
+        }
+    }
+
+    [TestMethod]
+    public async Task ALongRetryAfterIsHonouredInFullByLaterCallersWhateverEachOperationIsWillingToWaitFor()
+    {
+        // Delay-seconds and HTTP-date forms; each keeps the source closed past the old ten-minute ceiling and for the full wait.
+        var start = new ManualClock().GetUtcNow();
+        var cases = new Action<HttpResponseMessage>[]
+        {
+            r => r.Headers.RetryAfter = new RetryConditionHeaderValue(TimeSpan.FromDays(1)),
+            r => r.Headers.RetryAfter = new RetryConditionHeaderValue(start + TimeSpan.FromDays(1)),
+        };
+        foreach (var header in cases)
+        {
+            var response = Plain(HttpStatusCode.TooManyRequests);
+            header(response);
+            using var rig = Rig.With(response, Json("""{"numFound":0,"docs":[]}"""));
+
+            var first = await rig.Provider.FindSeriesForBookAsync(CooldownBook, rig.Op(), CancellationToken.None);
+            Assert.AreEqual(DiscoveryOutcome.Throttled, first.Outcome);
+            CollectionAssert.Contains(first.Notes.ToArray(), DiscoveryCodes.RetryAfterTooLong, "A wait that does not fit the operation is reported as such.");
+
+            foreach (var elapsed in new[] { TimeSpan.FromMinutes(11), TimeSpan.FromHours(23) })
+            {
+                rig.Clock.Advance(elapsed - (rig.Clock.GetUtcNow() - start));
+                var later = await rig.Provider.FindSeriesForBookAsync(CooldownBook, rig.Op(), CancellationToken.None);
+                Assert.AreEqual(DiscoveryOutcome.Throttled, later.Outcome, $"Still closed {elapsed} into a one-day Retry-After.");
+                await Assert.ThrowsExactlyAsync<HttpRequestException>(() => rig.Provider.SearchAsync(new BookSearchQuery("Dune"), CancellationToken.None));
+                Assert.AreEqual(1, rig.Requests, "Nothing is sent while the stated wait is in force.");
+            }
+
+            rig.Clock.Advance(TimeSpan.FromDays(1) - (rig.Clock.GetUtcNow() - start) + TimeSpan.FromSeconds(1));
+            var reopened = await rig.Provider.FindSeriesForBookAsync(CooldownBook, rig.Op(), CancellationToken.None);
+            Assert.AreEqual(DiscoveryOutcome.Empty, reopened.Outcome, "The source reopens once the stated wait has passed.");
+            Assert.AreEqual(2, rig.Requests);
+        }
+    }
+
+    [TestMethod]
+    public void AShorterLaterRetryAfterNeverShortensACooldownAndAnAbsurdOneDoesNotOverflow()
+    {
+        var clock = new ManualClock();
+        using var gate = new OpenLibraryRequestGate(Options.Create(new OpenLibraryMetadataOptions { Enabled = true, RequestsPerSecond = 1000 }), clock);
+
+        // A request already in flight when the first 429 arrived can itself be answered 429 with less.
+        gate.NoteThrottled(TimeSpan.FromHours(1));
+        gate.NoteThrottled(TimeSpan.FromSeconds(5));
+        gate.NoteThrottled((TimeSpan?)null);
+        Assert.AreEqual(TimeSpan.FromHours(1), gate.RemainingCooldown(), "Neither a short header nor the default shortens a longer cooldown.");
+
+        gate.NoteThrottled(TimeSpan.MaxValue);
+        Assert.IsTrue(gate.RemainingCooldown() > TimeSpan.FromDays(365 * 1000), "An unrepresentable wait fails closed.");
+        gate.NoteThrottled(TimeSpan.FromSeconds(5));
+        Assert.IsTrue(gate.RemainingCooldown() > TimeSpan.FromDays(365 * 1000), "Nor does a later short wait reopen it.");
+    }
+
+    [TestMethod]
+    public async Task ARefusalReportsTheRemainingWaitAndAnAbsurdWaitAsTheLargestDelayTheHeaderCanCarry()
+    {
+        var clock = new ManualClock();
+        using var gate = new OpenLibraryRequestGate(Options.Create(new OpenLibraryMetadataOptions { Enabled = true, RequestsPerSecond = 1000 }), clock);
+        using var handler = new OpenLibraryRateLimitHandler(gate) { InnerHandler = new NeverSent() };
+        using var invoker = new HttpMessageInvoker(handler);
+
+        gate.NoteThrottled(TimeSpan.FromSeconds(120));
+        clock.Advance(TimeSpan.FromMilliseconds(500));
+        var refused = await invoker.SendAsync(new HttpRequestMessage(HttpMethod.Get, "https://openlibrary.org/x"), CancellationToken.None);
+        Assert.AreEqual(HttpStatusCode.TooManyRequests, refused.StatusCode);
+        Assert.AreEqual(TimeSpan.FromSeconds(120), refused.Headers.RetryAfter?.Delta, "119.5 s remain, reported rounded up.");
+
+        gate.NoteThrottled(TimeSpan.FromDays(365 * 5_000));
+        var absurd = await invoker.SendAsync(new HttpRequestMessage(HttpMethod.Get, "https://openlibrary.org/x"), CancellationToken.None);
+        Assert.AreEqual(TimeSpan.FromSeconds(int.MaxValue), absurd.Headers.RetryAfter?.Delta);
+    }
+
+    // ---- queued requests re-check the cooldown after pacing (G1) ----
+
+    private static async Task WaitUntilAsync(Func<bool> condition, string what)
+    {
+        var until = Environment.TickCount64 + 10_000;
+        while (!condition())
+        {
+            if (Environment.TickCount64 > until) Assert.Fail($"Timed out waiting for {what}.");
+            await Task.Delay(5);
+        }
+    }
+
+    private static async Task<string> CallAsync(Rig rig, bool discovery, CancellationToken cancellationToken = default)
+    {
+        if (discovery)
+        {
+            var result = await rig.Provider.FindSeriesForBookAsync(CooldownBook, rig.Op(), cancellationToken);
+            return result.Outcome == DiscoveryOutcome.Throttled ? "throttled" : result.Outcome.ToString();
+        }
+
+        try
+        {
+            await rig.Provider.SearchAsync(new BookSearchQuery("Dune"), cancellationToken);
+            return "sent";
+        }
+        catch (HttpRequestException ex) when (ex.StatusCode == HttpStatusCode.TooManyRequests)
+        {
+            return "throttled";
+        }
+    }
+
+    [TestMethod]
+    public async Task ARequestQueuedBehindPacingIsRefusedWhenTheRequestAheadOfItIsAnswered429()
+    {
+        // A is in flight; B waits on the one-second pace; A returns 429 Retry-After 120; B's pace then elapses. B must not be sent.
+        foreach (var (firstIsDiscovery, secondIsDiscovery) in new[] { (true, true), (false, true), (true, false), (false, false) })
+        {
+            var clock = new SteppedClock();
+            var inFlight = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            var calls = 0;
+            using var rig = Rig.Paced(clock, async (_, ct) =>
+            {
+                if (Interlocked.Increment(ref calls) > 1) return Json("""{"numFound":0,"docs":[]}""");
+                inFlight.SetResult();
+                await release.Task.WaitAsync(ct);
+                return Plain(HttpStatusCode.TooManyRequests, retryAfterSeconds: 120);
+            });
+
+            var a = CallAsync(rig, firstIsDiscovery);
+            await inFlight.Task.WaitAsync(TimeSpan.FromSeconds(10));
+            var b = CallAsync(rig, secondIsDiscovery);
+            await WaitUntilAsync(() => clock.PendingTimers == 1, "the second request to wait on the pace");
+
+            release.SetResult();
+            Assert.AreEqual("throttled", await a);
+            clock.Advance(TimeSpan.FromSeconds(1));
+            var second = await b;
+
+            Assert.AreEqual(1, rig.Requests, $"The queued request was sent after the 429 (first discovery={firstIsDiscovery}, second discovery={secondIsDiscovery}).");
+            Assert.AreEqual("throttled", second, "The queued request is refused locally as throttled.");
+        }
+    }
+
+    [TestMethod]
+    public async Task ACancelledQueuedRequestStopsAtThePacingWaitAndIsNeverSent()
+    {
+        var clock = new SteppedClock();
+        var inFlight = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        using var rig = Rig.Paced(clock, async (_, ct) =>
+        {
+            inFlight.TrySetResult();
+            await release.Task.WaitAsync(ct);
+            return Json("""{"numFound":0,"docs":[]}""");
+        });
+
+        var a = CallAsync(rig, discovery: true);
+        await inFlight.Task.WaitAsync(TimeSpan.FromSeconds(10));
+        using var cancel = new CancellationTokenSource();
+        var b = CallAsync(rig, discovery: true, cancel.Token);
+        await WaitUntilAsync(() => clock.PendingTimers == 1, "the second request to wait on the pace");
+        await cancel.CancelAsync();
+
+        await Assert.ThrowsAsync<OperationCanceledException>(async () => await b);
+        release.SetResult();
+        await a;
+        Assert.AreEqual(1, rig.Requests, "The cancelled request was never sent.");
+    }
+
+    private sealed class NeverSent : HttpMessageHandler
+    {
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken) =>
+            throw new InvalidOperationException("A refused request must not reach the transport.");
+    }
+
+    [TestMethod]
+    public async Task ARefusedCooldownRequestSaysItDoesNotFitTheOperationAndSendsNothing()
+    {
+        using var rig = Rig.With(Plain(HttpStatusCode.TooManyRequests, retryAfterSeconds: 300));
+
+        await rig.Provider.FindSeriesForBookAsync(CooldownBook, rig.Op(), CancellationToken.None);
+        var refused = await rig.Provider.FindSeriesForBookAsync(CooldownBook, rig.Op(new DiscoveryLimits { OperationMaxWork = TimeSpan.FromSeconds(15) }), CancellationToken.None);
+
+        Assert.AreEqual(DiscoveryOutcome.Throttled, refused.Outcome);
+        CollectionAssert.Contains(refused.Notes.ToArray(), DiscoveryCodes.RetryAfterTooLong, "The remaining cooldown does not fit the 15 s operation, and is said so.");
+        Assert.AreEqual(1, rig.Requests);
+    }
 
     // ================================================================ book -> series
 
@@ -1476,21 +1753,25 @@ public sealed class OpenLibraryDiscoveryTests
         private readonly Func<HttpRequestMessage, CancellationToken, Task<HttpResponseMessage>> handler;
         private int requests;
 
-        private Rig(Func<HttpRequestMessage, CancellationToken, Task<HttpResponseMessage>> handler)
+        private Rig(Func<HttpRequestMessage, CancellationToken, Task<HttpResponseMessage>> handler, TimeProvider? time = null, int requestsPerSecond = 1000)
         {
             this.handler = handler;
-            var options = Options.Create(new OpenLibraryMetadataOptions { Enabled = true, MaxResults = 10, TimeoutSeconds = 15, RequestsPerSecond = 1000 });
-            gate = new OpenLibraryRequestGate(options);
+            Time = time ?? Clock;
+            var options = Options.Create(new OpenLibraryMetadataOptions { Enabled = true, MaxResults = 10, TimeoutSeconds = 15, RequestsPerSecond = requestsPerSecond });
+            gate = new OpenLibraryRequestGate(options, Time);
             client = new HttpClient(new OpenLibraryRateLimitHandler(gate) { InnerHandler = new Transport(Handle) })
             {
                 BaseAddress = new Uri("https://openlibrary.org/")
             };
-            Provider = new OpenLibraryBookMetadataProvider(client, options, Clock);
+            Provider = new OpenLibraryBookMetadataProvider(client, options, Time);
         }
 
         public OpenLibraryBookMetadataProvider Provider { get; }
 
         public ManualClock Clock { get; } = new();
+
+        /// <summary>The clock the gate, provider and budgets run on: <see cref="Clock"/> unless the rig was built paced.</summary>
+        public TimeProvider Time { get; }
 
         public List<string> Uris { get; } = [];
 
@@ -1512,9 +1793,13 @@ public sealed class OpenLibraryDiscoveryTests
 
         public static Rig WithHandler(Func<HttpRequestMessage, CancellationToken, Task<HttpResponseMessage>> handler) => new(handler);
 
+        /// <summary>The production one-request-per-second pace, on a clock whose pacing waits only end when the test advances it.</summary>
+        public static Rig Paced(SteppedClock clock, Func<HttpRequestMessage, CancellationToken, Task<HttpResponseMessage>> handler) =>
+            new(handler, clock, requestsPerSecond: 1);
+
         public DiscoveryOperationBudget Op(DiscoveryLimits? limits = null, TimeProvider? clock = null)
         {
-            var journey = new DiscoveryJourney(Guid.NewGuid(), limits ?? DiscoveryLimits.Default, clock ?? Clock);
+            var journey = new DiscoveryJourney(Guid.NewGuid(), limits ?? DiscoveryLimits.Default, clock ?? Time);
             return journey.BeginOperation(DiscoveryOperation.GetSeriesMembers, "openlibrary", null)!;
         }
 

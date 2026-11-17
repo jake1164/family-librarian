@@ -181,8 +181,8 @@ public sealed partial class HardcoverBookMetadataProvider
         new(DiscoveryOperation.FindSeriesForBook, DiscoveryCapability.Supported),
         new(DiscoveryOperation.ResolveAuthor, DiscoveryCapability.Supported),
         new(DiscoveryOperation.GetAuthorWorks, DiscoveryCapability.Supported),
-        new(DiscoveryOperation.GetSeriesMembers, DiscoveryCapability.Unverified("series-id-filter-unverified-live")),
-        new(DiscoveryOperation.GetAuthorSeries, DiscoveryCapability.Unverified("author-series-filter-unverified-live"))
+        new(DiscoveryOperation.GetSeriesMembers, DiscoveryCapability.Unverified("documented-first-party-live-unverified")),
+        new(DiscoveryOperation.GetAuthorSeries, DiscoveryCapability.Unverified("documented-field-live-unverified"))
     ]);
 
     private readonly TimeProvider time = clock ?? TimeProvider.System;

@@ -332,6 +332,49 @@ public sealed class OpenLibraryBookMetadataProviderTests
     }
 
     [TestMethod]
+    [DataRow("\"first_publish_year\": 1965", 1965, FamilyLibrarian.Domain.Catalog.DatePrecision.Year)]
+    [DataRow("\"first_publish_date\": [\"1965-08-01\"], \"first_publish_year\": 1965", 1965, null)]
+    public async Task AWorkWithOnlyAYearStatesAYearAndAnExactDateWhenSentWinsOverIt(string dates, int year, FamilyLibrarian.Domain.Catalog.DatePrecision? precision)
+    {
+        using var handler = new StubHttpMessageHandler((_, _) => JsonResponse(
+            "{\"docs\":[{\"key\":\"/works/OL1W\",\"title\":\"Dune\",\"author_name\":[\"Frank Herbert\"]," + dates + "}]}"));
+        using var httpClient = CreateHttpClient(handler);
+
+        var candidate = (await CreateProvider(httpClient).SearchAsync(new BookSearchQuery("Dune"), CancellationToken.None)).Candidates.Single();
+
+        Assert.AreEqual(year, candidate.PublicationDate!.Value.Year);
+        Assert.AreEqual(precision, candidate.PublicationDatePrecision);
+        Assert.AreEqual(FamilyLibrarian.Domain.Catalog.DateBasis.Original, candidate.PublicationDateBasis);
+        Assert.AreEqual(precision is null ? new DateOnly(1965, 8, 1) : new DateOnly(1965, 1, 1), candidate.PublicationDate);
+        if (precision == FamilyLibrarian.Domain.Catalog.DatePrecision.Year)
+        {
+            Assert.AreEqual(new DateOnly(1965, 1, 1), candidate.PublicationDate, "A year is carried as its first day with Year precision, never an exact day.");
+        }
+    }
+
+    [TestMethod]
+    [DataRow(0)]
+    [DataRow(10000)]
+    [DataRow(-5)]
+    public async Task AnImplausibleYearGivesNoDateAndTheYearIsRequestedFromOpenLibrary(int year)
+    {
+        Uri? requested = null;
+        using var handler = new StubHttpMessageHandler((request, _) =>
+        {
+            requested = request.RequestUri;
+            return JsonResponse("{\"docs\":[{\"key\":\"/works/OL1W\",\"title\":\"Dune\",\"first_publish_year\":" + year + "}]}");
+        });
+        using var httpClient = CreateHttpClient(handler);
+
+        var candidate = (await CreateProvider(httpClient).SearchAsync(new BookSearchQuery("Dune"), CancellationToken.None)).Candidates.Single();
+
+        Assert.IsNull(candidate.PublicationDate);
+        Assert.IsNull(candidate.PublicationDatePrecision);
+        Assert.IsNull(candidate.PublicationDateBasis);
+        StringAssert.Contains(requested!.Query, "first_publish_year", "The fields parameter asks for the year.");
+    }
+
+    [TestMethod]
     public async Task SearchAsyncRequestsTheSelectedPageAndReportsMoreResults()
     {
         Uri? requestedUri = null;

@@ -524,4 +524,62 @@ public sealed class DiscoveryContractTests
         Assert.HasCount(1, anchor.Books, "An anchor must keep the book that vouches for it.");
         Assert.IsNotInstanceOfType<AnchorBook[]>(anchor.Books, "The anchor's list must not be a writable array.");
     }
+
+    // ---- TitleForm.Alternates is a private snapshot too (G3) ----
+
+    private static AlternateTitle Alt(string text) => new(text, "alternative_title", null, TitleScope.Work);
+
+    [TestMethod]
+    public void TitleFormAlternatesAreAPrivateReadOnlySnapshotWhetherSetByListArrayOrWith()
+    {
+        var list = new List<AlternateTitle> { Alt("One") };
+        var fromList = new TitleForm("Dune") { Alternates = list };
+        list.Add(Alt("Two"));
+        list[0] = Alt("Changed");
+        Assert.HasCount(1, fromList.Alternates, "A later add to the caller's list must not reach the form.");
+        Assert.AreEqual("One", fromList.Alternates[0].Text);
+
+        var array = new[] { Alt("One") };
+        var fromArray = new TitleForm("Dune") { Alternates = array };
+        array[0] = Alt("Changed");
+        Assert.AreEqual("One", fromArray.Alternates[0].Text, "Writing through the caller's array must not reach the form.");
+
+        var viaWith = new TitleForm("Dune") with { Alternates = list };
+        list.Clear();
+        Assert.HasCount(2, viaWith.Alternates, "A with-assignment snapshots too.");
+        Assert.AreEqual("Changed", viaWith.Alternates[0].Text);
+
+        Assert.IsNotInstanceOfType<List<AlternateTitle>>(fromList.Alternates);
+        Assert.IsNotInstanceOfType<AlternateTitle[]>(fromArray.Alternates);
+        Assert.Throws<NotSupportedException>(() => ((IList<AlternateTitle>)fromList.Alternates).Add(Alt("Cast")));
+        Assert.Throws<NotSupportedException>(() => ((IList<AlternateTitle>)fromList.Alternates)[0] = Alt("Cast"));
+        Assert.HasCount(1, fromList.Alternates);
+    }
+
+    [TestMethod]
+    public void TitleFormAlternatesDefaultToEmptyRejectNullAndKeepContentEquality()
+    {
+        Assert.IsEmpty(new TitleForm("Dune").Alternates);
+        Assert.IsEmpty(new TitleForm("Dune") { Alternates = [] }.Alternates);
+        Assert.ThrowsExactly<ArgumentNullException>(() => _ = new TitleForm("Dune") { Alternates = null! });
+
+        var a = new TitleForm("Dune") { Alternates = new List<AlternateTitle> { Alt("One"), Alt("Two") } };
+        var b = new TitleForm("Dune") { Alternates = new[] { Alt("One"), Alt("Two") } };
+        Assert.AreEqual(a, b, "Equality is by content, whatever held the alternates.");
+        Assert.AreEqual(a.GetHashCode(), b.GetHashCode());
+        Assert.AreNotEqual(a, new TitleForm("Dune"));
+        Assert.AreNotEqual(a, new TitleForm("Dune") { Alternates = [Alt("One")] });
+        Assert.AreNotEqual(a, new TitleForm("Dune") { Alternates = [Alt("Two"), Alt("One")] }, "Order is part of what the source stated.");
+        Assert.AreEqual(new TitleForm("Dune"), new TitleForm("Dune") { Alternates = [] });
+        Assert.AreEqual(new TitleForm("Dune").GetHashCode(), new TitleForm("Dune") { Alternates = [] }.GetHashCode());
+    }
+
+    [TestMethod]
+    public void ADiscoveredBookKeepsTheSnapshotOfItsTitleAlternates()
+    {
+        var list = new List<AlternateTitle> { Alt("One") };
+        var book = new DiscoveredBook(Work("5"), new TitleForm("Dune") { Alternates = list }, [], PublicationEvidence.NotStated, Observed);
+        list.Add(Alt("Two"));
+        Assert.HasCount(1, book.Title.Alternates);
+    }
 }

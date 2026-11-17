@@ -60,13 +60,52 @@ public sealed record PublicationEvidence
     }
 }
 
+/// <summary>Whether a source-stated alternate title belongs to the Work or to one Edition (for example a translation).</summary>
+public enum TitleScope
+{
+    Work = 1,
+    Edition = 2
+}
+
+/// <summary>
+/// A title a source states in addition to the one it reports, kept with where it came from. It is evidence, never an alias: it is not
+/// merged into the reported title, not used to match records, and a translation's title is never folded into the original's.
+/// </summary>
+/// <param name="Text">The alternate title exactly as the source gave it.</param>
+/// <param name="SourceField">The source's own field name (for example <c>alternative_title</c>).</param>
+/// <param name="Language">The language the source states for this title; null when it states none (never guessed).</param>
+/// <param name="Scope">Whether the source attaches the title to the Work or to one Edition.</param>
+public sealed record AlternateTitle(string Text, string SourceField, string? Language, TitleScope Scope);
+
 /// <summary>A title exactly as reported, plus any normalization applied and why, so the original is never lost.</summary>
 /// <param name="Reported">The source's title text, unchanged.</param>
 /// <param name="Normalized">The form used for matching or display when a rule changed it; null when nothing was changed.</param>
 /// <param name="RuleCode">Stable code of the explicit rule applied (for example <c>series-suffix</c>); null with no change.</param>
 public sealed record TitleForm(string Reported, string? Normalized = null, string? RuleCode = null)
 {
+    private static readonly IReadOnlyList<AlternateTitle> NoAlternates = DiscoverySnapshots.Of<AlternateTitle>([]);
+
+    private IReadOnlyList<AlternateTitle> alternates = NoAlternates;
+
     public bool WasNormalized => Normalized is not null;
+
+    /// <summary>
+    /// Alternate titles the source stated, in source order; empty when it stated none (which says nothing about whether others exist).
+    /// Setting it stores a private read-only copy, whether through an initializer or <c>with</c>: the caller who built the list or
+    /// array keeps no handle that can change this form afterwards. Null is rejected rather than read as "none".
+    /// </summary>
+    public IReadOnlyList<AlternateTitle> Alternates
+    {
+        get => alternates;
+        init => alternates = DiscoverySnapshots.Of(value);
+    }
+
+    // Value equality over the list's contents, so two forms with the same alternates are equal whatever list instance holds them.
+    public bool Equals(TitleForm? other) =>
+        other is not null && Reported == other.Reported && Normalized == other.Normalized && RuleCode == other.RuleCode &&
+        Alternates.SequenceEqual(other.Alternates);
+
+    public override int GetHashCode() => HashCode.Combine(Reported, Normalized, RuleCode, Alternates.Count);
 }
 
 /// <summary>How a book belongs to a series. A role comes only from an explicit statement; featured/primary never implies Main.</summary>

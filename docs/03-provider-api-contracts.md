@@ -372,6 +372,44 @@ Raw payload/version where useful
 
 but internal Work/Author/Series IDs remain authoritative.
 
+### Read-only source discovery
+
+A metadata integration may also implement the optional `IBookMetadataDiscoveryProvider` (same provider instance and credential
+pipeline, never a second registry). It answers five bounded, read-only questions: the series a book is stated to belong to
+(`FindSeriesClaimsForBookAsync`, each claim with that book's own position; `FindSeriesForBookAsync` is a projection of the same
+single read), the members of a series by the source's own series id, resolving an author, an author's works, and series reached
+from an author. Rules that every implementation keeps:
+
+- **Identity.** A source id is used as given; a name alone never selects an author (it yields choices, or needs an anchor book the
+  source itself credited it on); a label is never promoted to a source id; an author-to-series relationship computed from works
+  is marked derived and page-scoped.
+- **Honest results.** A result states its outcome (found, empty, ambiguous, partial, no usable items, throttled, timed out,
+  unavailable, unsupported, unverified), how far the checked scope was read, the continuation, and stable note codes. "Empty"
+  means the stated scope held nothing, never that the source knows of nothing. Each operation also carries a declared capability:
+  *supported*, *unverified* (implemented against the source's documentation but not yet confirmed against its live service) or
+  *unsupported*. Only an unsupported operation is refused without a request; an unverified one is offered and called like a
+  supported one, and its answer is then reported as it was observed (including `unverified` when it could not be confirmed), so a
+  declared-unverified operation does make requests.
+- **Bounded.** Every physical attempt is reserved from a server-owned budget before it is dispatched (at most 5 attempts, one retry,
+  5 pages and 15 s per operation; 12 attempts and 30 s per journey), a provider's own `Retry-After` is honoured in full or
+  reported, never shortened, and caller cancellation is never turned into an answer.
+- **Read-only.** Discovery changes no catalog, request, follow or notification row; its results live only in the requesting user's
+  short-lived, size-limited browse context in host memory. Reading or rendering a browse or discovery window that is already held
+  never contacts a provider. A provider is contacted only when an authenticated user takes an explicit, anti-forgery-protected
+  action: a source lookup, or expanding a window into a book's series, a series' members or an author's works or series. Each such
+  action is bounded by the budgets above and a per-user start limit.
+- **Dates and titles.** A publication date keeps its precision and whether it describes the original or one edition; unstated stays
+  unstated. A title keeps the source's reported form, any explicit normalization with its rule, and any alternate titles the source
+  states with their field, language (when stated) and Work-or-Edition scope.
+
+Current integrations: Open Library implements all five (series-author listings derived, never native); Hardcover implements all five,
+with series-by-id and author-series declared unverified against its live service; Google Books implements only the book-to-series
+read (volume-level series ids without names, declared unverified) and declares the series, author and bibliography operations
+unsupported. Throttling is remembered per integration: Hardcover reads its documented `RateLimit` header; Open Library, which
+publishes no quota, refuses further requests locally after a 429 for the response's full `Retry-After` (seconds or HTTP-date), or an
+application default when it sends none that is usable. How long one operation is willing to wait is a separate, per-operation
+decision: a wait that does not fit is reported, and it never shortens when later callers may ask again.
+
 ### Catalog identity, evidence and enrichment
 
 The catalog stays authoritative for Work, Edition, Author and Series identity; a provider supplies observations, never

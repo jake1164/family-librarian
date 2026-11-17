@@ -1033,6 +1033,95 @@ public sealed class HardcoverDiscoveryTests
         Assert.IsTrue(started.Elapsed >= TimeSpan.FromMilliseconds(700), "The announced wait is not shortened.");
     }
 
+    // The failure seen once in a full run: the pause for an announced "r=0;t=1" returned a few milliseconds before the rate state's wall-clock
+    // reset instant (a timer may fire early against the system clock), the single re-check still found the window in force, and the request
+    // was refused as a synthetic 429 although the announced wait had been honoured. These cases make that timing exact with a manual clock.
+
+    [TestMethod]
+    public async Task APauseThatReturnsAFewMillisecondsBeforeTheResetFinishesTheSliverAndThenSends()
+    {
+        var pauses = new List<TimeSpan>();
+        var clockAtRequest = DateTimeOffset.MinValue;
+        using var rig = Rig.WithPause((rig, wait, _) =>
+        {
+            pauses.Add(wait);
+            // First pause: the timer fires 5 ms early; second pause: the remaining 5 ms.
+            rig.Clock.Advance(pauses.Count == 1 ? wait - TimeSpan.FromMilliseconds(5) : wait);
+            return Task.CompletedTask;
+        }, Json("""{"data":{"books_by_pk":null}}"""));
+        rig.State.Observe(WithRateHeader("\"Free\";r=0;t=1"));
+        var reset = rig.Clock.GetUtcNow() + TimeSpan.FromSeconds(1);
+
+        var candidate = await rig.Provider.GetDetailsAsync("42", CancellationToken.None);
+        clockAtRequest = rig.Clock.GetUtcNow();
+
+        Assert.IsNull(candidate);
+        Assert.AreEqual(1, rig.Requests, "The request is sent once, not refused as a synthetic 429.");
+        Assert.HasCount(2, pauses);
+        Assert.AreEqual(TimeSpan.FromSeconds(1), pauses[0]);
+        Assert.AreEqual(TimeSpan.FromMilliseconds(5), pauses[1], "Only the sliver the timer left is waited.");
+        Assert.IsGreaterThanOrEqualTo(reset, clockAtRequest, "The announced wait is never shortened: the request goes at or after the reset instant.");
+    }
+
+    [TestMethod]
+    public async Task APauseThatEndsInANewWaitIsNotLoopedOnAndTheRequestIsRefusedWithoutBeingSent()
+    {
+        var pauses = 0;
+        using var rig = Rig.WithPause((rig, wait, _) =>
+        {
+            pauses++;
+            rig.Clock.Advance(wait);
+            // Another caller used the freed slot and Hardcover announced a fresh five-second wait.
+            rig.State.Observe(WithRateHeader("\"Free\";r=0;t=5"));
+            return Task.CompletedTask;
+        }, Json("""{"data":{"books_by_pk":null}}"""));
+        rig.State.Observe(WithRateHeader("\"Free\";r=0;t=1"));
+
+        await Assert.ThrowsExactlyAsync<HttpRequestException>(() => rig.Provider.GetDetailsAsync("42", CancellationToken.None));
+
+        Assert.AreEqual(1, pauses, "A genuinely new wait is not chased: one announced wait is paused for, once.");
+        Assert.AreEqual(0, rig.Requests, "A refused request is never sent.");
+    }
+
+    [TestMethod]
+    public async Task CancellationDuringTheFinishingPassStillPropagatesAndSendsNothing()
+    {
+        var pauses = 0;
+        using var rig = Rig.WithPause((rig, wait, token) =>
+        {
+            pauses++;
+            if (pauses == 1)
+            {
+                rig.Clock.Advance(wait - TimeSpan.FromMilliseconds(5));
+                return Task.CompletedTask;
+            }
+
+            return Task.FromCanceled(new CancellationToken(canceled: true));
+        }, Json("""{"data":{"books_by_pk":null}}"""));
+        rig.State.Observe(WithRateHeader("\"Free\";r=0;t=1"));
+
+        await Assert.ThrowsAsync<OperationCanceledException>(() => rig.Provider.GetDetailsAsync("42", CancellationToken.None));
+
+        Assert.AreEqual(0, rig.Requests);
+    }
+
+    [TestMethod]
+    public async Task AnAnnouncedWaitLongerThanTheRetryCapIsReportedWithoutAnyPauseOrRequest()
+    {
+        var pauses = 0;
+        using var rig = Rig.WithPause((_, _, _) =>
+        {
+            pauses++;
+            return Task.CompletedTask;
+        }, Json("""{"data":{"books_by_pk":null}}"""));
+        rig.State.Observe(WithRateHeader("\"Free\";r=0;t=3600"));
+
+        await Assert.ThrowsExactlyAsync<HttpRequestException>(() => rig.Provider.GetDetailsAsync("42", CancellationToken.None));
+
+        Assert.AreEqual(0, pauses);
+        Assert.AreEqual(0, rig.Requests);
+    }
+
     [TestMethod]
     public async Task AnOrdinaryRequestsPauseHonoursCallerCancellation()
     {
@@ -1652,14 +1741,19 @@ public sealed class HardcoverDiscoveryTests
         private readonly Func<HttpRequestMessage, CancellationToken, Task<HttpResponseMessage>> handler;
         private int requests;
 
-        private Rig(Func<HttpRequestMessage, CancellationToken, Task<HttpResponseMessage>> handler, string? token, HardcoverRateState? state = null)
+        private Rig(
+            Func<HttpRequestMessage, CancellationToken, Task<HttpResponseMessage>> handler,
+            string? token,
+            HardcoverRateState? state = null,
+            Func<TimeSpan, CancellationToken, Task>? pause = null)
         {
             this.handler = handler;
             State = state ?? new HardcoverRateState(Clock);
             var transport = new Transport(Handle);
             var rateLimit = new HardcoverRateLimitHandler(
                 Options.Create(new HardcoverMetadataOptions { MaxRetryAttempts = 3, MaxRetryDelaySeconds = 30 }),
-                State)
+                State,
+                pause)
             {
                 InnerHandler = transport
             };
@@ -1685,6 +1779,21 @@ public sealed class HardcoverDiscoveryTests
         public static Rig With(string? token) => WithToken(token, []);
 
         public static Rig WithHandler(Func<HttpRequestMessage, CancellationToken, Task<HttpResponseMessage>> handler) => new(handler, "test-token");
+
+        /// <summary>A rig whose handler pauses through <paramref name="pause"/> (so a test controls what each pause does to the manual clock).</summary>
+        public static Rig WithPause(Func<Rig, TimeSpan, CancellationToken, Task> pause, params HttpResponseMessage[] responses)
+        {
+            Rig? created = null;
+            var queue = new Queue<HttpResponseMessage>(responses);
+            created = new Rig((_, _) =>
+            {
+                lock (queue)
+                {
+                    return Task.FromResult(queue.Count > 0 ? queue.Dequeue() : new HttpResponseMessage(HttpStatusCode.InternalServerError));
+                }
+            }, "test-token", null, (wait, token) => pause(created!, wait, token));
+            return created;
+        }
 
         public static Rig WithRealClockState(params HttpResponseMessage[] responses) => WithToken("test-token", responses, new HardcoverRateState());
 

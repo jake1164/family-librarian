@@ -64,7 +64,8 @@ public sealed partial class OpenLibraryBookMetadataProvider
     private const string DerivedScope = "author-works-checked-pages";
 
     private const string DiscoveryWorkFields =
-        "key,title,author_key,author_name,first_publish_year,series_key,series_name,series_position";
+        "key,title,author_key,author_name,first_publish_year,series_key,series_name,series_position," +
+        "alternative_title,alternative_subtitle";
 
     private const string SeriesOnlyFields = "key,author_key,series_key,series_name,series_position";
 
@@ -732,7 +733,7 @@ public sealed partial class OpenLibraryBookMetadataProvider
         try
         {
             using var response = await httpClient.GetAsync(relativeUri, HttpCompletionOption.ResponseHeadersRead, deadline.Token);
-            return await ReadAsync<T>(response, budget, deadline.Token);
+            return await ReadAsync<T>(response, budget, time.GetUtcNow(), deadline.Token);
         }
         catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
         {
@@ -749,7 +750,7 @@ public sealed partial class OpenLibraryBookMetadataProvider
     }
 
     private static async Task<OpenLibraryReply<T>> ReadAsync<T>(
-        HttpResponseMessage response, IDiscoveryBudget budget, CancellationToken cancellationToken)
+        HttpResponseMessage response, IDiscoveryBudget budget, DateTimeOffset now, CancellationToken cancellationToken)
         where T : class
     {
         switch (response.StatusCode)
@@ -759,7 +760,7 @@ public sealed partial class OpenLibraryBookMetadataProvider
             case HttpStatusCode.TooManyRequests:
                 // Reported, never retried: a wait that does not fit the remaining work is said so, any other is "throttled".
                 var wait = response.Headers.RetryAfter?.Delta
-                    ?? (response.Headers.RetryAfter?.Date is { } date ? date - DateTimeOffset.UtcNow : null);
+                    ?? (response.Headers.RetryAfter?.Date is { } date ? date - now : null);
                 return OpenLibraryReply<T>.Stopped(
                     OpenLibraryTransport.Throttled,
                     wait is { } known && known > budget.RemainingWork ? DiscoveryCodes.RetryAfterTooLong : DiscoveryCodes.Throttled);
@@ -999,7 +1000,7 @@ public sealed partial class OpenLibraryBookMetadataProvider
 
         return new DiscoveredBook(
             new SourceRef(ProviderKey, workId, ExternalReferenceEntityType.Work),
-            ToTitleForm(document.Title!.Trim(), claims),
+            ToTitleForm(document.Title!.Trim(), claims, document),
             credits,
             publication,
             observedAtUtc);
@@ -1008,7 +1009,45 @@ public sealed partial class OpenLibraryBookMetadataProvider
     // Open Library appends "<series> #<position>" to some work titles. The reported title is always kept; the suffix is lifted
     // into the normalized form only when this very row's own series claim names that exact series and position, so no subtitle
     // is ever cut on a guess.
-    private static TitleForm ToTitleForm(string reported, IReadOnlyList<SeriesClaim> claims)
+    private const int MaximumAlternateTitles = 10;
+    private const int MaximumAlternateTitleLength = 300;
+
+    // alternative_title and alternative_subtitle are search-index fields of a Work row (first-party works.py). A 22-row live sample on
+    // 2026-11-17 returned neither even when requested, so this maps them only if a response does send them; nothing is invented. They
+    // are kept as Work-scoped, language-unstated evidence next to the reported title and never replace or merge with it.
+    private static List<AlternateTitle> AlternatesOf(string reported, OlDiscoveryDocument document)
+    {
+        var alternates = new List<AlternateTitle>();
+        foreach (var (field, element) in new[] { ("alternative_title", document.AlternativeTitles), ("alternative_subtitle", document.AlternativeSubtitles) })
+        {
+            foreach (var value in Aligned(element))
+            {
+                var text = value?.Trim();
+                if (string.IsNullOrEmpty(text) || text.Length > MaximumAlternateTitleLength ||
+                    string.Equals(text, reported, StringComparison.Ordinal) ||
+                    alternates.Any(known => string.Equals(known.Text, text, StringComparison.Ordinal)))
+                {
+                    continue;
+                }
+
+                if (alternates.Count < MaximumAlternateTitles)
+                {
+                    alternates.Add(new AlternateTitle(text, field, null, TitleScope.Work));
+                }
+            }
+        }
+
+        return alternates;
+    }
+
+    private static TitleForm ToTitleForm(string reported, IReadOnlyList<SeriesClaim> claims, OlDiscoveryDocument document)
+    {
+        var form = ToNormalizedTitleForm(reported, claims);
+        var alternates = AlternatesOf(reported, document);
+        return alternates.Count == 0 ? form : form with { Alternates = alternates };
+    }
+
+    private static TitleForm ToNormalizedTitleForm(string reported, IReadOnlyList<SeriesClaim> claims)
     {
         foreach (var claim in claims)
         {
@@ -1165,6 +1204,12 @@ public sealed partial class OpenLibraryBookMetadataProvider
 
         [JsonPropertyName("series_position")]
         public JsonElement SeriesPositions { get; init; }
+
+        [JsonPropertyName("alternative_title")]
+        public JsonElement AlternativeTitles { get; init; }
+
+        [JsonPropertyName("alternative_subtitle")]
+        public JsonElement AlternativeSubtitles { get; init; }
     }
 
     private sealed class OlAuthorSearch

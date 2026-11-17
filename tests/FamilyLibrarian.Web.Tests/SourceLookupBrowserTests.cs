@@ -111,7 +111,9 @@ public sealed class SourceLookupBrowserTests
             }
         });
         var factory = original.WithWebHostBuilder(builder => builder.UseStaticWebAssets());
-        factory.UseKestrel(0);
+        // Test classes run in parallel in one assembly (and in the Release job), so this listens on a dynamic loopback port, like the
+        // other browser classes. A fixed or default port made this class collide with CatalogBrowseBrowserTests in the full Release run.
+        factory.UseKestrel(options => options.Listen(System.Net.IPAddress.Loopback, 0));
         using var client = factory.CreateClient();
         var baseUri = client.BaseAddress!;
         var playwright = await Playwright.CreateAsync();
