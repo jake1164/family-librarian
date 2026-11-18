@@ -48,7 +48,12 @@ public sealed class CatalogAnswerService(
         using var linked = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, deadline.Token);
         try
         {
-            return await RunAsync(run, linked.Token);
+            var answer = await RunAsync(run, linked.Token);
+            // A read that does not observe cancellation can finish after the deadline. Only a cancellation signal says time is up, so
+            // it is checked once more here: an answer completed past the boundary is a time-out, never a success. A caller's own
+            // cancellation surfaces from this same check as the cancellation it is.
+            linked.Token.ThrowIfCancellationRequested();
+            return answer;
         }
         catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
         {
@@ -93,7 +98,31 @@ public sealed class CatalogAnswerService(
     {
         CatalogAnswerOperation.PublicationForTitle => TitleAsync(run, ct),
         CatalogAnswerOperation.AuthorWorks or CatalogAnswerOperation.AuthorSeries => AuthorAsync(run, ct),
+        // Latest, upcoming and next release are publication questions that a selected series or a selected author can ask. The
+        // subject the caller selected decides the read; an author is never silently turned into a series (or the reverse).
+        CatalogAnswerOperation.LatestPublished or CatalogAnswerOperation.UpcomingReleases or CatalogAnswerOperation.NextRelease
+            when run.Request.Subject?.Kind == CatalogSubjectKind.Author => AuthorAsync(run, ct),
         _ => SeriesAsync(run, ct)
+    };
+
+    /// <summary>Which subjects an operation can be asked about. Position and next-in-order are series questions only.</summary>
+    private static bool AppliesTo(CatalogAnswerOperation operation, CatalogSubjectKind kind) => operation switch
+    {
+        CatalogAnswerOperation.LatestPublished or CatalogAnswerOperation.UpcomingReleases or CatalogAnswerOperation.NextRelease =>
+            kind is CatalogSubjectKind.Series or CatalogSubjectKind.Author,
+        CatalogAnswerOperation.Position or CatalogAnswerOperation.AfterAnchor => kind == CatalogSubjectKind.Series,
+        CatalogAnswerOperation.AuthorWorks or CatalogAnswerOperation.AuthorSeries => kind == CatalogSubjectKind.Author,
+        CatalogAnswerOperation.PublicationForTitle => kind == CatalogSubjectKind.Title,
+        _ => false
+    };
+
+    /// <summary>The read an operation needs for a subject. A retained window is reusable only when it holds that same read.</summary>
+    private static CatalogReadKind ReadKindFor(CatalogAnswerOperation operation, CatalogSubjectKind kind) => kind switch
+    {
+        CatalogSubjectKind.Series => CatalogReadKind.SeriesMembers,
+        CatalogSubjectKind.Author => operation == CatalogAnswerOperation.AuthorSeries ? CatalogReadKind.AuthorSeries : CatalogReadKind.AuthorWorks,
+        CatalogSubjectKind.Title => CatalogReadKind.TitleSearch,
+        _ => CatalogReadKind.Choices
     };
 
     private async Task<CatalogAnswer> SeriesAsync(Run run, CancellationToken ct)
@@ -114,7 +143,7 @@ public sealed class CatalogAnswerService(
         var page = subject.SavedId is { } savedId
             ? await LoadSavedSeriesAsync(run, savedId, subject, ct)
             : await LoadSeriesMembersAsync(run, subject, null, ct);
-        return Evaluate(run, subject, page, null);
+        return Evaluate(run, subject, page, null, ct);
     }
 
     private async Task<CatalogAnswer> AuthorAsync(Run run, CancellationToken ct)
@@ -141,10 +170,10 @@ public sealed class CatalogAnswerService(
                 return Compose(run, CatalogAnswerOutcome.Unsupported, subject, reasons: [CatalogAnswerCodes.OperationNotSupported]);
             }
 
-            return Evaluate(run, subject, await LoadSavedAuthorAsync(run, savedId, ct), null);
+            return Evaluate(run, subject, await LoadSavedAuthorAsync(run, savedId, ct), null, ct);
         }
 
-        return Evaluate(run, subject, await LoadAuthorAsync(run, subject, null, ct), null);
+        return Evaluate(run, subject, await LoadAuthorAsync(run, subject, null, ct), null, ct);
     }
 
     private async Task<CatalogAnswer> TitleAsync(Run run, CancellationToken ct)
@@ -163,8 +192,8 @@ public sealed class CatalogAnswerService(
             .Where(entry => entry is not null)
             .Cast<CatalogAnswerEntry>()
             .ToArray();
-        var page = new Page(entries, [], seed.Exhausted, seed.More, false, null, [], "title-search-first-page", seed.ProviderId, seed.Gaps);
-        return Evaluate(run, subject, page, null);
+        var page = new Page(entries, [], seed.Exhausted, seed.More, false, null, [], "title-search-first-page", CatalogReadKind.TitleSearch, seed.ProviderId, seed.Gaps);
+        return Evaluate(run, subject, page, null, ct);
     }
 
     // ========================================================================================== follow-ups from a root
@@ -195,14 +224,32 @@ public sealed class CatalogAnswerService(
                 coverage: CoverageOf(run, window));
         }
 
+        if (!AppliesTo(request.Operation, subject.Kind))
+        {
+            // E.g. a position asked about an author, or an author's works asked about a series: nothing is read or reused.
+            return Compose(run, CatalogAnswerOutcome.InsufficientEvidence, subject, reasons: [CatalogAnswerCodes.SubjectInvalid], coverage: CoverageOf(run, window));
+        }
+
+        // What the window read must be what the answer needs: an author's works page is no evidence about their series, and a
+        // retained window is never read as absence for a different read.
+        var needed = ReadKindFor(request.Operation, subject.Kind);
         if (request.ContinuationToken is { } token)
         {
-            return await ContinueAsync(run, subject, window, token, ct);
+            return window.ReadKind == needed
+                ? await ContinueAsync(run, subject, window, token, ct)
+                : Compose(run, CatalogAnswerOutcome.InsufficientEvidence, subject, reasons: [CatalogAnswerCodes.ContinuationUnavailable], coverage: CoverageOf(run, window));
+        }
+
+        if (window.ReadKind != needed)
+        {
+            // The authorized read is made now, on the same root, journey and admission (a fresh operation, never a fresh allowance).
+            run.Request = request with { Subject = subject };
+            return await FreshAsync(run, ct);
         }
 
         // Zero provider reads: the retained entries answer it, and a window that was cut says so instead of claiming it was read.
-        var page = new Page(window.Entries, window.Series, window.Exhausted, window.MoreAvailable, window.Truncated, window.ContinuationToken, window.Sources, window.ScopeCode, window.ProviderId, window.SourceGaps);
-        return Evaluate(run, subject, page, window, retain: false);
+        var page = new Page(window.Entries, window.Series, window.Exhausted, window.MoreAvailable, window.Truncated, window.ContinuationToken, window.Sources, window.ScopeCode, window.ReadKind, window.ProviderId, window.SourceGaps);
+        return Evaluate(run, subject, page, window, ct, retain: false);
     }
 
     private async Task<CatalogAnswer> ContinueAsync(Run run, CatalogSubjectRef subject, CatalogRetainedWindow window, string token, CancellationToken ct)
@@ -238,7 +285,7 @@ public sealed class CatalogAnswerService(
             };
         }
 
-        return Evaluate(run, subject, page, window);
+        return Evaluate(run, subject, page, window, ct);
     }
 
     private static bool SameSubject(CatalogSubjectRef a, CatalogSubjectRef b) =>
@@ -246,7 +293,7 @@ public sealed class CatalogAnswerService(
 
     // ========================================================================================================== evaluate
 
-    private CatalogAnswer Evaluate(Run run, CatalogSubjectRef subject, Page page, CatalogRetainedWindow? prior, bool retain = true)
+    private CatalogAnswer Evaluate(Run run, CatalogSubjectRef subject, Page page, CatalogRetainedWindow? prior, CancellationToken ct, bool retain = true)
     {
         if (page.Failure is { } failure)
         {
@@ -254,15 +301,25 @@ public sealed class CatalogAnswerService(
         }
 
         var request = run.Request;
+        if (!AppliesTo(request.Operation, subject.Kind))
+        {
+            return Compose(run, CatalogAnswerOutcome.InsufficientEvidence, subject, reasons: [CatalogAnswerCodes.SubjectInvalid], coverage: CoverageOf(run, page));
+        }
+
+        // The last boundary before anything is retained or returned: past the deadline (or cancelled), nothing more is kept.
+        ct.ThrowIfCancellationRequested();
         var today = DateOnly.FromDateTime(run.Now.UtcDateTime);
         var scope = new CatalogPolicyScope(page.Exhausted && !page.Truncated, page.ProviderId is null, page.SourceGaps);
         IReadOnlyList<CatalogAnswerSeries> series = page.Series;
         CatalogSelection selection;
         var anchor = request.Anchor;
+        var byAuthor = subject.Kind == CatalogSubjectKind.Author;
         switch (request.Operation)
         {
             case CatalogAnswerOperation.LatestPublished:
-                selection = CatalogAnswerPolicy.Latest(page.Entries, today, scope, request.Filter);
+                selection = byAuthor
+                    ? CatalogAnswerPolicy.WithinAuthorScope(page.Entries, subject, scope, (entries, inner) => CatalogAnswerPolicy.Latest(entries, today, inner, request.Filter))
+                    : CatalogAnswerPolicy.Latest(page.Entries, today, scope, request.Filter);
                 break;
             case CatalogAnswerOperation.Position:
                 selection = CatalogAnswerPolicy.Position(page.Entries, request.Position!.Value, request.Order, scope, request.Filter);
@@ -272,10 +329,14 @@ public sealed class CatalogAnswerService(
                 selection = CatalogAnswerPolicy.AfterAnchor(page.Entries, key, key is null ? request.Position : null, request.Order, scope, request.Filter);
                 break;
             case CatalogAnswerOperation.UpcomingReleases:
-                selection = CatalogAnswerPolicy.Upcoming(page.Entries, today, false, scope, request.Filter);
+                selection = byAuthor
+                    ? CatalogAnswerPolicy.WithinAuthorScope(page.Entries, subject, scope, (entries, inner) => CatalogAnswerPolicy.Upcoming(entries, today, false, inner, request.Filter))
+                    : CatalogAnswerPolicy.Upcoming(page.Entries, today, false, scope, request.Filter);
                 break;
             case CatalogAnswerOperation.NextRelease:
-                selection = CatalogAnswerPolicy.Upcoming(page.Entries, today, true, scope, request.Filter);
+                selection = byAuthor
+                    ? CatalogAnswerPolicy.WithinAuthorScope(page.Entries, subject, scope, (entries, inner) => CatalogAnswerPolicy.Upcoming(entries, today, true, inner, request.Filter))
+                    : CatalogAnswerPolicy.Upcoming(page.Entries, today, true, scope, request.Filter);
                 break;
             case CatalogAnswerOperation.PublicationForTitle:
                 selection = CatalogAnswerPolicy.PublicationForTitle(page.Entries, subject.Label, today, scope);
@@ -303,6 +364,8 @@ public sealed class CatalogAnswerService(
             else
             {
                 token = kept.ContinuationToken;
+                // What was retained for follow-ups is smaller than what this answer was evaluated on: said, and no continuation offered.
+                if (kept.Truncated && !page.Truncated) reasons.Add(CatalogAnswerCodes.ContextWindowCut);
                 context = ContextFor(run, subject);
                 if (context is null) reasons.Add(CatalogAnswerCodes.ContextNotRetained);
             }
@@ -322,7 +385,7 @@ public sealed class CatalogAnswerService(
         if (!EnsureRoot(run)) return null;
         var window = new CatalogRetainedWindow(
             run.Request.Operation, subject, subject?.Order ?? run.Request.Order, page.Entries, page.Series, choices ?? [],
-            page.Exhausted, page.More, page.Truncated, page.SourceGaps, page.Sources, page.ScopeCode, page.ProviderId, page.Token, run.Now);
+            page.Exhausted, page.More, page.Truncated, page.SourceGaps, page.Sources, page.ScopeCode, page.ProviderId, page.Token, run.Now, page.ReadKind);
         return contexts.Retain(run.Caller, run.Root!.RootId, window, run.Now);
     }
 
@@ -346,6 +409,7 @@ public sealed class CatalogAnswerService(
     private async Task<Page> LoadSavedSeriesAsync(Run run, Guid seriesId, CatalogSubjectRef subject, CancellationToken ct)
     {
         var rows = await saved.GetSeriesEvidenceAsync(seriesId, 0, options.SavedPageSize + 1, ct);
+        ct.ThrowIfCancellationRequested();
         var more = rows.Count > options.SavedPageSize;
         var entries = rows.Take(options.SavedPageSize)
             .Select(row => CatalogAnswerEntries.FromSaved(row.Work, CatalogAnswerEntries.SavedPositions(row), subject.Label))
@@ -353,17 +417,18 @@ public sealed class CatalogAnswerService(
         var report = new CatalogSourceReport("saved-catalog", CatalogSourceState.SavedCatalog, null, more ? DiscoveryCompletion.ItemTruncated : DiscoveryCompletion.ExhaustedInCheckedScope);
         run.Reports.Add(report);
         // The saved catalog is only what this library already knows, so it is never an exhaustive series list, and a cut page says so.
-        return new Page(entries, [], !more, false, more, null, [report], "saved-series-members", null, false);
+        return new Page(entries, [], !more, false, more, null, [report], "saved-series-members", CatalogReadKind.SeriesMembers, null, false);
     }
 
     private async Task<Page> LoadSavedAuthorAsync(Run run, Guid authorId, CancellationToken ct)
     {
         var rows = await saved.GetAuthorEvidenceAsync(authorId, 0, options.SavedPageSize + 1, ct);
+        ct.ThrowIfCancellationRequested();
         var more = rows.Count > options.SavedPageSize;
         var entries = rows.Take(options.SavedPageSize).Select(row => CatalogAnswerEntries.FromSaved(row, [], null)).ToArray();
         var report = new CatalogSourceReport("saved-catalog", CatalogSourceState.SavedCatalog, null, more ? DiscoveryCompletion.ItemTruncated : DiscoveryCompletion.ExhaustedInCheckedScope);
         run.Reports.Add(report);
-        return new Page(entries, [], !more, false, more, null, [report], "saved-author-works", null, false);
+        return new Page(entries, [], !more, false, more, null, [report], "saved-author-works", CatalogReadKind.AuthorWorks, null, false);
     }
 
     // ================================================================================================ remote discovery
@@ -396,7 +461,7 @@ public sealed class CatalogAnswerService(
         run.ProviderReads++;
         var result = await prepared.Discovery!.GetSeriesMembersAsync(new SeriesRef(subject.Label, native), cursor, operation, ct);
         var entries = result.Items.Select(member => CatalogAnswerEntries.FromMember(member, subject.Label)).ToArray();
-        return FromDiscovery(run, result, native.ProviderId, operation, "series-members-page", entries, []);
+        return FromDiscovery(run, result, native.ProviderId, operation, "series-members-page", CatalogReadKind.SeriesMembers, entries, [], ct);
     }
 
     private async Task<Page> LoadAuthorAsync(Run run, CatalogSubjectRef subject, string? token, CancellationToken ct)
@@ -433,20 +498,23 @@ public sealed class CatalogAnswerService(
             var series = seriesResult.Items.Select(item => new CatalogAnswerSeries(
                 item.Series.Label, item.Series.Id, null, item.Relationship, item.Series.IsCompleted, item.Series.PrimaryBooksCount,
                 item.Series.Canonical is { State: not CanonicalLinkState.NotStated } link ? link.State.ToString() : null)).ToArray();
-            return FromDiscovery(run, seriesResult, native.ProviderId, operation, "author-series-page", [], series);
+            return FromDiscovery(run, seriesResult, native.ProviderId, operation, "author-series-page", CatalogReadKind.AuthorSeries, [], series, ct);
         }
 
         var worksResult = await prepared.Discovery!.GetAuthorWorksAsync(author, cursor, operation, ct);
         var entries = worksResult.Items.Select(CatalogAnswerEntries.FromAuthorWork).ToArray();
-        return FromDiscovery(run, worksResult, native.ProviderId, operation, "author-works-page", entries, []);
+        return FromDiscovery(run, worksResult, native.ProviderId, operation, "author-works-page", CatalogReadKind.AuthorWorks, entries, [], ct);
     }
 
     private static Page FromDiscovery<T>(
-        Run run, DiscoveryResult<T> result, string providerId, DiscoveryOperationBudget operation, string scopeCode,
-        CatalogAnswerEntry[] entries, CatalogAnswerSeries[] series)
+        Run run, DiscoveryResult<T> result, string providerId, DiscoveryOperationBudget operation, string scopeCode, CatalogReadKind readKind,
+        CatalogAnswerEntry[] entries, CatalogAnswerSeries[] series, CancellationToken ct)
     {
+        // The read has returned, so its physical use is recorded whatever happens next. Then the deadline is checked: a read that
+        // ignored cancellation and finished late is not turned into a source report, a continuation or a retained window.
         run.Usages.Add(result.Usage);
         run.LastProviderId = providerId;
+        ct.ThrowIfCancellationRequested();
         var (state, failure) = result.Outcome switch
         {
             DiscoveryOutcome.Ok or DiscoveryOutcome.Empty or DiscoveryOutcome.Ambiguous or DiscoveryOutcome.NoUsableItems => (CatalogSourceState.Checked, (CatalogAnswerOutcome?)null),
@@ -468,7 +536,7 @@ public sealed class CatalogAnswerService(
         // A failure that still returned items (timeout/throttle/partial) is a qualified partial, never an empty answer.
         if (failure is { } outcome && items == 0)
         {
-            return new Page([], [], false, false, false, null, [report], scopeCode, providerId, true, new Failure(outcome, notes.Count == 0 ? [CatalogAnswerCodes.NoEntries] : notes));
+            return new Page([], [], false, false, false, null, [report], scopeCode, readKind, providerId, true, new Failure(outcome, notes.Count == 0 ? [CatalogAnswerCodes.NoEntries] : notes));
         }
 
         string? issued = null;
@@ -484,7 +552,7 @@ public sealed class CatalogAnswerService(
             or DiscoveryCompletion.ContextCapacity or DiscoveryCompletion.ProviderFailedPartial;
         return new Page(
             entries, series, result.Completion == DiscoveryCompletion.ExhaustedInCheckedScope && !gap, more, truncated || gap, issued,
-            [report], scopeCode, providerId, gap, null, notes);
+            [report], scopeCode, readKind, providerId, gap, null, notes);
     }
 
     // =============================================================================================== seed search / choices
@@ -545,7 +613,8 @@ public sealed class CatalogAnswerService(
         }
 
         // A name never selects: even one choice is offered for the user to confirm. Nothing dependent was fetched.
-        var page = new Page([], [], false, seed.More, truncated, null, [.. run.Reports], scopeCode, seed.ProviderId, gaps);
+        var page = new Page([], [], false, seed.More, truncated, null, [.. run.Reports], scopeCode, CatalogReadKind.Choices, seed.ProviderId, gaps);
+        ct.ThrowIfCancellationRequested();
         var kept = RetainWindow(run, null, page, choices);
         var qualifiers = new List<string>();
         if (truncated) qualifiers.Add(CatalogAnswerCodes.ListNotExhaustive);
@@ -630,6 +699,7 @@ public sealed class CatalogAnswerService(
                 run.ProviderReads++;
                 var result = await discovery.FindSeriesClaimsForBookAsync(source, operation, ct);
                 run.Usages.Add(result.Usage);
+                ct.ThrowIfCancellationRequested();
                 var failed = result.Outcome is not (DiscoveryOutcome.Ok or DiscoveryOutcome.Empty or DiscoveryOutcome.Partial or DiscoveryOutcome.NoUsableItems);
                 run.Reports.Add(new CatalogSourceReport(providerId, failed ? StateOf(result.Outcome) : CatalogSourceState.Checked, FirstNote(result.Notes), result.Completion));
                 if (failed && result.Items.Count == 0) return new ChoiceSet([], true, new Failure(OutcomeOf(result.Outcome), result.Notes));
@@ -703,6 +773,7 @@ public sealed class CatalogAnswerService(
         run.LastProviderId = chosen.Id;
         var read = await budgeted.SearchBudgetedAsync(new BookSearchQuery(text), operation, ct);
         run.Usages.Add(read.Usage);
+        ct.ThrowIfCancellationRequested();
         var (state, failure) = read.Outcome switch
         {
             DiscoveryOutcome.Ok or DiscoveryOutcome.Empty => (CatalogSourceState.Checked, (CatalogAnswerOutcome?)null),
@@ -816,7 +887,7 @@ public sealed class CatalogAnswerService(
     };
 
     private static Page FailedPage(Prepared prepared) =>
-        new([], [], false, false, false, null, [], "none", prepared.ProviderId, true, prepared.Failure);
+        new([], [], false, false, false, null, [], "none", CatalogReadKind.Choices, prepared.ProviderId, true, prepared.Failure);
 
     // ===================================================================================================== composition
 
@@ -829,6 +900,7 @@ public sealed class CatalogAnswerService(
         string? Token,
         IReadOnlyList<CatalogSourceReport> Sources,
         string ScopeCode,
+        CatalogReadKind ReadKind,
         string? ProviderId,
         bool SourceGaps,
         Failure? Failure = null,
@@ -892,7 +964,7 @@ public sealed class CatalogAnswerService(
     {
         public CatalogAnswerCaller Caller { get; } = caller;
 
-        public CatalogAnswerRequest Request { get; } = request;
+        public CatalogAnswerRequest Request { get; set; } = request;
 
         public DateTimeOffset Now { get; set; } = now;
 

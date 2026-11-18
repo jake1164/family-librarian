@@ -29,7 +29,7 @@ public sealed class CatalogAnswerContextTests
             ProviderId = "fiction",
             Positions = [new Claim(index.ToString(System.Globalization.CultureInfo.InvariantCulture), index, null)]
         }).ToArray(),
-        [], [], exhausted, MoreAvailable: token is not null, Truncated: false, SourceGaps: false, [], "series-members-page", "fiction", token, Start);
+        [], [], exhausted, MoreAvailable: token is not null, Truncated: false, SourceGaps: false, [], "series-members-page", "fiction", token, Start, CatalogReadKind.SeriesMembers);
 
     // ================================================================================== the compact reference
 
@@ -223,7 +223,7 @@ public sealed class CatalogAnswerContextTests
         Assert.IsFalse(whole.Truncated);
         Assert.AreEqual("t", whole.ContinuationToken);
 
-        var capped = new CatalogAnswerContextStore(new CatalogAnswerContextLimits { MaxEntriesPerRoot = 3 });
+        var capped = new CatalogAnswerContextStore(new CatalogAnswerContextLimits { MaxRecordsPerRoot = 3 });
         var cappedRoot = capped.CreateRoot(Reader, Start)!;
         var cut = capped.Retain(Reader, cappedRoot.RootId, Window(5, token: "t"), Start)!;
         Assert.AreEqual(3, cut.Entries.Count);
@@ -247,7 +247,8 @@ public sealed class CatalogAnswerContextTests
         var ascii = CatalogAnswerContextStore.Measure(Window(1, title: "aaaa"));
         var accented = CatalogAnswerContextStore.Measure(Window(1, title: "éééé"));
 
-        Assert.AreEqual(ascii + 4, accented, "Four two-byte characters cost four more bytes than four one-byte ones.");
+        // Canonical JSON writes each é as the six-byte escape 00E9 (the default encoder escapes non-ASCII), so four of them cost 20 more bytes than four ASCII letters.
+        Assert.AreEqual(ascii + 20, accented);
     }
 
     [TestMethod]
@@ -266,6 +267,227 @@ public sealed class CatalogAnswerContextTests
         Assert.IsNull(store.TryGetChoice(Reader, root.RootId, 2, Start), "A forged or stale number selects nothing.");
         Assert.IsNull(store.TryGetChoice(Reader, root.RootId, -1, Start));
         Assert.IsNull(store.TryGetChoice(Reader, Guid.NewGuid(), 0, Start));
+    }
+
+    // ================================================== review A-R3: canonical size and record bounds
+
+    private static readonly System.Text.Json.JsonSerializerOptions OracleOptions = new(System.Text.Json.JsonSerializerDefaults.Web);
+
+    private static readonly string[] EscapingTitles = ["a \"q\" b", "é\\ü", "\U0001F600\U0001F600", "plain", "<&>"];
+
+    private static int OracleBytes(CatalogRetainedWindow window) =>
+        System.Text.Json.JsonSerializer.SerializeToUtf8Bytes(window, OracleOptions).Length;
+
+    private static CatalogAnswerEntry Quoted(string title) => new()
+    {
+        Source = new SourceRef("fiction", "w1", ExternalReferenceEntityType.Work),
+        ProviderId = "fiction",
+        Title = title,
+        Credits = [new CatalogEntryCredit(0, "A. Writer", "illustrator", new SourceRef("fiction", "a1", ExternalReferenceEntityType.Author), null)],
+        Positions = [new Claim("1", 1m, SeriesOrderingKind.Reading, new SourceRef("fiction", "s1", ExternalReferenceEntityType.Series))],
+        Publication = PublicationEvidence.Dated(new DateOnly(2001, 5, 1), DatePrecision.Month, DateBasis.Original, PublicationStatus.Published),
+        ObservedAtUtc = Start
+    };
+
+    [TestMethod]
+    public void TheMeasureIsTheCanonicalSerializedUtf8SizeIncludingEscapingAndEveryEnvelope()
+    {
+        var titles = new[] { "plain", "with \"quotes\" and \\ backslash", "é ü ñ", "emoji \U0001F600 pair", "<script>&'" };
+        foreach (var title in titles)
+        {
+            var window = Window(0) with
+            {
+                Entries = [Quoted(title)],
+                Choices = [new CatalogAnswerChoice(Series("s9", title), title, 3, "fiction", "note")],
+                Series = [new CatalogAnswerSeries(title, new SourceRef("fiction", "s2", ExternalReferenceEntityType.Series), null, RelationshipEvidence.Derived("author-works-first-page"), true, 4, "Verified")],
+                Sources = [new CatalogSourceReport("fiction", CatalogSourceState.Checked, "ok", DiscoveryCompletion.ExhaustedInCheckedScope)],
+                ContinuationToken = "token-" + title,
+                SourceGaps = true
+            };
+
+            Assert.AreEqual(OracleBytes(window), CatalogAnswerContextStore.Measure(window), title);
+        }
+    }
+
+    [TestMethod]
+    public void AQuotedTitleWhoseCharactersFitButWhoseSerializedBytesDoNotIsCutNotAccepted()
+    {
+        var huge = new string('"', 150_000);
+        var window = Window(0) with { Entries = [Quoted(huge)] };
+        Assert.IsTrue(OracleBytes(window) > CatalogAnswerContextLimits.Default.MaxBytesPerRoot, "Fixture: it serializes far past the cap.");
+        var store = new CatalogAnswerContextStore();
+        var root = store.CreateRoot(Reader, Start)!;
+
+        var kept = store.Retain(Reader, root.RootId, window, Start)!;
+
+        Assert.AreEqual(0, kept.Entries.Count);
+        Assert.IsTrue(kept.Truncated);
+        Assert.IsTrue(OracleBytes(kept) <= CatalogAnswerContextLimits.Default.MaxBytesPerRoot);
+    }
+
+    [TestMethod]
+    public void TheCutIsExactWithEscapedAndUnicodeTextAtEveryBoundary()
+    {
+        var entries = EscapingTitles.Select(Quoted).ToArray();
+        CatalogRetainedWindow Shape(int count) => Window(0) with { Entries = entries.Take(count).ToArray(), Exhausted = false, Truncated = true };
+        for (var count = 1; count <= entries.Length; count++)
+        {
+            var exact = OracleBytes(Shape(count));
+            var fits = new CatalogAnswerContextStore(new CatalogAnswerContextLimits { MaxBytesPerRoot = exact });
+            var fitsRoot = fits.CreateRoot(Reader, Start)!;
+            Assert.AreEqual(count, fits.Retain(Reader, fitsRoot.RootId, Window(0) with { Entries = entries, Exhausted = false, Truncated = true }, Start)!.Entries.Count, "At the exact size: " + count);
+
+            var oneLess = new CatalogAnswerContextStore(new CatalogAnswerContextLimits { MaxBytesPerRoot = exact - 1 });
+            var lessRoot = oneLess.CreateRoot(Reader, Start)!;
+            Assert.AreEqual(count - 1, oneLess.Retain(Reader, lessRoot.RootId, Window(0) with { Entries = entries, Exhausted = false, Truncated = true }, Start)!.Entries.Count, "One byte under: " + count);
+        }
+    }
+
+    [TestMethod]
+    public void AnOversizedHeaderIsRefusedAndNeverReplacesTheUsefulWindowAlreadyRetained()
+    {
+        var small = Window(2);
+        var store = new CatalogAnswerContextStore(new CatalogAnswerContextLimits { MaxBytesPerRoot = OracleBytes(small) + 20 });
+        var root = store.CreateRoot(Reader, Start)!;
+        Assert.IsNotNull(store.Retain(Reader, root.RootId, small, Start));
+
+        var headerTooBig = Window(0) with { ScopeCode = new string('x', 5000), Subject = Series("s1", new string('L', CatalogSubjectRef.MaxLabelLength)) };
+        Assert.IsNull(store.Retain(Reader, root.RootId, headerTooBig, Start));
+
+        Assert.AreEqual(2, store.TryGetWindow(Reader, root.RootId, Start)!.Entries.Count, "The earlier, useful window survives a refused one.");
+        Assert.AreEqual(1, store.RootCount);
+    }
+
+    [TestMethod]
+    public void ChoicesSeriesAndEntriesAreAllUnderTheDefaultRecordBoundWithTruthfulFlags()
+    {
+        var limit = CatalogAnswerContextLimits.Default.MaxRecordsPerRoot;
+        CatalogAnswerChoice Choice(int index) => new(Series("s" + index, "S" + index), null, null, "fiction", "n");
+        CatalogAnswerSeries OneSeries(int index) => new("S" + index, new SourceRef("fiction", "s" + index, ExternalReferenceEntityType.Series), null, RelationshipEvidence.Native, null, null, null);
+        var store = new CatalogAnswerContextStore();
+        var root = store.CreateRoot(Reader, Start)!;
+
+        var choices = store.Retain(Reader, root.RootId, Window(0) with { Choices = Enumerable.Range(0, limit + 1).Select(Choice).ToArray() }, Start)!;
+        Assert.AreEqual(limit, choices.Choices.Count);
+        Assert.IsTrue(choices.Truncated);
+        Assert.IsFalse(choices.Exhausted);
+
+        var series = store.Retain(Reader, root.RootId, Window(0, token: "t") with { Series = Enumerable.Range(0, limit + 1).Select(OneSeries).ToArray() }, Start)!;
+        Assert.AreEqual(limit, series.Series.Count);
+        Assert.IsTrue(series.Truncated);
+        Assert.IsNull(series.ContinuationToken, "A cut author-series accumulation offers no continuation.");
+
+        var mixed = store.Retain(Reader, root.RootId, Window(150) with { Series = Enumerable.Range(0, 100).Select(OneSeries).ToArray(), Choices = Enumerable.Range(0, 50).Select(Choice).ToArray() }, Start)!;
+        Assert.AreEqual(limit, mixed.Entries.Count + mixed.Series.Count + mixed.Choices.Count, "One bound across every record category.");
+        Assert.AreEqual(150, mixed.Entries.Count, "Books first, then series, then choices.");
+        Assert.IsTrue(mixed.Truncated);
+
+        var exactly = store.Retain(Reader, root.RootId, Window(0) with { Choices = Enumerable.Range(0, limit).Select(Choice).ToArray() }, Start)!;
+        Assert.AreEqual(limit, exactly.Choices.Count);
+        Assert.IsFalse(exactly.Truncated, "At the bound nothing was cut, so nothing is claimed cut.");
+    }
+
+    // ============================================================ review A-R4: private immutable snapshots
+
+    private static void AssertPrivateSnapshot<T>(IReadOnlyList<T> list, string what)
+    {
+        Assert.IsNull(list as T[], what + " must not be a caller-reachable array.");
+        Assert.IsNull(list as List<T>, what + " must not be a caller-owned list.");
+        if (list is IList<T> writable) Assert.IsTrue(writable.IsReadOnly, what + " must reject writes.");
+    }
+
+    [TestMethod]
+    public void AnEntryKeepsItsOwnCopyOfEveryNestedListWhateverTheCallerDoesAfterwards()
+    {
+        var credits = new List<CatalogEntryCredit> { new(0, "A. Writer", null, null, null) };
+        var positions = new List<Claim> { new("1", 1m, null) };
+        var entry = new CatalogAnswerEntry { Title = "T", Credits = credits, Positions = positions };
+        var copy = entry with { Title = "T2" };
+        var replaced = entry with { Credits = credits };
+
+        credits.Clear();
+        positions.Clear();
+
+        Assert.AreEqual(1, entry.Credits.Count);
+        Assert.AreEqual(1, entry.Positions.Count);
+        Assert.AreEqual(1, copy.Credits.Count);
+        Assert.AreEqual(1, replaced.Credits.Count, "A with-expression snapshots the list it was given, at that moment.");
+        AssertPrivateSnapshot(entry.Credits, "Credits");
+        AssertPrivateSnapshot(entry.Positions, "Positions");
+    }
+
+    [TestMethod]
+    public void AnAnswerAndItsNestedStructuresAreSnapshotsAtConstructionAndOnWith()
+    {
+        var entries = new List<CatalogAnswerEntry> { Quoted("A") };
+        var qualifiers = new List<string> { "q" };
+        var groups = new List<CatalogAnswerGroup> { new("g", [Quoted("G")]) };
+        var sources = new List<CatalogSourceReport> { new("fiction", CatalogSourceState.Checked, null, null) };
+        var answer = new CatalogAnswer
+        {
+            Operation = CatalogAnswerOperation.LatestPublished,
+            Outcome = CatalogAnswerOutcome.Answered,
+            Entries = entries,
+            Qualifiers = qualifiers,
+            Reasons = qualifiers,
+            Groups = groups,
+            Choices = [],
+            Series = [],
+            AvailableOrders = [SeriesOrderingKind.Reading],
+            Coverage = new CatalogAnswerCoverage(sources, "scope", true, false, false, Start)
+        };
+        var withGroups = answer with { Groups = groups };
+
+        entries.Clear();
+        qualifiers.Clear();
+        groups.Clear();
+        sources.Clear();
+
+        Assert.AreEqual(1, answer.Entries.Count);
+        Assert.AreEqual(1, answer.Qualifiers.Count);
+        Assert.AreEqual(1, answer.Reasons.Count);
+        Assert.AreEqual(1, answer.Groups.Count);
+        Assert.AreEqual(1, answer.Coverage.Sources.Count);
+        Assert.AreEqual(1, answer.Groups[0].Entries.Count);
+        AssertPrivateSnapshot(answer.Entries, "Entries");
+        AssertPrivateSnapshot(answer.Qualifiers, "Qualifiers");
+        AssertPrivateSnapshot(answer.Groups, "Groups");
+        AssertPrivateSnapshot(answer.Groups[0].Entries, "Group entries");
+        AssertPrivateSnapshot(answer.Coverage.Sources, "Sources");
+        AssertPrivateSnapshot(answer.AvailableOrders, "Orders");
+        AssertPrivateSnapshot(answer.Series, "Series");
+        AssertPrivateSnapshot(answer.Choices, "Choices");
+        Assert.AreEqual(1, withGroups.Groups.Count, "The with-expression snapshotted the list at the moment it was given.");
+    }
+
+    [TestMethod]
+    public void ARetainedWindowCannotBeChangedThroughItsInputOrItsReturnedCollections()
+    {
+        var store = new CatalogAnswerContextStore();
+        var root = store.CreateRoot(Reader, Start)!;
+        var input = new List<CatalogAnswerEntry> { Quoted("Alder"), Quoted("Birch") };
+        var choices = new List<CatalogAnswerChoice> { new(Series(), null, null, "fiction", "n") };
+        var supplied = Window(0) with { Entries = input, Choices = choices };
+        store.Retain(Reader, root.RootId, supplied, Start);
+        var before = CatalogAnswerContextStore.Measure(store.TryGetWindow(Reader, root.RootId, Start)!);
+
+        input.Clear();
+        choices.Clear();
+        var retained = store.TryGetWindow(Reader, root.RootId, Start)!;
+        if (retained.Entries is IList<CatalogAnswerEntry> writable)
+        {
+            Assert.ThrowsExactly<NotSupportedException>(() => writable[0] = Quoted("MUTATED"));
+        }
+
+        AssertPrivateSnapshot(retained.Entries, "Retained entries");
+        AssertPrivateSnapshot(retained.Choices, "Retained choices");
+        AssertPrivateSnapshot(retained.Sources, "Retained sources");
+        AssertPrivateSnapshot(retained.Series, "Retained series");
+        var again = store.TryGetWindow(Reader, root.RootId, Start)!;
+        Assert.AreEqual("Alder", again.Entries[0].Title);
+        Assert.AreEqual(2, again.Entries.Count);
+        Assert.AreEqual(1, again.Choices.Count);
+        Assert.AreEqual(before, CatalogAnswerContextStore.Measure(again), "The byte invariant survives every attempted mutation.");
     }
 
     // ======================================================================================= entry mapping

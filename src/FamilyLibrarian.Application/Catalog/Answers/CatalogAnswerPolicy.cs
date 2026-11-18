@@ -28,7 +28,18 @@ public sealed record CatalogSelection(
     IReadOnlyList<string> Reasons,
     IReadOnlyList<SeriesOrderingKind> AvailableOrders)
 {
-    public static readonly IReadOnlyList<SeriesOrderingKind> NoOrders = [];
+    public static readonly IReadOnlyList<SeriesOrderingKind> NoOrders = Array.AsReadOnly<SeriesOrderingKind>([]);
+
+    // Private snapshots (see CatalogAnswerGroup): a selection is a value, not a window onto lists its builder still holds.
+    public IReadOnlyList<CatalogAnswerEntry> Entries { get; init => field = DiscoverySnapshots.Of(value); } = DiscoverySnapshots.Of(Entries);
+
+    public IReadOnlyList<CatalogAnswerGroup> Groups { get; init => field = DiscoverySnapshots.Of(value); } = DiscoverySnapshots.Of(Groups);
+
+    public IReadOnlyList<string> Qualifiers { get; init => field = DiscoverySnapshots.Of(value); } = DiscoverySnapshots.Of(Qualifiers);
+
+    public IReadOnlyList<string> Reasons { get; init => field = DiscoverySnapshots.Of(value); } = DiscoverySnapshots.Of(Reasons);
+
+    public IReadOnlyList<SeriesOrderingKind> AvailableOrders { get; init => field = DiscoverySnapshots.Of(value); } = DiscoverySnapshots.Of(AvailableOrders);
 }
 
 /// <summary>
@@ -94,11 +105,19 @@ public static class CatalogAnswerPolicy
         var undated = new List<CatalogAnswerEntry>();
         var future = new List<CatalogAnswerEntry>();
         var includesToday = new List<CatalogAnswerEntry>();
+        var conflicts = new List<CatalogAnswerEntry>();
         foreach (var entry in kept)
         {
             if (IsNotOriginalClass(entry.Class))
             {
                 nonOriginalClass.Add(entry);
+                continue;
+            }
+
+            if (IsStatusDateConflict(entry, today))
+            {
+                // The date and the source's own status contradict each other: neither is used to call it published or upcoming.
+                conflicts.Add(entry);
                 continue;
             }
 
@@ -128,6 +147,8 @@ public static class CatalogAnswerPolicy
         state.Group("future-dated", future);
         state.Group("undated", undated);
         state.Group("interval-includes-today", includesToday);
+        state.Group("status-date-conflict", conflicts);
+        if (conflicts.Count > 0) state.Qualify(CatalogAnswerCodes.StatusDateConflict);
         if (undated.Count > 0) state.Qualify(CatalogAnswerCodes.UndatedEntriesPresent);
         if (includesToday.Count > 0) state.Qualify(CatalogAnswerCodes.IncludesTodayInterval);
         if (nonOriginalClass.Count > 0) state.Reason(CatalogAnswerCodes.ClassFilterApplied);
@@ -322,9 +343,18 @@ public static class CatalogAnswerPolicy
         var futureEditions = new List<CatalogAnswerEntry>();
         var possibly = new List<CatalogAnswerEntry>();
         var announcedUndated = new List<CatalogAnswerEntry>();
+        var conflicts = new List<CatalogAnswerEntry>();
         var notStated = 0;
         foreach (var entry in kept)
         {
+            if (IsStatusDateConflict(entry, today))
+            {
+                // A date in the past on a record the source still calls forthcoming (or the reverse) is a contradiction, never
+                // listed as upcoming or as published.
+                conflicts.Add(entry);
+                continue;
+            }
+
             switch (TemporalOf(entry.Publication, today))
             {
                 case CatalogDateTemporal.Future when IsWorkLevelDate(entry):
@@ -349,6 +379,8 @@ public static class CatalogAnswerPolicy
         state.Group("future-editions", futureEditions);
         state.Group("possibly-upcoming", possibly);
         state.Group("announced-undated", announcedUndated);
+        state.Group("status-date-conflict", conflicts);
+        if (conflicts.Count > 0) state.Qualify(CatalogAnswerCodes.StatusDateConflict);
         if (futureEditions.Count > 0) state.Qualify(CatalogAnswerCodes.EditionNotOriginal);
         if (possibly.Count > 0) state.Qualify(CatalogAnswerCodes.IncludesTodayInterval);
         if (notStated > 0) state.Qualify(CatalogAnswerCodes.UndatedEntriesPresent);
@@ -386,7 +418,6 @@ public static class CatalogAnswerPolicy
 
         // "Scheduled" is never inferred from a date: only a source's own forthcoming statement counts as that evidence.
         if (selected.Any(entry => entry.Publication.SourceStatus == PublicationStatus.Unknown)) state.Qualify(CatalogAnswerCodes.StatusUnverified);
-        if (selected.Any(entry => entry.Publication.SourceStatus == PublicationStatus.Published)) state.Qualify(CatalogAnswerCodes.StatusDateConflict);
         if (selected.Any(entry => entry.LegacyPrecision)) state.Qualify(CatalogAnswerCodes.LegacyPrecision);
         if (!nextOnly && !scope.Exhausted) state.Qualify(CatalogAnswerCodes.ListNotExhaustive);
         state.Coverage(scope);
@@ -432,10 +463,7 @@ public static class CatalogAnswerPolicy
         if (dated.Any(entry => entry.Publication.Basis == DateBasis.EditionDerived)) state.Qualify(CatalogAnswerCodes.EditionNotOriginal);
         if (matches.Any(entry => entry.Publication.State != PublicationDateState.Dated)) state.Qualify(CatalogAnswerCodes.UndatedEntriesPresent);
         if (dated.Any(entry => TemporalOf(entry.Publication, today) == CatalogDateTemporal.IncludesToday)) state.Qualify(CatalogAnswerCodes.IncludesTodayInterval);
-        if (dated.Any(entry => entry.Publication.SourceStatus == PublicationStatus.Published && TemporalOf(entry.Publication, today) == CatalogDateTemporal.Future))
-        {
-            state.Qualify(CatalogAnswerCodes.StatusDateConflict);
-        }
+        if (dated.Any(entry => IsStatusDateConflict(entry, today))) state.Qualify(CatalogAnswerCodes.StatusDateConflict);
 
         if (dated.Any(entry => entry.LegacyPrecision)) state.Qualify(CatalogAnswerCodes.LegacyPrecision);
         if (scope.SourceGaps) state.Qualify(CatalogAnswerCodes.SourceGaps);
@@ -451,31 +479,9 @@ public static class CatalogAnswerPolicy
         ArgumentNullException.ThrowIfNull(author);
         ArgumentNullException.ThrowIfNull(scope);
         var state = new Builder();
-        var credited = new List<CatalogAnswerEntry>();
-        var otherRoles = new List<CatalogAnswerEntry>();
-        var unverified = new List<CatalogAnswerEntry>();
-        foreach (var entry in entries)
-        {
-            var mine = entry.Credits.Where(credit => IsSameAuthor(credit, author)).ToArray();
-            if (mine.Any(credit => credit.IsAuthorRole))
-            {
-                credited.Add(entry);
-            }
-            else if (mine.Length > 0)
-            {
-                // An editor, translator or illustrator: kept with the role stated, never counted as the author.
-                otherRoles.Add(entry);
-            }
-            else
-            {
-                // The source returned this book for the author but listed no credit that identifies them: unverified, not credited.
-                unverified.Add(entry);
-            }
-        }
-
-        state.Group("other-roles", otherRoles);
-        state.Group("credit-unverified", unverified);
-        if (unverified.Count > 0) state.Qualify(CatalogAnswerCodes.CreditUnverified);
+        var (credited, otherGroups) = SplitByAuthorCredit(entries, author);
+        foreach (var group in otherGroups) state.Group(group.Code, group.Entries);
+        if (otherGroups.Any(group => group.Code == "credit-unverified")) state.Qualify(CatalogAnswerCodes.CreditUnverified);
 
         var selected = credited
             .OrderBy(entry => CatalogIdentityPolicy.TitleKey(entry.Title), StringComparer.Ordinal)
@@ -494,6 +500,27 @@ public static class CatalogAnswerPolicy
         state.Qualify(CatalogAnswerCodes.ListNotExhaustive);
         state.Coverage(scope);
         return state.Finish(CatalogAnswerOutcome.Qualified, selected);
+    }
+
+    /// <summary>
+    /// Runs a publication rule (latest, upcoming, next release) over only the works the selected author is credited on as author.
+    /// Editor/translator/illustrator credits and credits that identify no one are listed apart, and an author's known works are never
+    /// a complete bibliography, so the inner rule runs as an incompletely read scope and the result can never be a plain answer.
+    /// </summary>
+    public static CatalogSelection WithinAuthorScope(
+        IReadOnlyList<CatalogAnswerEntry> entries,
+        CatalogSubjectRef author,
+        CatalogPolicyScope scope,
+        Func<IReadOnlyList<CatalogAnswerEntry>, CatalogPolicyScope, CatalogSelection> select)
+    {
+        ArgumentNullException.ThrowIfNull(select);
+        var (credited, groups) = SplitByAuthorCredit(entries, author);
+        var selection = select(credited, scope with { Exhausted = false });
+        var qualifiers = selection.Qualifiers.ToList();
+        if (!qualifiers.Contains(CatalogAnswerCodes.ListNotExhaustive)) qualifiers.Add(CatalogAnswerCodes.ListNotExhaustive);
+        if (groups.Any(group => group.Code == "credit-unverified") && !qualifiers.Contains(CatalogAnswerCodes.CreditUnverified)) qualifiers.Add(CatalogAnswerCodes.CreditUnverified);
+        var outcome = selection.Outcome == CatalogAnswerOutcome.Answered ? CatalogAnswerOutcome.Qualified : selection.Outcome;
+        return new CatalogSelection(outcome, selection.Entries, [.. selection.Groups, .. groups], qualifiers, selection.Reasons, selection.AvailableOrders);
     }
 
     public static CatalogSelection AuthorSeries(IReadOnlyList<CatalogAnswerSeries> series, CatalogPolicyScope scope, out IReadOnlyList<CatalogAnswerSeries> ordered)
@@ -521,6 +548,50 @@ public static class CatalogAnswerPolicy
     }
 
     // ================================================================================================ shared helpers
+
+    /// <summary>
+    /// The source's own publication status contradicts the date it gave: a date wholly in the past on a record it still calls
+    /// forthcoming, or a date wholly in the future on one it calls published. Neither is overridden by the clock or by the status;
+    /// the record is kept visible and the answer says it cannot be plain. An unknown status contradicts nothing.
+    /// </summary>
+    public static bool IsStatusDateConflict(CatalogAnswerEntry entry, DateOnly today)
+    {
+        ArgumentNullException.ThrowIfNull(entry);
+        if (entry.Publication.State != PublicationDateState.Dated) return false;
+        return (TemporalOf(entry.Publication, today), entry.Publication.SourceStatus) switch
+        {
+            (CatalogDateTemporal.Past, PublicationStatus.Forthcoming) => true,
+            (CatalogDateTemporal.Future, PublicationStatus.Published) => true,
+            _ => false
+        };
+    }
+
+    /// <summary>
+    /// Splits an author's works by the credit that matters: those the selected author is credited on as author, those where they hold
+    /// another stated role (editor, translator, illustrator), and those whose credits identify no one as them (unverified, never
+    /// assumed). A name is never a match; only the author's own saved id or native source reference is.
+    /// </summary>
+    public static (IReadOnlyList<CatalogAnswerEntry> Credited, IReadOnlyList<CatalogAnswerGroup> Groups) SplitByAuthorCredit(
+        IReadOnlyList<CatalogAnswerEntry> entries, CatalogSubjectRef author)
+    {
+        ArgumentNullException.ThrowIfNull(entries);
+        ArgumentNullException.ThrowIfNull(author);
+        var credited = new List<CatalogAnswerEntry>();
+        var otherRoles = new List<CatalogAnswerEntry>();
+        var unverified = new List<CatalogAnswerEntry>();
+        foreach (var entry in entries)
+        {
+            var mine = entry.Credits.Where(credit => IsSameAuthor(credit, author)).ToArray();
+            if (mine.Any(credit => credit.IsAuthorRole)) credited.Add(entry);
+            else if (mine.Length > 0) otherRoles.Add(entry);
+            else unverified.Add(entry);
+        }
+
+        var groups = new List<CatalogAnswerGroup>();
+        if (otherRoles.Count > 0) groups.Add(new CatalogAnswerGroup("other-roles", otherRoles));
+        if (unverified.Count > 0) groups.Add(new CatalogAnswerGroup("credit-unverified", unverified));
+        return (credited, groups);
+    }
 
     public static bool IsNotOriginalClass(CatalogWorkClass workClass) =>
         workClass is CatalogWorkClass.Collection or CatalogWorkClass.Abridgement or CatalogWorkClass.Adaptation

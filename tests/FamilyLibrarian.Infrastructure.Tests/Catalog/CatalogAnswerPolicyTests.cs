@@ -199,8 +199,11 @@ public sealed class CatalogAnswerPolicyTests
 
         var result = CatalogAnswerPolicy.Upcoming([entry], Today, nextOnly: false, Full);
 
+        // A contradicted record (future date, source says published) is no longer listed as upcoming: it is kept visible as a conflict.
+        Assert.AreEqual(CatalogAnswerOutcome.InsufficientEvidence, result.Outcome);
+        Assert.AreEqual(0, result.Entries.Count);
+        Assert.AreEqual("Odd", result.Groups.Single(group => group.Code == "status-date-conflict").Entries.Single().Title);
         Assert.IsTrue(result.Qualifiers.Contains(CatalogAnswerCodes.StatusDateConflict));
-        Assert.AreEqual(CatalogAnswerOutcome.Qualified, result.Outcome);
     }
 
     [TestMethod]
@@ -544,6 +547,78 @@ public sealed class CatalogAnswerPolicyTests
 
         Assert.AreEqual(CatalogAnswerOutcome.Qualified, result.Outcome);
         Assert.IsTrue(result.Qualifiers.Contains(CatalogAnswerCodes.ClassNotOriginal));
+    }
+
+    // ===================================================== review A-R1: contradictory source status and date
+
+    [TestMethod]
+    public void APastDateTheSourceStillCallsForthcomingIsNeverAPlainPublishedAnswer()
+    {
+        var contradicted = Entry("x", "Contradicted", new DateOnly(2020, 6, 1), status: PublicationStatus.Forthcoming);
+
+        var alone = CatalogAnswerPolicy.Latest([contradicted], Today, Full);
+        var withValid = CatalogAnswerPolicy.Latest([contradicted, Entry("b", "Birch", new DateOnly(2005, 3, 9), status: PublicationStatus.Published)], Today, Full);
+
+        Assert.AreEqual(CatalogAnswerOutcome.InsufficientEvidence, alone.Outcome);
+        Assert.AreEqual(0, alone.Entries.Count);
+        Assert.AreEqual("Contradicted", alone.Groups.Single(group => group.Code == "status-date-conflict").Entries.Single().Title);
+        Assert.IsTrue(alone.Qualifiers.Contains(CatalogAnswerCodes.StatusDateConflict));
+        // The contradicted record could be the newest; the answer keeps it visible and says it cannot be plain.
+        Assert.AreEqual("Birch", withValid.Entries.Single().Title);
+        Assert.AreEqual(CatalogAnswerOutcome.Qualified, withValid.Outcome);
+        Assert.IsTrue(withValid.Qualifiers.Contains(CatalogAnswerCodes.StatusDateConflict));
+    }
+
+    [TestMethod]
+    public void AFutureDateTheSourceCallsPublishedIsAlsoAConflictAndNotJustAFutureEntry()
+    {
+        var contradicted = Entry("x", "Contradicted", new DateOnly(2027, 6, 1), status: PublicationStatus.Published);
+
+        var latest = CatalogAnswerPolicy.Latest([Entry("a", "Alder", new DateOnly(2001, 5, 1)), contradicted], Today, Full);
+
+        Assert.AreEqual(CatalogAnswerOutcome.Qualified, latest.Outcome);
+        Assert.AreEqual("Alder", latest.Entries.Single().Title);
+        Assert.AreEqual("Contradicted", latest.Groups.Single(group => group.Code == "status-date-conflict").Entries.Single().Title);
+        Assert.IsFalse(latest.Groups.Any(group => group.Code == "future-dated"), "A contradicted record is a conflict, not an ordinary future entry.");
+    }
+
+    [TestMethod]
+    public void ValidPublishedAndAttributedUnknownStatusStayPlainAnswers()
+    {
+        var published = CatalogAnswerPolicy.Latest([Entry("a", "Alder", new DateOnly(2001, 5, 1), status: PublicationStatus.Published)], Today, Full);
+        var unknown = CatalogAnswerPolicy.Latest([Entry("a", "Alder", new DateOnly(2001, 5, 1), status: PublicationStatus.Unknown)], Today, Full);
+
+        Assert.AreEqual(CatalogAnswerOutcome.Answered, published.Outcome);
+        Assert.AreEqual(CatalogAnswerOutcome.Answered, unknown.Outcome);
+        Assert.AreEqual(0, unknown.Qualifiers.Count);
+    }
+
+    [TestMethod]
+    public void UpcomingNeverListsAPastDatedRecordTheSourceCallsForthcomingAsUpcoming()
+    {
+        var slipped = Entry("x", "Slipped", new DateOnly(2020, 6, 1), status: PublicationStatus.Forthcoming);
+        var real = Entry("w", "Work Soon", new DateOnly(2027, 5, 11), status: PublicationStatus.Forthcoming);
+
+        var result = CatalogAnswerPolicy.Upcoming([slipped, real], Today, nextOnly: false, Full);
+
+        Assert.AreEqual("Work Soon", result.Entries.Single().Title);
+        Assert.AreEqual("Slipped", result.Groups.Single(group => group.Code == "status-date-conflict").Entries.Single().Title);
+        Assert.AreEqual(CatalogAnswerOutcome.Qualified, result.Outcome);
+        Assert.IsTrue(result.Qualifiers.Contains(CatalogAnswerCodes.StatusDateConflict));
+    }
+
+    [TestMethod]
+    public void ANamedTitleFlagsStatusDateContradictionInBothDirections()
+    {
+        var pastForthcoming = CatalogAnswerPolicy.PublicationForTitle([Entry("1", "Blue Door", new DateOnly(2001, 1, 1), status: PublicationStatus.Forthcoming)], "Blue Door", Today, Full);
+        var futurePublished = CatalogAnswerPolicy.PublicationForTitle([Entry("1", "Blue Door", new DateOnly(2027, 1, 1), status: PublicationStatus.Published)], "Blue Door", Today, Full);
+        var consistent = CatalogAnswerPolicy.PublicationForTitle([Entry("1", "Blue Door", new DateOnly(2001, 1, 1), status: PublicationStatus.Published)], "Blue Door", Today, Full);
+
+        Assert.AreEqual(CatalogAnswerOutcome.Qualified, pastForthcoming.Outcome);
+        Assert.IsTrue(pastForthcoming.Qualifiers.Contains(CatalogAnswerCodes.StatusDateConflict));
+        Assert.AreEqual(CatalogAnswerOutcome.Qualified, futurePublished.Outcome);
+        Assert.IsTrue(futurePublished.Qualifiers.Contains(CatalogAnswerCodes.StatusDateConflict));
+        Assert.AreEqual(CatalogAnswerOutcome.Answered, consistent.Outcome);
     }
 
     // ================================================================================ F05 authors and namesakes

@@ -190,15 +190,42 @@ public sealed record CatalogAnswerContextLimits
 
     public int MaxRootsTotal { get; init; } = 100;
 
-    public int MaxEntriesPerRoot { get; init; } = 200;
+    /// <summary>The bound on every retained record of one window together: books, series and choices count against one total.</summary>
+    public int MaxRecordsPerRoot { get; init; } = 200;
 
-    /// <summary>Exact budget for <see cref="CatalogAnswerContextStore.Measure(CatalogRetainedWindow)"/> of one retained window.</summary>
+    /// <summary>
+    /// Exact budget, in UTF-8 bytes, of the canonical serialized form of one whole retained window (see
+    /// <see cref="CatalogAnswerContextStore.Measure(CatalogRetainedWindow)"/>).
+    /// </summary>
     public int MaxBytesPerRoot { get; init; } = 256 * 1024;
+}
+
+/// <summary>
+/// What a retained window actually read. A follow-up is compatible with it only when the answer it asks for is derived from this
+/// same read: an author's works page says nothing about the author's series, and neither says anything about a series' members.
+/// </summary>
+public enum CatalogReadKind
+{
+    /// <summary>The members of one selected series (a page, or the saved list).</summary>
+    SeriesMembers = 1,
+
+    /// <summary>The works of one selected author (a page, or the saved list).</summary>
+    AuthorWorks = 2,
+
+    /// <summary>The series reached from one selected author.</summary>
+    AuthorSeries = 3,
+
+    /// <summary>One ordinary title search.</summary>
+    TitleSearch = 4,
+
+    /// <summary>Only choices still to be made; nothing was read for a selected subject.</summary>
+    Choices = 5
 }
 
 /// <summary>What a root retains between turns: the selection and the bounded entries that follow-ups are answered from.</summary>
 /// <param name="Subject">The selected subject; null while the window holds only choices still to be made.</param>
 /// <param name="SourceGaps">A consulted source failed, was unavailable or unsupported while the window was built, so it never proves absence.</param>
+/// <param name="ReadKind">What the window actually read; a follow-up needing another read is not answered from it.</param>
 public sealed record CatalogRetainedWindow(
     CatalogAnswerOperation Operation,
     CatalogSubjectRef? Subject,
@@ -214,7 +241,19 @@ public sealed record CatalogRetainedWindow(
     string ScopeCode,
     string? ProviderId,
     string? ContinuationToken,
-    DateTimeOffset ObservedAtUtc);
+    DateTimeOffset ObservedAtUtc,
+    CatalogReadKind ReadKind)
+{
+    // Private snapshots (see CatalogAnswerGroup): what the store holds cannot be changed through the lists a caller supplied, nor
+    // through the collections it returns.
+    public IReadOnlyList<CatalogAnswerEntry> Entries { get; init => field = DiscoverySnapshots.Of(value); } = DiscoverySnapshots.Of(Entries);
+
+    public IReadOnlyList<CatalogAnswerSeries> Series { get; init => field = DiscoverySnapshots.Of(value); } = DiscoverySnapshots.Of(Series);
+
+    public IReadOnlyList<CatalogAnswerChoice> Choices { get; init => field = DiscoverySnapshots.Of(value); } = DiscoverySnapshots.Of(Choices);
+
+    public IReadOnlyList<CatalogSourceReport> Sources { get; init => field = DiscoverySnapshots.Of(value); } = DiscoverySnapshots.Of(Sources);
+}
 
 public sealed record CatalogAnswerRootLease(Guid RootId, DateTimeOffset ExpiresAtUtc);
 
@@ -229,7 +268,6 @@ public sealed record CatalogAnswerRootLease(Guid RootId, DateTimeOffset ExpiresA
 /// </remarks>
 public sealed class CatalogAnswerContextStore
 {
-    private const int FixedOverheadBytes = 48;
 
     private readonly Lock gate = new();
     private readonly CatalogAnswerContextLimits limits;
@@ -323,73 +361,52 @@ public sealed class CatalogAnswerContextStore
         }
     }
 
+    private static readonly JsonSerializerOptions CanonicalJson = new(JsonSerializerDefaults.Web);
+
     /// <summary>
-    /// The exact retained-text cost of a window: the UTF-8 bytes of every string it holds (titles, labels, ids, roles, languages and
-    /// codes) plus a fixed overhead per record, credit, position, choice and series. Not a serialized size; a stable, testable bound.
+    /// The one canonical size of a retained window: the UTF-8 bytes of its complete System.Text.Json serialization with fixed web
+    /// options and the default encoder (so every envelope, flag, field name, number, escape sequence and non-ASCII character counts as
+    /// it will really occupy). This is the figure <see cref="CatalogAnswerContextLimits.MaxBytesPerRoot"/> bounds, for the final,
+    /// possibly cut window, not an estimate of its text.
     /// </summary>
     public static int Measure(CatalogRetainedWindow window)
     {
         ArgumentNullException.ThrowIfNull(window);
-        long total = FixedOverheadBytes;
-        total += Text(window.ScopeCode) + Text(window.ProviderId) + Text(window.ContinuationToken);
-        if (window.Subject is { } subject) total += Text(subject.Label) + SubjectBytes(subject);
-        foreach (var source in window.Sources) total += FixedOverheadBytes + Text(source.ProviderId) + Text(source.ReasonCode);
-        foreach (var entry in window.Entries) total += MeasureEntry(entry);
-        foreach (var series in window.Series)
-        {
-            total += FixedOverheadBytes + Text(series.Label) + Text(series.CanonicalState) + SourceBytes(series.Id) + (series.SavedId is null ? 0 : 16);
-            total += Text(series.Relationship.DerivedScope);
-        }
-
-        foreach (var choice in window.Choices)
-        {
-            total += FixedOverheadBytes + Text(choice.Disambiguation) + Text(choice.ProviderId) + Text(choice.EvidenceNote) + Text(choice.Reference.Label) + SubjectBytes(choice.Reference);
-        }
-
-        return (int)Math.Min(total, int.MaxValue);
+        return JsonSerializer.SerializeToUtf8Bytes(window, CanonicalJson).Length;
     }
 
-    private static long MeasureEntry(CatalogAnswerEntry entry)
-    {
-        long total = FixedOverheadBytes + Text(entry.Title) + Text(entry.Language) + Text(entry.Format) + Text(entry.ProviderId) + Text(entry.SeriesLabel) + SourceBytes(entry.Source);
-        total += entry.SavedWorkId is null ? 0 : 16;
-        foreach (var credit in entry.Credits)
-        {
-            total += FixedOverheadBytes + Text(credit.Label) + Text(credit.Role) + SourceBytes(credit.AuthorSource) + (credit.SavedAuthorId is null ? 0 : 16);
-        }
-
-        foreach (var position in entry.Positions)
-        {
-            total += FixedOverheadBytes + Text(position.Label) + SourceBytes(position.Series);
-        }
-
-        return total;
-    }
-
-    private static long SubjectBytes(CatalogSubjectRef subject) => SourceBytes(subject.Native) + (subject.SavedId is null ? 0 : 16);
-
-    private static long SourceBytes(SourceRef? source) => source is null ? 0 : Text(source.ProviderId) + Text(source.ExternalId);
-
-    private static long Text(string? value) => value is null ? 0 : Encoding.UTF8.GetByteCount(value);
-
+    /// <summary>
+    /// Keeps the largest truthful prefix of the window's records (books, then series, then choices) that is within the one record
+    /// bound and whose canonical serialized size is within the byte bound. Any cut sets the truncated flag, clears exhaustion and
+    /// the continuation (following it would skip what was cut). Null when even a record-free window does not fit.
+    /// </summary>
     private CatalogRetainedWindow? Fit(CatalogRetainedWindow window)
     {
-        var cap = Math.Min(window.Entries.Count, Math.Max(0, limits.MaxEntriesPerRoot));
-        var truncated = window.Truncated || cap < window.Entries.Count;
-        CatalogRetainedWindow Build(int count, bool cut) => window with
+        var total = window.Entries.Count + window.Series.Count + window.Choices.Count;
+        var cap = Math.Min(total, Math.Max(0, limits.MaxRecordsPerRoot));
+        var truncated = window.Truncated || cap < total;
+        CatalogRetainedWindow Build(int count, bool cut)
         {
-            Entries = window.Entries.Take(count).ToArray(),
-            Truncated = cut,
-            Exhausted = window.Exhausted && !cut,
-            MoreAvailable = window.MoreAvailable && !cut,
-            ContinuationToken = cut ? null : window.ContinuationToken
-        };
+            var entries = Math.Min(count, window.Entries.Count);
+            var series = Math.Min(Math.Max(0, count - entries), window.Series.Count);
+            var choices = Math.Min(Math.Max(0, count - entries - series), window.Choices.Count);
+            return window with
+            {
+                Entries = window.Entries.Take(entries).ToArray(),
+                Series = window.Series.Take(series).ToArray(),
+                Choices = window.Choices.Take(choices).ToArray(),
+                Truncated = cut,
+                Exhausted = window.Exhausted && !cut,
+                MoreAvailable = window.MoreAvailable && !cut,
+                ContinuationToken = cut ? null : window.ContinuationToken
+            };
+        }
 
         var whole = Build(cap, truncated);
         if (Measure(whole) <= limits.MaxBytesPerRoot) return whole;
         if (Measure(Build(0, true)) > limits.MaxBytesPerRoot) return null;
 
-        // The largest prefix that fits. Cost only grows with each entry, so a binary search finds it exactly.
+        // The largest prefix that fits. Size only grows with each record, so a binary search finds it exactly.
         int low = 0, high = cap;
         while (low < high)
         {

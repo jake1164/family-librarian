@@ -88,6 +88,8 @@ public sealed class CatalogAnswerServiceTests
 
         public Func<AuthorWork[]> Works { get; set; } = () => [];
 
+        public Func<DiscoveryCursor?, (AuthorWork[] Items, DiscoveryCursor? Next)>? PagedWorks { get; set; }
+
         public Func<AuthorSeriesEntry[]> AuthorSeriesItems { get; set; } = () => [];
 
         public Func<BookSearchQuery, BookCandidate[]> SearchHits { get; set; } = _ => [];
@@ -157,7 +159,14 @@ public sealed class CatalogAnswerServiceTests
         public async Task<DiscoveryResult<AuthorWork>> GetAuthorWorksAsync(AuthorRef author, DiscoveryCursor? cursor, IDiscoveryBudget budget, CancellationToken cancellationToken)
         {
             var (ok, stop) = await BeginAsync(DiscoveryOperation.GetAuthorWorks, budget, paged: true, cancellationToken);
-            return ok ? Answer(DiscoveryOperation.GetAuthorWorks, author.Id, budget, Works()) : Stopped<AuthorWork>(DiscoveryOperation.GetAuthorWorks, author.Id, budget, stop!);
+            if (!ok) return Stopped<AuthorWork>(DiscoveryOperation.GetAuthorWorks, author.Id, budget, stop!);
+            if (PagedWorks is { } paged)
+            {
+                var (items, next) = paged(cursor);
+                return Answer(DiscoveryOperation.GetAuthorWorks, author.Id, budget, items, next);
+            }
+
+            return Answer(DiscoveryOperation.GetAuthorWorks, author.Id, budget, Works());
         }
 
         public async Task<DiscoveryResult<AuthorSeriesEntry>> GetAuthorSeriesAsync(AuthorRef author, DiscoveryCursor? cursor, IDiscoveryBudget budget, CancellationToken cancellationToken)
@@ -1050,6 +1059,283 @@ public sealed class CatalogAnswerServiceTests
         Assert.IsTrue(answer.Coverage.Truncated);
         Assert.IsFalse(answer.Coverage.ExhaustedInCheckedScope);
         Assert.IsTrue(answer.HasQualifier(CatalogAnswerCodes.KnownLocalOnly));
+    }
+
+    // ============================================== review A-R2a: author-scoped publication operations
+
+    private static AuthorWork AuthorBook(string id, string title, DateOnly date, SourceRef author, string? role = null, DateBasis basis = DateBasis.Original, PublicationStatus status = PublicationStatus.Unknown) =>
+        new(Book(id, title, date, basis, status, new CreditRef(0, "A. Writer", role, author)), []);
+
+    private static AuthorWork[] WriterWorks() =>
+    [
+        AuthorBook("m1", "Mine One", new DateOnly(2001, 1, 1), WriterAuthor),
+        AuthorBook("m2", "Mine Two", new DateOnly(2005, 1, 1), WriterAuthor),
+        AuthorBook("n1", "Namesake Newest", new DateOnly(2010, 1, 1), NamesakeAuthor),
+        AuthorBook("i1", "Illustrated Newer", new DateOnly(2012, 1, 1), WriterAuthor, "illustrator"),
+        AuthorBook("f1", "Mine Forthcoming", new DateOnly(2027, 5, 11), WriterAuthor, null, DateBasis.Original, PublicationStatus.Forthcoming)
+    ];
+
+    [TestMethod]
+    public async Task LatestPublishedForASelectedAuthorReadsTheirWorksAndKeepsCreditAndCoverageSemantics()
+    {
+        var rig = new Rig(configure: source => source.Works = WriterWorks);
+
+        var answer = await rig.Ask(new CatalogAnswerRequest { Operation = CatalogAnswerOperation.LatestPublished, Subject = Writer() });
+
+        CollectionAssert.AreEqual(new[] { "Mine Two" }, answer.Entries.Select(entry => entry.Title).ToArray(), "Latest credited work, not a namesake's or an illustrator's newer book.");
+        Assert.AreEqual(CatalogAnswerOutcome.Qualified, answer.Outcome, "An author's known works are never a complete list.");
+        Assert.IsTrue(answer.HasQualifier(CatalogAnswerCodes.ListNotExhaustive));
+        Assert.AreEqual("Illustrated Newer", answer.Groups.Single(group => group.Code == "other-roles").Entries.Single().Title);
+        Assert.AreEqual("Namesake Newest", answer.Groups.Single(group => group.Code == "credit-unverified").Entries.Single().Title);
+        Assert.AreEqual("Mine Forthcoming", answer.Groups.Single(group => group.Code == "future-dated").Entries.Single().Title);
+        Assert.AreEqual(1, rig.Source.Reads(DiscoveryOperation.GetAuthorWorks));
+        Assert.AreEqual(1, answer.Usage.Attempts);
+    }
+
+    [TestMethod]
+    public async Task UpcomingAndNextReleaseForASelectedAuthorUseTheirCreditedFutureWorksOnly()
+    {
+        var rig = new Rig(configure: source => source.Works = WriterWorks);
+
+        var next = await rig.Ask(new CatalogAnswerRequest { Operation = CatalogAnswerOperation.NextRelease, Subject = Writer() });
+
+        Assert.AreEqual("Mine Forthcoming", next.Entries.Single().Title);
+        Assert.AreEqual(CatalogAnswerOutcome.Qualified, next.Outcome);
+        Assert.IsTrue(next.HasQualifier(CatalogAnswerCodes.IncompleteCoverage));
+    }
+
+    [TestMethod]
+    public async Task ASeriesOnlyQuestionStillRejectsAnAuthorSubjectWithNoRead()
+    {
+        var rig = new Rig(configure: source => source.Works = WriterWorks);
+
+        var position = await rig.Ask(new CatalogAnswerRequest { Operation = CatalogAnswerOperation.Position, Subject = Writer(), Position = 1 });
+
+        Assert.AreEqual(CatalogAnswerOutcome.InsufficientEvidence, position.Outcome);
+        CollectionAssert.Contains(position.Reasons.ToArray(), CatalogAnswerCodes.SubjectInvalid);
+        Assert.AreEqual(0, rig.Source.TotalReads);
+    }
+
+    [TestMethod]
+    public async Task LatestPublishedForASavedAuthorReadsSavedWorksWithoutAnyProviderRead()
+    {
+        var rig = new Rig();
+        var authorId = Guid.NewGuid();
+        SavedWorkEvidence Saved(string title, int year, Guid by, string? role = null) =>
+            new(Guid.NewGuid(), title, new DateOnly(year, 1, 1), DatePrecision.Day, DateBasis.Original, PublicationStatus.Published, null, [new SavedCreditEvidence(by, "A. Writer", role, 0)], false);
+        rig.Saved.AuthorWorks.AddRange([Saved("Mine Old", 2001, authorId), Saved("Mine New", 2006, authorId), Saved("Namesake", 2012, Guid.NewGuid()), Saved("Illustrated", 2014, authorId, "illustrator")]);
+
+        var answer = await rig.Ask(new CatalogAnswerRequest { Operation = CatalogAnswerOperation.LatestPublished, Subject = CatalogSubjectRef.Saved(CatalogSubjectKind.Author, "A. Writer", authorId) });
+
+        Assert.AreEqual("Mine New", answer.Entries.Single().Title);
+        Assert.IsTrue(answer.HasQualifier(CatalogAnswerCodes.KnownLocalOnly));
+        Assert.AreEqual(0, rig.Source.TotalReads);
+    }
+
+    // ======================================= review A-R2b: cached read scope versus the requested answer
+
+    [TestMethod]
+    public async Task AuthorSeriesAfterAuthorWorksReadsTheSeriesInsteadOfClaimingNoneFromTheWorksPage()
+    {
+        var series = new AuthorSeriesEntry(new SeriesRef("The Saga", SagaSeries), RelationshipEvidence.Native);
+        var rig = new Rig(configure: source =>
+        {
+            source.Works = () => [AuthorBook("m1", "Mine One", new DateOnly(2001, 1, 1), WriterAuthor)];
+            source.AuthorSeriesItems = () => [series];
+        });
+        var works = await rig.Ask(new CatalogAnswerRequest { Operation = CatalogAnswerOperation.AuthorWorks, Subject = Writer() });
+
+        var asked = await rig.Ask(new CatalogAnswerRequest { Operation = CatalogAnswerOperation.AuthorSeries, ContextRootId = works.Context!.RootId });
+
+        Assert.AreNotEqual(CatalogAnswerOutcome.NoVerifiedMatch, asked.Outcome, "An author-works page is not evidence of no author series.");
+        Assert.AreEqual("The Saga", asked.Series.Single().Label);
+        Assert.AreEqual(1, rig.Source.Reads(DiscoveryOperation.GetAuthorSeries), "The required read was made, under the same root.");
+        Assert.AreEqual(1, rig.Journeys.Count);
+        Assert.AreEqual(1, asked.Usage.ProviderReads, "One read for this answer.");
+    }
+
+    [TestMethod]
+    public async Task AuthorWorksAfterAuthorSeriesReadsTheWorksTheOtherWay()
+    {
+        var series = new AuthorSeriesEntry(new SeriesRef("The Saga", SagaSeries), RelationshipEvidence.Native);
+        var rig = new Rig(configure: source =>
+        {
+            source.Works = () => [AuthorBook("m1", "Mine One", new DateOnly(2001, 1, 1), WriterAuthor)];
+            source.AuthorSeriesItems = () => [series];
+        });
+        var first = await rig.Ask(new CatalogAnswerRequest { Operation = CatalogAnswerOperation.AuthorSeries, Subject = Writer() });
+
+        var works = await rig.Ask(new CatalogAnswerRequest { Operation = CatalogAnswerOperation.AuthorWorks, ContextRootId = first.Context!.RootId });
+
+        Assert.AreEqual("Mine One", works.Entries.Single().Title);
+        Assert.AreEqual(1, rig.Source.Reads(DiscoveryOperation.GetAuthorWorks));
+        Assert.AreEqual(1, rig.Journeys.Count);
+    }
+
+    [TestMethod]
+    public async Task ACompatibleFollowUpOnTheSameDataStillMakesNoRead()
+    {
+        var rig = new Rig(configure: source => source.Works = WriterWorks);
+        var works = await rig.Ask(new CatalogAnswerRequest { Operation = CatalogAnswerOperation.AuthorWorks, Subject = Writer() });
+        var reads = rig.Source.TotalReads;
+
+        var latest = await rig.Ask(new CatalogAnswerRequest { Operation = CatalogAnswerOperation.LatestPublished, ContextRootId = works.Context!.RootId });
+        var again = await rig.Ask(new CatalogAnswerRequest { Operation = CatalogAnswerOperation.AuthorWorks, ContextRootId = works.Context.RootId });
+
+        Assert.AreEqual("Mine Two", latest.Entries.Single().Title);
+        Assert.AreEqual(3, again.Entries.Count, "The three credited works; the others are groups.");
+        Assert.AreEqual(reads, rig.Source.TotalReads);
+        Assert.AreEqual(0, latest.Usage.ProviderReads);
+    }
+
+    [TestMethod]
+    public async Task AnAuthorWindowCannotAnswerASeriesOnlyQuestionAndASeriesWindowCannotAnswerAnAuthorOne()
+    {
+        var rig = new Rig(configure: source => source.Works = WriterWorks);
+        var works = await rig.Ask(new CatalogAnswerRequest { Operation = CatalogAnswerOperation.AuthorWorks, Subject = Writer() });
+        var series = await rig.Ask(Latest());
+        var reads = rig.Source.TotalReads;
+
+        var position = await rig.Ask(new CatalogAnswerRequest { Operation = CatalogAnswerOperation.Position, ContextRootId = works.Context!.RootId, Position = 1 });
+        var authorFromSeries = await rig.Ask(new CatalogAnswerRequest { Operation = CatalogAnswerOperation.AuthorWorks, ContextRootId = series.Context!.RootId });
+
+        Assert.AreEqual(CatalogAnswerOutcome.InsufficientEvidence, position.Outcome);
+        CollectionAssert.Contains(position.Reasons.ToArray(), CatalogAnswerCodes.SubjectInvalid);
+        Assert.AreEqual(CatalogAnswerOutcome.InsufficientEvidence, authorFromSeries.Outcome);
+        CollectionAssert.Contains(authorFromSeries.Reasons.ToArray(), CatalogAnswerCodes.SubjectInvalid);
+        Assert.AreEqual(reads, rig.Source.TotalReads, "Neither mismatched question reads or reuses the other's data.");
+    }
+
+    [TestMethod]
+    public async Task AContinuationIsBoundToTheReadItWasIssuedForNotToAnyOperationOnTheSameSubject()
+    {
+        static (AuthorWork[] Items, DiscoveryCursor? Next) Pages(DiscoveryCursor? cursor) => cursor is null
+            ? ([AuthorBook("m1", "Mine One", new DateOnly(2001, 1, 1), WriterAuthor)], new DiscoveryCursor("p2"))
+            : ([AuthorBook("m2", "Mine Two", new DateOnly(2005, 1, 1), WriterAuthor)], null);
+        var rig = new Rig(configure: source => source.PagedWorks = Pages);
+        var first = await rig.Ask(new CatalogAnswerRequest { Operation = CatalogAnswerOperation.AuthorWorks, Subject = Writer() });
+        var reads = rig.Source.TotalReads;
+
+        var wrongRead = await rig.Ask(new CatalogAnswerRequest { Operation = CatalogAnswerOperation.AuthorSeries, ContextRootId = first.Context!.RootId, ContinuationToken = first.ContinuationToken });
+
+        CollectionAssert.Contains(wrongRead.Reasons.ToArray(), CatalogAnswerCodes.ContinuationUnavailable);
+        Assert.AreEqual(reads, rig.Source.TotalReads, "A token for the works read cannot start a series read.");
+
+        // The same read, asked about differently (a latest question with a filter), is still that read's next page.
+        var next = await rig.Ask(new CatalogAnswerRequest
+        {
+            Operation = CatalogAnswerOperation.LatestPublished,
+            ContextRootId = first.Context.RootId,
+            ContinuationToken = first.ContinuationToken,
+            Filter = new CatalogAnswerFilter(Language: "en")
+        });
+
+        Assert.AreEqual(reads + 1, rig.Source.TotalReads, "Exactly one more page.");
+        Assert.AreEqual(2, rig.Source.PhysicalAttempts);
+        Assert.IsFalse(next.Coverage.MoreAvailable);
+    }
+
+    [TestMethod]
+    public async Task ATokenWithADifferentSubjectIsAFreshLookupAndNeverRedeemed()
+    {
+        var rig = new Rig(configure: source => source.PagedMembers = Page);
+        var first = await rig.Ask(Latest());
+        var other = CatalogSubjectRef.FromSource(CatalogSubjectKind.Series, "Another", new SourceRef("fiction", "S2", ExternalReferenceEntityType.Series));
+
+        var fresh = await rig.Ask(new CatalogAnswerRequest { Operation = CatalogAnswerOperation.LatestPublished, Subject = other, ContextRootId = first.Context!.RootId, ContinuationToken = first.ContinuationToken });
+
+        Assert.AreEqual(other.Native, fresh.Subject!.Native);
+        Assert.AreEqual(2, rig.Source.Reads(DiscoveryOperation.GetSeriesMembers));
+        Assert.IsTrue(fresh.Coverage.MoreAvailable, "It is the new subject's own first page, not page two of the old one.");
+    }
+
+    [TestMethod]
+    public async Task AccumulatingPastTheRecordBoundCutsTheRetainedWindowSaysSoAndOffersNoFurtherContinuation()
+    {
+        static (AuthorWork[] Items, DiscoveryCursor? Next) Pages(DiscoveryCursor? cursor)
+        {
+            var page = cursor is null ? 0 : 1;
+            var items = Enumerable.Range(0, 120).Select(index => AuthorBook($"p{page}-{index}", $"Book {page}-{index}", new DateOnly(2000 + page, 1, 1), WriterAuthor)).ToArray();
+            return (items, page == 0 ? new DiscoveryCursor("p2") : new DiscoveryCursor("p3"));
+        }
+
+        var rig = new Rig(configure: source => source.PagedWorks = Pages);
+        var first = await rig.Ask(new CatalogAnswerRequest { Operation = CatalogAnswerOperation.AuthorWorks, Subject = Writer() });
+        Assert.IsNotNull(first.ContinuationToken);
+
+        var second = await rig.Ask(new CatalogAnswerRequest { Operation = CatalogAnswerOperation.AuthorWorks, ContextRootId = first.Context!.RootId, ContinuationToken = first.ContinuationToken });
+
+        Assert.AreEqual(240, second.Entries.Count, "This answer was evaluated over everything read.");
+        CollectionAssert.Contains(second.Reasons.ToArray(), CatalogAnswerCodes.ContextWindowCut);
+        Assert.IsNull(second.ContinuationToken, "A cut window offers no continuation: it would skip what was cut.");
+        var retained = rig.Contexts.TryGetWindow(Reader, second.Context!.RootId, rig.Clock.UtcNow)!;
+        Assert.AreEqual(CatalogAnswerContextLimits.Default.MaxRecordsPerRoot, retained.Entries.Count);
+        Assert.IsTrue(retained.Truncated);
+        Assert.IsFalse(retained.Exhausted);
+
+        var reads = rig.Source.TotalReads;
+        var followUp = await rig.Ask(new CatalogAnswerRequest { Operation = CatalogAnswerOperation.LatestPublished, ContextRootId = second.Context.RootId });
+        Assert.AreEqual(reads, rig.Source.TotalReads);
+        Assert.IsTrue(followUp.HasQualifier(CatalogAnswerCodes.IncompleteCoverage));
+    }
+
+    // ================================================== review A-R5: a late read cannot return success
+
+    [TestMethod]
+    public async Task ANonCooperativeReadThatFinishesAfterTheDeadlineIsATimeoutNotASuccess()
+    {
+        var rig = new Rig(
+            options: new CatalogAnswerOptions { Deadline = TimeSpan.FromMilliseconds(50) },
+            configure: source => source.Hold = _ => Task.Delay(300, CancellationToken.None));
+
+        var answer = await rig.Ask(Latest());
+
+        Assert.AreEqual(CatalogAnswerOutcome.TimedOut, answer.Outcome);
+        CollectionAssert.Contains(answer.Reasons.ToArray(), CatalogAnswerCodes.DeadlineReached);
+        Assert.AreEqual(0, answer.Entries.Count);
+        Assert.AreEqual(1, answer.Usage.Attempts, "The attempt it made is reported honestly.");
+        Assert.IsNull(answer.Context, "Nothing is retained after the boundary.");
+        Assert.AreEqual(CatalogSourceState.TimedOut, answer.Coverage.Sources[^1].State);
+    }
+
+    [TestMethod]
+    public async Task NoFurtherReadIsMadeAfterTheDeadlineEvenWhenTheFirstReadCompletes()
+    {
+        var calls = 0;
+        var rig = new Rig(
+            options: new CatalogAnswerOptions { Deadline = TimeSpan.FromMilliseconds(50) },
+            configure: source =>
+            {
+                source.SearchHits = _ => [Hit("w1", "Alder") with { Series = [] }];
+                source.Claims = () => [new BookSeriesClaim(new SeriesRef("The Saga", SagaSeries), null)];
+                source.Hold = _ => Interlocked.Increment(ref calls) == 1 ? Task.Delay(300, CancellationToken.None) : Task.CompletedTask;
+            });
+
+        var answer = await rig.Ask(new CatalogAnswerRequest { Operation = CatalogAnswerOperation.LatestPublished, Text = "the saga" });
+
+        Assert.AreEqual(CatalogAnswerOutcome.TimedOut, answer.Outcome);
+        Assert.AreEqual(0, rig.Source.Reads(DiscoveryOperation.FindSeriesForBook), "The seed finished late, so the dependent read was never started.");
+        Assert.AreEqual(1, rig.Source.PhysicalAttempts);
+    }
+
+    [TestMethod]
+    public async Task ACallersCancellationDuringANonCooperativeReadStillPropagatesAfterItReturns()
+    {
+        var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var rig = new Rig(configure: source => source.Hold = async _ =>
+        {
+            entered.TrySetResult();
+            await Task.Delay(300, CancellationToken.None);
+        });
+        using var cancel = new CancellationTokenSource();
+
+        var running = rig.Ask(Latest(), cancellationToken: cancel.Token);
+        await entered.Task;
+        await cancel.CancelAsync();
+
+        await Assert.ThrowsAsync<OperationCanceledException>(() => running);
+        rig.Source.Hold = null;
+        Assert.AreEqual(CatalogAnswerOutcome.Answered, (await rig.Ask(Latest())).Outcome, "The permit was released.");
     }
 
     // ============================================================================================= contract edges

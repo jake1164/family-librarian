@@ -297,6 +297,32 @@ public sealed class CatalogAnswerHostTests
     }
 
     [TestMethod]
+    public async Task LatestPublishedForASavedAuthorUsesRealCreditsRolesClassAndDatesWithNoProviderRead()
+    {
+        var source = new HostSource();
+        await using var factory = Factory(source);
+        var seeded = await SeedAsync(factory.Services);
+        await using var scope = factory.Services.CreateAsyncScope();
+        var service = scope.ServiceProvider.GetRequiredService<ICatalogAnswerService>();
+        var caller = new CatalogAnswerCaller(Guid.NewGuid(), CatalogAnswerTransport.Web, "session-a");
+        var author = CatalogSubjectRef.Saved(CatalogSubjectKind.Author, seeded.AuthorName, seeded.AuthorId);
+
+        var latest = await service.AnswerAsync(caller, new CatalogAnswerRequest { Operation = CatalogAnswerOperation.LatestPublished, Subject = author }, CancellationToken.None);
+        var series = await service.AnswerAsync(caller, new CatalogAnswerRequest { Operation = CatalogAnswerOperation.AuthorSeries, ContextRootId = latest.Context!.RootId }, CancellationToken.None);
+
+        // Birch (2005, year, original) is the newest credited original: the illustrated Cedar is another role, the omnibus a collection,
+        // and the retired Work is gone.
+        Assert.AreEqual("Birch", latest.Entries.Single().Title);
+        Assert.AreEqual(CatalogAnswerOutcome.Qualified, latest.Outcome);
+        CollectionAssert.IsSubsetOf(new[] { CatalogAnswerCodes.KnownLocalOnly, CatalogAnswerCodes.ListNotExhaustive }, latest.Qualifiers.ToArray());
+        Assert.AreEqual("Cedar", latest.Groups.Single(group => group.Code == "other-roles").Entries.Single().Title);
+        Assert.AreEqual("The Omnibus", latest.Groups.Single(group => group.Code == "excluded-by-class").Entries.Single().Title);
+        Assert.AreEqual(0, source.TotalReads);
+        // A saved works window is no evidence about the author's series: the follow-up is unsupported for saved data, never "none found".
+        Assert.AreEqual(CatalogAnswerOutcome.Unsupported, series.Outcome);
+    }
+
+    [TestMethod]
     public async Task ASavedNameProducesSavedChoicesFromTheRealCatalogAndNeverSelects()
     {
         await using var factory = Factory(new HostSource());

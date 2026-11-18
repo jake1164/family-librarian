@@ -203,10 +203,10 @@ public sealed record CatalogAnswerEntry
 
     public required string Title { get; init; }
 
-    public IReadOnlyList<CatalogEntryCredit> Credits { get; init; } = [];
+    public IReadOnlyList<CatalogEntryCredit> Credits { get; init => field = DiscoverySnapshots.Of(value); } = DiscoverySnapshots.Of<CatalogEntryCredit>([]);
 
     /// <summary>Every position this entry claims, each with its own ordering when the source stated one. Ties and conflicts are kept.</summary>
-    public IReadOnlyList<PositionClaim> Positions { get; init; } = [];
+    public IReadOnlyList<PositionClaim> Positions { get; init => field = DiscoverySnapshots.Of(value); } = DiscoverySnapshots.Of<PositionClaim>([]);
 
     public MembershipRole Role { get; init; } = MembershipRole.Unknown;
 
@@ -263,7 +263,11 @@ public sealed record CatalogAnswerChoice(
     string? EvidenceNote);
 
 /// <summary>A named group of entries that is not the answer itself (undated announcements, other contributor roles, ...).</summary>
-public sealed record CatalogAnswerGroup(string Code, IReadOnlyList<CatalogAnswerEntry> Entries);
+public sealed record CatalogAnswerGroup(string Code, IReadOnlyList<CatalogAnswerEntry> Entries)
+{
+    /// <summary>A private snapshot: the list the caller built, or a cast of what is returned, cannot change a group after it is made.</summary>
+    public IReadOnlyList<CatalogAnswerEntry> Entries { get; init => field = DiscoverySnapshots.Of(value); } = DiscoverySnapshots.Of(Entries);
+}
 
 public enum CatalogSourceState
 {
@@ -301,6 +305,9 @@ public sealed record CatalogAnswerCoverage(
     bool Truncated,
     DateTimeOffset ObservedAtUtc)
 {
+    /// <summary>A private snapshot of the source reports (see <see cref="CatalogAnswerGroup.Entries"/>).</summary>
+    public IReadOnlyList<CatalogSourceReport> Sources { get; init => field = DiscoverySnapshots.Of(value); } = DiscoverySnapshots.Of(Sources);
+
     public static CatalogAnswerCoverage None(DateTimeOffset at) => new([], "none", false, false, false, at);
 
     /// <summary>True when every consulted source answered; a source that failed, was unavailable, unsupported or not queried is a gap.</summary>
@@ -332,22 +339,22 @@ public sealed record CatalogAnswer
     public SeriesOrderingKind Order { get; init; } = SeriesOrderingKind.Unspecified;
 
     /// <summary>The entries that are the answer: one, or several when ties/overlaps are kept.</summary>
-    public IReadOnlyList<CatalogAnswerEntry> Entries { get; init; } = [];
+    public IReadOnlyList<CatalogAnswerEntry> Entries { get; init => field = DiscoverySnapshots.Of(value); } = DiscoverySnapshots.Of<CatalogAnswerEntry>([]);
 
-    public IReadOnlyList<CatalogAnswerSeries> Series { get; init; } = [];
+    public IReadOnlyList<CatalogAnswerSeries> Series { get; init => field = DiscoverySnapshots.Of(value); } = DiscoverySnapshots.Of<CatalogAnswerSeries>([]);
 
     /// <summary>The orderings the entries actually state, listed when the ordering must be chosen. Empty otherwise.</summary>
-    public IReadOnlyList<SeriesOrderingKind> AvailableOrders { get; init; } = [];
+    public IReadOnlyList<SeriesOrderingKind> AvailableOrders { get; init => field = DiscoverySnapshots.Of(value); } = DiscoverySnapshots.Of<SeriesOrderingKind>([]);
 
-    public IReadOnlyList<CatalogAnswerChoice> Choices { get; init; } = [];
+    public IReadOnlyList<CatalogAnswerChoice> Choices { get; init => field = DiscoverySnapshots.Of(value); } = DiscoverySnapshots.Of<CatalogAnswerChoice>([]);
 
-    public IReadOnlyList<CatalogAnswerGroup> Groups { get; init; } = [];
+    public IReadOnlyList<CatalogAnswerGroup> Groups { get; init => field = DiscoverySnapshots.Of(value); } = DiscoverySnapshots.Of<CatalogAnswerGroup>([]);
 
     /// <summary>Stable codes that change how the result must be read (see <see cref="CatalogAnswerCodes"/>).</summary>
-    public IReadOnlyList<string> Qualifiers { get; init; } = [];
+    public IReadOnlyList<string> Qualifiers { get; init => field = DiscoverySnapshots.Of(value); } = DiscoverySnapshots.Of<string>([]);
 
     /// <summary>Stable codes saying why the outcome is not a plain answer.</summary>
-    public IReadOnlyList<string> Reasons { get; init; } = [];
+    public IReadOnlyList<string> Reasons { get; init => field = DiscoverySnapshots.Of(value); } = DiscoverySnapshots.Of<string>([]);
 
     public CatalogAnswerCoverage Coverage { get; init; } = CatalogAnswerCoverage.None(DateTimeOffset.MinValue);
 
@@ -426,4 +433,5 @@ public static class CatalogAnswerCodes
     public const string SeriesClaimsUnsupported = "series-claims-unsupported";
     public const string NoChoicesFound = "no-choices-found";
     public const string ContinuationUnavailable = "continuation-unavailable";
+    public const string ContextWindowCut = "context-window-cut";
 }
