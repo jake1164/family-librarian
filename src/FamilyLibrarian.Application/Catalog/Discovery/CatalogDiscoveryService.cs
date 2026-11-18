@@ -1,10 +1,8 @@
 using FamilyLibrarian.Application.Abstractions;
-using FamilyLibrarian.Application.Catalog;
-using FamilyLibrarian.Application.Catalog.Discovery;
 using FamilyLibrarian.Application.Integrations;
 using FamilyLibrarian.Domain.Catalog;
 
-namespace FamilyLibrarian.Web.Catalog;
+namespace FamilyLibrarian.Application.Catalog.Discovery;
 
 /// <summary>The explicit source lookups a person can start. Each maps onto exactly one shared discovery operation.</summary>
 public enum ExpansionKind

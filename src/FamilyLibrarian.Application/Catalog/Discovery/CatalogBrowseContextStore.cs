@@ -1,10 +1,8 @@
 using System.Text.Json;
-using FamilyLibrarian.Application.Catalog;
-using FamilyLibrarian.Application.Catalog.Discovery;
 using FamilyLibrarian.Application.Catalog.Identity;
 using FamilyLibrarian.Domain.Catalog;
 
-namespace FamilyLibrarian.Web.Catalog;
+namespace FamilyLibrarian.Application.Catalog.Discovery;
 
 /// <summary>Bounds for the temporary browse cache. Defaults are the reviewed Phase 1 limits, not coverage promises.</summary>
 public sealed record CatalogBrowseContextLimits

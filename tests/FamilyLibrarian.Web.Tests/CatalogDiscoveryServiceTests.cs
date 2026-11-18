@@ -3,7 +3,6 @@ using FamilyLibrarian.Application.Catalog;
 using FamilyLibrarian.Application.Catalog.Discovery;
 using FamilyLibrarian.Application.Integrations;
 using FamilyLibrarian.Domain.Catalog;
-using FamilyLibrarian.Web.Catalog;
 
 namespace FamilyLibrarian.Web.Tests;
 

@@ -1,7 +1,7 @@
 using FamilyLibrarian.Application.Abstractions;
 using FamilyLibrarian.Application.Catalog;
 using FamilyLibrarian.Contracts.Catalog;
-using FamilyLibrarian.Web.Catalog;
+using FamilyLibrarian.Application.Catalog.Discovery;
 
 namespace FamilyLibrarian.Web.Endpoints;
 

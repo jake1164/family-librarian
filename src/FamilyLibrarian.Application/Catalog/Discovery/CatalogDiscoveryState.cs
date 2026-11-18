@@ -1,6 +1,5 @@
-using FamilyLibrarian.Application.Catalog.Discovery;
 
-namespace FamilyLibrarian.Web.Catalog;
+namespace FamilyLibrarian.Application.Catalog.Discovery;
 
 /// <summary>
 /// Host-memory ledgers for explicit source lookups: one <see cref="DiscoveryJourney"/> per owner and root browse context, found

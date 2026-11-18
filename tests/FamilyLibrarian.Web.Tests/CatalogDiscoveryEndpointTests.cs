@@ -9,7 +9,6 @@ using FamilyLibrarian.Application.Catalog.Discovery;
 using FamilyLibrarian.Contracts.Authentication;
 using FamilyLibrarian.Contracts.Catalog;
 using FamilyLibrarian.Domain.Catalog;
-using FamilyLibrarian.Web.Catalog;
 using FamilyLibrarian.Web.Tests.Harness;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;

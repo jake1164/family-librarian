@@ -2,6 +2,8 @@ using FamilyLibrarian.Application.Abstractions;
 using FamilyLibrarian.Application.Accounts;
 using FamilyLibrarian.Application.Acquisition;
 using FamilyLibrarian.Application.Catalog;
+using FamilyLibrarian.Application.Catalog.Answers;
+using FamilyLibrarian.Application.Catalog.Discovery;
 using FamilyLibrarian.Application.Catalog.Observation;
 using FamilyLibrarian.Application.Communications;
 using FamilyLibrarian.Application.Conversation;
@@ -224,6 +226,18 @@ public static class DependencyInjection
         services.AddScoped<ICatalogSearchService, CatalogSearchService>();
         services.AddScoped<ICatalogBrowseRepository, CatalogBrowseRepository>();
         services.AddScoped<CatalogBrowseService>();
+        // The transport-neutral discovery core: host-memory contexts, journeys and the per-user admission rule are singletons (so the
+        // web routes and the answer service draw on one allowance, never one each); the services are scoped because they read the
+        // active-provider settings and the scoped clock. No singleton here holds a scoped service.
+        services.AddSingleton<CatalogBrowseContextStore>();
+        services.AddSingleton<CatalogDiscoveryJourneys>();
+        services.AddSingleton<CatalogExpansionLimiter>();
+        services.AddScoped<CatalogDiscoveryService>();
+        // The shared catalog-answer foundation (read-only). Registered, not yet activated in chat.
+        services.AddSingleton<CatalogAnswerContextStore>();
+        services.AddSingleton(CatalogAnswerOptions.Default);
+        services.AddScoped<ISavedCatalogEvidenceRepository, SavedCatalogEvidenceRepository>();
+        services.AddScoped<ICatalogAnswerService, CatalogAnswerService>();
         services.AddScoped<IWorkFulfillmentOptionsService, WorkFulfillmentOptionsService>();
 
         services.AddScoped<RequestRepository>();

@@ -27,26 +27,35 @@ public sealed partial class GoogleBooksBookMetadataProvider(
     {
         query.Validate();
 
+        var response = await httpClient.GetFromJsonAsync<GoogleBooksVolumesResponse>(
+            SearchUri(query),
+            cancellationToken);
+
+        return ToSearchPage(response, query.Page);
+    }
+
+    // One URI shape for the ordinary and the budgeted search, so the two can never ask Google Books different questions.
+    private string SearchUri(BookSearchQuery query)
+    {
         var providerQuery = IsbnNormalizer.TryNormalizeQuery(query.Text, out var isbn)
             ? $"isbn:{isbn}"
             : query.Text;
-        var requestUri =
+        return
             $"volumes?q={Uri.EscapeDataString(providerQuery)}" +
             $"&maxResults={_options.MaxResults.ToString(CultureInfo.InvariantCulture)}" +
             $"&startIndex={((query.Page - 1) * _options.MaxResults).ToString(CultureInfo.InvariantCulture)}" +
             "&printType=books&projection=full";
+    }
 
-        var response = await httpClient.GetFromJsonAsync<GoogleBooksVolumesResponse>(
-            requestUri,
-            cancellationToken);
-
+    private BookCandidateSearchPage ToSearchPage(GoogleBooksVolumesResponse? response, int page)
+    {
         var items = response?.Items ?? [];
         var candidates = items
             .Select(ToCandidate)
             .Where(candidate => candidate is not null)
             .Cast<BookCandidate>()
             .ToArray();
-        var offset = (query.Page - 1) * _options.MaxResults;
+        var offset = (page - 1) * _options.MaxResults;
         var hasMore = response?.TotalItems is { } totalItems
             ? totalItems > offset + items.Count
             : items.Count == _options.MaxResults;

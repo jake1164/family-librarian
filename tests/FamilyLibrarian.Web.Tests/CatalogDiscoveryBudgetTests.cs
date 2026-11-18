@@ -4,7 +4,6 @@ using System.Text.Json;
 using FamilyLibrarian.Application.Catalog;
 using FamilyLibrarian.Application.Catalog.Discovery;
 using FamilyLibrarian.Domain.Catalog;
-using FamilyLibrarian.Web.Catalog;
 
 namespace FamilyLibrarian.Web.Tests;
 

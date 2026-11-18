@@ -251,10 +251,11 @@ public sealed partial class OpenLibraryBookMetadataProvider(
         string fields,
         int limit,
         int page,
-        CancellationToken cancellationToken)
-    {
-        var response = await FetchSearchAsync(query, fields, limit, page, cancellationToken);
+        CancellationToken cancellationToken) =>
+        ToSearchPage(await FetchSearchAsync(query, fields, limit, page, cancellationToken), limit, page);
 
+    private BookCandidateSearchPage ToSearchPage(OpenLibrarySearchResponse? response, int limit, int page)
+    {
         if (response?.Documents is not { Count: > 0 })
         {
             return new BookCandidateSearchPage([], false);
@@ -282,11 +283,15 @@ public sealed partial class OpenLibraryBookMetadataProvider(
         int page,
         CancellationToken cancellationToken) =>
         httpClient.GetFromJsonAsync<OpenLibrarySearchResponse>(
-            $"search.json?q={Uri.EscapeDataString(query)}" +
-            $"&fields={Uri.EscapeDataString(fields)}&lang={PreferredLanguage}" +
-            $"&limit={limit.ToString(CultureInfo.InvariantCulture)}" +
-            $"&page={page.ToString(CultureInfo.InvariantCulture)}",
+            OrdinarySearchUri(query, fields, limit, page),
             cancellationToken);
+
+    // One URI shape for the ordinary and the budgeted search, so the two can never ask Open Library different questions.
+    private static string OrdinarySearchUri(string query, string fields, int limit, int page) =>
+        $"search.json?q={Uri.EscapeDataString(query)}" +
+        $"&fields={Uri.EscapeDataString(fields)}&lang={PreferredLanguage}" +
+        $"&limit={limit.ToString(CultureInfo.InvariantCulture)}" +
+        $"&page={page.ToString(CultureInfo.InvariantCulture)}";
 
     private static OpenLibraryEditionDocument? PrimaryEdition(OpenLibrarySearchDocument document) =>
         document.Editions?.Documents is { Count: > 0 } editions ? editions[0] : null;

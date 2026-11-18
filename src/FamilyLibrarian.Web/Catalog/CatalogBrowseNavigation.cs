@@ -1,3 +1,4 @@
+using FamilyLibrarian.Application.Catalog.Discovery;
 using FamilyLibrarian.Application.Abstractions;
 using FamilyLibrarian.Application.Catalog;
 using FamilyLibrarian.Contracts.Catalog;

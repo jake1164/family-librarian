@@ -53,7 +53,23 @@ public enum DiscoveryOperation
     GetSeriesMembers = 2,
     ResolveAuthor = 3,
     GetAuthorWorks = 4,
-    GetAuthorSeries = 5
+    GetAuthorSeries = 5,
+
+    /// <summary>
+    /// One ordinary book search read under a journey's budget (see <see cref="IBudgetedBookMetadataProvider"/>). A seed read, not a
+    /// discovery capability: it never appears in a <see cref="DiscoveryCapabilities"/> table and is never mislabelled as a series call.
+    /// </summary>
+    SearchBooks = 6,
+
+    /// <summary>One ordinary book detail read under a journey's budget. A seed read, not a discovery capability.</summary>
+    GetBookDetails = 7
+}
+
+public static class DiscoveryOperations
+{
+    /// <summary>True for the five author/series discovery operations an integration declares capabilities for; false for the seed/detail reads.</summary>
+    public static bool IsDiscoveryCapability(this DiscoveryOperation operation) =>
+        operation is >= DiscoveryOperation.FindSeriesForBook and <= DiscoveryOperation.GetAuthorSeries;
 }
 
 public enum CapabilityState

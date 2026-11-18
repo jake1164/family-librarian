@@ -1,5 +1,6 @@
 // One-shot expected-value arrays in assertions are clearer inline than as static fields; CA1861 targets repeated calls.
 #pragma warning disable CA1861
+using FamilyLibrarian.Application.Catalog.Discovery;
 using System.Data.Common;
 using System.Globalization;
 using System.Net;

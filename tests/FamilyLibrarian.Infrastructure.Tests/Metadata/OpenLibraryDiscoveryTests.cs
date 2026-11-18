@@ -1596,7 +1596,7 @@ public sealed class OpenLibraryDiscoveryTests
         using var rig = Rig.With();
         var capabilities = ((IBookMetadataDiscoveryProvider)rig.Provider).Capabilities;
 
-        foreach (var operation in Enum.GetValues<DiscoveryOperation>())
+        foreach (var operation in Enum.GetValues<DiscoveryOperation>().Where(operation => operation.IsDiscoveryCapability()))
         {
             Assert.AreEqual(CapabilityState.Supported, capabilities.Get(operation).State, operation.ToString());
         }

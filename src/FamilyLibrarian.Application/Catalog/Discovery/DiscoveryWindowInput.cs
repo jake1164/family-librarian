@@ -1,8 +1,6 @@
-using FamilyLibrarian.Application.Catalog;
-using FamilyLibrarian.Application.Catalog.Discovery;
 using FamilyLibrarian.Domain.Catalog;
 
-namespace FamilyLibrarian.Web.Catalog;
+namespace FamilyLibrarian.Application.Catalog.Discovery;
 
 /// <summary>One credit of a discovered book exactly as the source listed it; the native id is kept only where the source supplied one.</summary>
 public sealed record WindowCredit(int Ordinal, string Label, string? NativeAuthorId, string? Role = null);

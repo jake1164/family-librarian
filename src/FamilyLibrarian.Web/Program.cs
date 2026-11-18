@@ -43,13 +43,9 @@ builder.Services.AddScoped<SystemReadinessService>();
 builder.Services.AddSingleton<AvailabilityRunCoordinator>();
 builder.Services.AddHostedService<AvailabilityRunHostedService>();
 builder.Services.AddSingleton<CatalogSearchRunCoordinator>();
-builder.Services.AddSingleton<CatalogBrowseContextStore>();
+// The browse context store, discovery journeys, admission limiter and CatalogDiscoveryService are the transport-neutral core and
+// are registered with the Infrastructure services, so the web routes and the shared answer service use the same instances.
 builder.Services.AddScoped<CatalogBrowseNavigation>();
-// Explicit source lookups: host-memory journeys and the per-user admission rule are singletons; the service is scoped because
-// it reads the active-provider settings and the scoped clock.
-builder.Services.AddSingleton<CatalogDiscoveryJourneys>();
-builder.Services.AddSingleton<CatalogExpansionLimiter>();
-builder.Services.AddScoped<CatalogDiscoveryService>();
 builder.Services.AddHostedService<CatalogSearchRunHostedService>();
 builder.Services.AddSingleton<SecurityEvaluationScheduler>();
 builder.Services.AddHostedService<SecurityEvaluationHostedService>();

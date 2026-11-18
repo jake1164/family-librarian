@@ -176,9 +176,14 @@ public sealed partial class HardcoverBookMetadataProvider(
         return result?.Book is { } book ? await ToCandidateAsync(book, cancellationToken) : null;
     }
 
+    /// <param name="resolveLanguage">
+    /// False for a budgeted read: the language-name lookup is a separate ancillary request that the journey budget does not admit,
+    /// so the candidate carries no language (unknown, never guessed) and nothing is dispatched.
+    /// </param>
     private async Task<BookCandidate?> ToCandidateAsync(
         HardcoverBook book,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        bool resolveLanguage = true)
     {
         var title = book.Title?.Trim();
         if (string.IsNullOrWhiteSpace(title))
@@ -240,7 +245,7 @@ public sealed partial class HardcoverBookMetadataProvider(
         }
 
         var representativeEdition = book.DefaultPhysicalEdition ?? book.DefaultEbookEdition;
-        var language = representativeEdition?.LanguageId is { } languageId
+        var language = resolveLanguage && representativeEdition?.LanguageId is { } languageId
             ? await languageLookup.GetIsoCodeAsync(languageId, cancellationToken)
             : null;
 
