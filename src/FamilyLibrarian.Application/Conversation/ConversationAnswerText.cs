@@ -232,7 +232,7 @@ internal static class ConversationAnswerText
             .ToArray();
         var card = new ConversationAnswerCard(
             "answer", headline, visible.Select(item => item.Card).ToArray(), cardGroups, notes,
-            answer.Subject?.SavedId is { } savedSeries ? "/series/" + savedSeries.ToString("D", CultureInfo.InvariantCulture) : null);
+            SubjectRoute(answer.Subject));
         return new Rendered(text, [card], offered, offered.Length, shownKeys, Math.Max(0, unseenTotal - shownKeys.Length));
     }
 
@@ -340,6 +340,19 @@ internal static class ConversationAnswerText
         CatalogAnswerCodes.CreditUnverified => "Some entries could not be confirmed as that author's work.",
         _ => null
     };
+
+    /// <summary>
+    /// The reason sentence for a clarification, worded for what is actually offered: a name is never an identity, so a lone
+    /// series is still confirmed, but the reply does not claim several matched when only one did.
+    /// </summary>
+    public static string? ReasonText(string code, IReadOnlyList<CatalogAnswerChoice> choices)
+    {
+        ArgumentNullException.ThrowIfNull(choices);
+        return code == CatalogAnswerCodes.SeriesChoices &&
+               choices.Count(choice => choice.Reference.Kind == CatalogSubjectKind.Series) == 1
+            ? "One series matches that name, so I need you to confirm it."
+            : ReasonText(code);
+    }
 
     public static string? ReasonText(string code) => code switch
     {
@@ -486,7 +499,7 @@ internal static class ConversationAnswerText
             ? $"Books in {subject} with a publication date still to come:"
             : $"The one book in {subject} with a publication date still to come:",
         CatalogAnswerOperation.NextRelease => $"The next release I can find in {subject} is:",
-        CatalogAnswerOperation.PublicationForTitle => "What the sources say about when it was published:",
+        CatalogAnswerOperation.PublicationForTitle => "What the sources say about its publication date:",
         CatalogAnswerOperation.AuthorWorks => "Known works by this author:",
         CatalogAnswerOperation.AuthorSeries => "Series this author is credited on:",
         CatalogAnswerOperation.SeriesMembers => many ? $"The books I can see in {subject}, in order:" : $"The one book I can see in {subject}:",
@@ -505,7 +518,7 @@ internal static class ConversationAnswerText
         }
 
         foreach (var qualifier in answer.Qualifiers) AddSentence(notes, QualifierText(qualifier));
-        foreach (var reason in answer.Reasons) AddSentence(notes, ReasonText(reason));
+        foreach (var reason in answer.Reasons) AddSentence(notes, ReasonText(reason, answer.Choices));
         var coverage = CoverageText(answer.Coverage);
         AddSentence(notes, coverage);
         if (answer.AvailableOrders.Count > 1) notes.Add("Reply with the number of the order you mean.");
@@ -629,7 +642,21 @@ internal static class ConversationAnswerText
             lines,
             groups,
             notes,
-            answer.Subject?.SavedId is { } savedSeries ? "/series/" + savedSeries.ToString("D", CultureInfo.InvariantCulture) : null);
+            SubjectRoute(answer.Subject));
+
+    /// <summary>
+    /// The application page for the saved record an answer is about, by what that record actually is: a saved id is only ever
+    /// turned into the route of its own kind, so an author's id can never become a series address. A subject with no saved
+    /// id, or of a kind with no page of its own (a title), has no link.
+    /// </summary>
+    private static string? SubjectRoute(CatalogSubjectRef? subject) => subject is { SavedId: { } id } && id != Guid.Empty
+        ? subject.Kind switch
+        {
+            CatalogSubjectKind.Series => "/series/" + id.ToString("D", CultureInfo.InvariantCulture),
+            CatalogSubjectKind.Author => "/authors/" + id.ToString("D", CultureInfo.InvariantCulture),
+            _ => null
+        }
+        : null;
 
     private static ConversationAnswerCardLine ToCard(CardLine line) =>
         new(line.TitleOrNull ?? line.Text, line.Authors, line.Facts, line.Href);

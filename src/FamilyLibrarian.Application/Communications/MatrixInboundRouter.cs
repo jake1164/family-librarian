@@ -27,7 +27,8 @@ public sealed class MatrixInboundRouter(
     ProviderInteractionLinkService? providerInteractions = null,
     IConversationTurnExecutor? conversation = null,
     ConversationOptions? conversationOptions = null,
-    IAcquisitionQuestionMatrixAnswers? acquisitionQuestions = null)
+    IAcquisitionQuestionMatrixAnswers? acquisitionQuestions = null,
+    ProviderInteractionAlertOptions? interactionOptions = null)
 {
     private static readonly string[] AffirmativeReplies = ["yes", "yep", "y"];
     private static readonly string[] NegativeReplies = ["no", "nope", "n"];
@@ -135,7 +136,7 @@ public sealed class MatrixInboundRouter(
                 return;
             }
 
-            var sent = await ReplyAsync(settings, accessToken, destination.RoomId!, MatrixReplyFormatter.ToText(result.Reply), cancellationToken);
+            var sent = await ReplyAsync(settings, accessToken, destination.RoomId!, MatrixReplyFormatter.ToText(result.Reply, interactionOptions?.PublicOrigin), cancellationToken);
             if (sent.Succeeded && result.EventKey is not null)
             {
                 await conversation.MarkDeliveredAsync(result.EventKey, cancellationToken);

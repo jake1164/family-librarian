@@ -340,7 +340,7 @@ public static class CatalogAnswerPolicy
         var kept = ApplyFilter(entries, filter ?? CatalogAnswerFilter.None, state);
 
         var works = new List<CatalogAnswerEntry>();
-        var futureEditions = new List<CatalogAnswerEntry>();
+        var futureEditionEntries = new List<CatalogAnswerEntry>();
         var possibly = new List<CatalogAnswerEntry>();
         var announcedUndated = new List<CatalogAnswerEntry>();
         var conflicts = new List<CatalogAnswerEntry>();
@@ -362,7 +362,7 @@ public static class CatalogAnswerPolicy
                     break;
                 case CatalogDateTemporal.Future:
                     // A future edition or reprint stays one: it is not a new original work.
-                    futureEditions.Add(entry);
+                    futureEditionEntries.Add(entry);
                     break;
                 case CatalogDateTemporal.IncludesToday:
                     possibly.Add(entry);
@@ -376,12 +376,12 @@ public static class CatalogAnswerPolicy
             }
         }
 
-        state.Group("future-editions", futureEditions);
+        state.Group("future-editions", futureEditionEntries);
         state.Group("possibly-upcoming", possibly);
         state.Group("announced-undated", announcedUndated);
         state.Group("status-date-conflict", conflicts);
         if (conflicts.Count > 0) state.Qualify(CatalogAnswerCodes.StatusDateConflict);
-        if (futureEditions.Count > 0) state.Qualify(CatalogAnswerCodes.EditionNotOriginal);
+        if (futureEditionEntries.Count > 0) state.Qualify(CatalogAnswerCodes.EditionNotOriginal);
         if (possibly.Count > 0) state.Qualify(CatalogAnswerCodes.IncludesTodayInterval);
         if (notStated > 0) state.Qualify(CatalogAnswerCodes.UndatedEntriesPresent);
 
@@ -464,6 +464,15 @@ public static class CatalogAnswerPolicy
         if (matches.Any(entry => entry.Publication.State != PublicationDateState.Dated)) state.Qualify(CatalogAnswerCodes.UndatedEntriesPresent);
         if (dated.Any(entry => TemporalOf(entry.Publication, today) == CatalogDateTemporal.IncludesToday)) state.Qualify(CatalogAnswerCodes.IncludesTodayInterval);
         if (dated.Any(entry => IsStatusDateConflict(entry, today))) state.Qualify(CatalogAnswerCodes.StatusDateConflict);
+
+        // A date still to come with no status from the source is what the source attributes to the book, not a confirmed
+        // release: the same reading the upcoming-release answer gives it.
+        if (dated.Any(entry => TemporalOf(entry.Publication, today) == CatalogDateTemporal.Future &&
+                               entry.Publication.SourceStatus == PublicationStatus.Unknown))
+        {
+            state.Qualify(CatalogAnswerCodes.ReleaseDateAttributed);
+            state.Qualify(CatalogAnswerCodes.StatusUnverified);
+        }
 
         if (dated.Any(entry => entry.LegacyPrecision)) state.Qualify(CatalogAnswerCodes.LegacyPrecision);
         if (scope.SourceGaps) state.Qualify(CatalogAnswerCodes.SourceGaps);

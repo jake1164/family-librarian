@@ -31,7 +31,9 @@ public sealed class BrowserRequestQueueE2ETests
     public async Task AFamilyMemberCanRequestABookAndAnAdminCanReviewItThroughTheBrowser()
     {
         var settings = ReadSettings();
-        var requesterEmail = $"browser-e2e-{Guid.NewGuid():N}@family-librarian.example";
+        var runId = Guid.NewGuid().ToString("N");
+        var requesterEmail = $"browser-e2e-{runId}@family-librarian.example";
+        var bookTitle = $"Queue Fixture {runId[..12]}";
         await EnableAnEbookDestinationAsync(settings);
 
         using var playwright = await Playwright.CreateAsync();
@@ -62,11 +64,13 @@ public sealed class BrowserRequestQueueE2ETests
 
         await SignInAsync(page, settings.BaseUri, requesterEmail, RequesterPassword);
         await page.GotoAsync(new Uri(settings.BaseUri, "/search").ToString());
-        await page.GetByLabel("Title, author, or ISBN", new() { Exact = true }).FillAsync("the hobbit");
+        // compose.release-e2e.yaml's metadata fixture turns any searched text into one Work with exactly that title, so a
+        // title unique to this run selects a record, and creates a request, that no earlier run or other member shares.
+        await page.GetByLabel("Title, author, or ISBN", new() { Exact = true }).FillAsync(bookTitle);
         await page.GetByLabel("Title, author, or ISBN", new() { Exact = true }).PressAsync("Enter");
         await Assertions.Expect(page.GetByRole(AriaRole.Heading, new() { Name = "Results", Exact = true }))
             .ToBeVisibleAsync();
-        await page.Locator("a.search-result-title").First.ClickAsync();
+        await page.Locator("a.search-result-title").Filter(new() { HasText = bookTitle }).First.ClickAsync();
         await page.GetByRole(AriaRole.Button, new() { Name = "Request this book", Exact = true }).ClickAsync();
         await Assertions.Expect(page.GetByText("Your interest is saved.", new() { Exact = false })).ToBeVisibleAsync();
 
@@ -75,8 +79,12 @@ public sealed class BrowserRequestQueueE2ETests
         await page.GotoAsync(new Uri(settings.BaseUri, "/admin/requests").ToString());
         await Assertions.Expect(page.GetByRole(AriaRole.Heading, new() { Name = "Request queue", Exact = true }))
             .ToBeVisibleAsync();
-        await Assertions.Expect(page.GetByText(requesterEmail, new() { Exact = false })).ToBeVisibleAsync();
-        await page.GetByRole(AriaRole.Link, new() { Name = "Review request", Exact = true }).ClickAsync();
+        // Only the card for this run's book: the member's own request, not whichever request the queue lists first.
+        var requestCard = page.Locator(".mud-card").Filter(new() { HasText = bookTitle });
+        await Assertions.Expect(requestCard).ToHaveCountAsync(1);
+        await Assertions.Expect(requestCard.GetByText(requesterEmail, new() { Exact = false })).ToBeVisibleAsync();
+        await requestCard.GetByRole(AriaRole.Link, new() { Name = "Review request", Exact = true }).ClickAsync();
+        await Assertions.Expect(page.GetByText(requesterEmail, new() { Exact = false }).First).ToBeVisibleAsync();
         await page.GetByRole(AriaRole.Button, new() { Name = "Needs review", Exact = true }).ClickAsync();
         await Assertions.Expect(page.GetByText("PendingAcquisition → NeedsReview", new() { Exact = true }))
             .ToBeVisibleAsync();

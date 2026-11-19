@@ -1,4 +1,5 @@
 using FamilyLibrarian.Application.Abstractions;
+using FamilyLibrarian.Application.Acquisition;
 using FamilyLibrarian.Application.Catalog;
 using FamilyLibrarian.Application.Communications;
 using FamilyLibrarian.Application.Conversation;
@@ -207,6 +208,42 @@ public sealed class MatrixInboundRouterTests
         Assert.AreEqual("Here you go.", context.MatrixClient.LastReply);
     }
 
+    private static readonly Guid SavedWork = Guid.Parse("4b0c6f1e-2f3a-4d5b-9c8d-7e6f5a4b3c2d");
+
+    private static ConversationTurnResult SavedAnswer() =>
+        new(
+            new ConversationReply(
+                ConversationReplyKind.Answer, "Book 1 of The Lantern Road is:\n1. Lanterns at Dawn", [], [], [],
+                Answers: [new ConversationAnswerCard("answer", "Book 1 of The Lantern Road is:",
+                    [new ConversationAnswerCardLine("Lanterns at Dawn", "Mara Quill", ["book 1"], $"/works/{SavedWork:D}")], [], [])]),
+            Replayed: false, DeliveryPending: false, EventKey: null);
+
+    [TestMethod]
+    [DataRow("https://fl.example.test", "https://fl.example.test/works/4b0c6f1e-2f3a-4d5b-9c8d-7e6f5a4b3c2d")]
+    [DataRow(null, null)]
+    public async Task AChatAnswerAboutASavedRecordLinksToItOnlyWhenTheDeploymentHasATrustedOrigin(string? origin, string? expectedLink)
+    {
+        var context = new TestContext(
+            new FakeTurnExecutor(() => Task.FromResult<ConversationTurnResult?>(SavedAnswer())),
+            new ConversationOptions { Enabled = true, MatrixEnabled = true },
+            new ProviderInteractionAlertOptions { PublicOrigin = origin });
+        context.ConfigureMatrix();
+        var destination = context.SeedVerifiedDestination();
+
+        await context.Router.HandleMessageAsync(
+            new MatrixInboundMessage(destination.RoomId!, destination.MatrixUserId!, "1", EventId: "$e1"), CancellationToken.None);
+
+        StringAssert.StartsWith(context.MatrixClient.LastReply, "Book 1 of The Lantern Road is:\n1. Lanterns at Dawn");
+        if (expectedLink is null)
+        {
+            Assert.DoesNotContain("http", context.MatrixClient.LastReply!, "Without a configured origin the reply carries no address.");
+        }
+        else
+        {
+            Assert.AreEqual("Open in Family Librarian: " + expectedLink, context.MatrixClient.LastReply!.Split('\n')[^1]);
+        }
+    }
+
     private static (TestContext Context, FakeTurnExecutor Executor, UserMatrixDestination Destination) Rechecked(ConversationTurnResult result)
     {
         var executor = new FakeTurnExecutor(() => Task.FromResult<ConversationTurnResult?>(result));
@@ -298,7 +335,9 @@ public sealed class MatrixInboundRouterTests
         public FakeMatrixClient MatrixClient { get; } = new();
         public MatrixInboundRouter Router { get; }
 
-        public TestContext(IConversationTurnExecutor? conversation = null, ConversationOptions? conversationOptions = null)
+        public TestContext(
+            IConversationTurnExecutor? conversation = null, ConversationOptions? conversationOptions = null,
+            ProviderInteractionAlertOptions? interactionOptions = null)
         {
             var clock = new FixedClock();
             var currentUser = new StubCurrentUser();
@@ -311,7 +350,7 @@ public sealed class MatrixInboundRouterTests
             Router = new MatrixInboundRouter(
                 DestinationStore, CommunicationStore, deliveryAttempts, SettingsStore,
                 new FakeCredentialProtector(), MatrixClient, clock, new NullAuditWriter(),
-                conversation: conversation, conversationOptions: conversationOptions);
+                conversation: conversation, conversationOptions: conversationOptions, interactionOptions: interactionOptions);
         }
 
         public void ConfigureMatrix()

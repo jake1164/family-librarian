@@ -602,6 +602,13 @@ the two settings disagree. Left unset, the application still starts normally
 other notification path and the existing in-app "needs you" queue keep
 working. `http` is accepted only in the Development environment.
 
+The same origin lets a Matrix chat answer about a book or series already in the
+family catalog end with one "Open in Family Librarian" link to that record's
+page (`/works/…` or `/series/…`). The link is built only from the catalog's own
+id, never from a metadata source, and opening it still requires signing in.
+Without `Interaction__PublicOrigin`, chat answers in Matrix carry no links; the
+web chat always links saved records.
+
 Each administrator links their own Matrix ID at **Settings → Matrix chat**
 (`/settings/matrix`) to receive this alert; an administrator with no verified
 link simply receives none. The same page's quiet hours (a time zone and daily
