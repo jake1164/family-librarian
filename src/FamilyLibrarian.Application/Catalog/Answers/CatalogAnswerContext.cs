@@ -343,6 +343,63 @@ public sealed class CatalogAnswerContextStore
     }
 
     /// <summary>
+    /// The window's own offered choice that has exactly this identity (kind, saved id or source reference, and ordering), only for the
+    /// exact caller and an unexpired root. A number is only a position on the screen: the reference that is acted on is the one this
+    /// owner's retained window holds, so a shown line can never select a different record because the two orders differ.
+    /// </summary>
+    public CatalogAnswerChoice? TryFindChoice(
+        CatalogAnswerCaller caller, Guid rootId, CatalogSubjectKind kind, Guid? savedId, SourceRef? native, SeriesOrderingKind order, DateTimeOffset now)
+    {
+        ArgumentNullException.ThrowIfNull(caller);
+        lock (gate)
+        {
+            return Find(caller, rootId, now)?.Window?.Choices.FirstOrDefault(choice =>
+                choice.Reference.Kind == kind && choice.Reference.SavedId == savedId && choice.Reference.Native == native
+                && choice.Reference.Order == order);
+        }
+    }
+
+    /// <summary>The window's own series that has exactly this identity (saved id or source reference), by the same rule as <see cref="TryFindChoice"/>.</summary>
+    public CatalogAnswerSeries? TryFindSeries(CatalogAnswerCaller caller, Guid rootId, Guid? savedId, SourceRef? native, DateTimeOffset now)
+    {
+        ArgumentNullException.ThrowIfNull(caller);
+        lock (gate)
+        {
+            return Find(caller, rootId, now)?.Window?.Series.FirstOrDefault(series =>
+                series.IsBound && series.SavedId == savedId && series.Id == native);
+        }
+    }
+
+    /// <summary>
+    /// The identity keys of the records already shown to the reader from this root, so "more" shows what has not been seen whatever
+    /// order a new page sorts into. Empty for another caller or an expired root.
+    /// </summary>
+    public IReadOnlySet<string> GetShown(CatalogAnswerCaller caller, Guid rootId, DateTimeOffset now)
+    {
+        ArgumentNullException.ThrowIfNull(caller);
+        lock (gate)
+        {
+            return Find(caller, rootId, now) is { } root ? new HashSet<string>(root.Shown, StringComparer.Ordinal) : new HashSet<string>(StringComparer.Ordinal);
+        }
+    }
+
+    /// <summary>Records the keys just shown (replacing the earlier ones for a new list, adding to them for a continuation). Bounded by the per-root record limit.</summary>
+    public void RecordShown(CatalogAnswerCaller caller, Guid rootId, IEnumerable<string> keys, bool append, DateTimeOffset now)
+    {
+        ArgumentNullException.ThrowIfNull(caller);
+        ArgumentNullException.ThrowIfNull(keys);
+        lock (gate)
+        {
+            if (Find(caller, rootId, now) is not { } root) return;
+            if (!append) root.Shown.Clear();
+            foreach (var key in keys)
+            {
+                if (root.Shown.Count >= Math.Max(0, limits.MaxRecordsPerRoot)) break;
+                root.Shown.Add(key);
+            }
+        }
+    }
+    /// <summary>
     /// Retains the window for the caller's root, replacing any earlier one. Entries are kept from the front until the exact byte budget
     /// or the entry bound is reached; the kept window then says it is truncated and offers no continuation (following it would skip
     /// what was cut). Returns null when the root is not the caller's or not even an empty window fits.
@@ -456,5 +513,7 @@ public sealed class CatalogAnswerContextStore
         public long Sequence { get; } = sequence;
 
         public CatalogRetainedWindow? Window { get; set; }
+
+        public HashSet<string> Shown { get; } = new(StringComparer.Ordinal);
     }
 }

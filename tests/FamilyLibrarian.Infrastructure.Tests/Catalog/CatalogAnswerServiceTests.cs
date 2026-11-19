@@ -5,8 +5,10 @@ using FamilyLibrarian.Application.Abstractions;
 using FamilyLibrarian.Application.Catalog;
 using FamilyLibrarian.Application.Catalog.Answers;
 using FamilyLibrarian.Application.Catalog.Discovery;
+using FamilyLibrarian.Application.Conversation;
 using FamilyLibrarian.Application.Integrations;
 using FamilyLibrarian.Domain.Catalog;
+using FamilyLibrarian.Infrastructure.Tests.Conversation;
 using Claim = FamilyLibrarian.Application.Catalog.Discovery.PositionClaim;
 
 namespace FamilyLibrarian.Infrastructure.Tests.Catalog;
@@ -62,8 +64,9 @@ public sealed class CatalogAnswerServiceTests
     }
 
     /// <summary>One scripted source that spends from the budget it is given the way a real adapter does, and counts what it spent.</summary>
-    private sealed class Source : IBookMetadataProvider, IBookMetadataDiscoveryProvider, IBudgetedBookMetadataProvider
+    private sealed class Source : IBookMetadataProvider, IBookMetadataDiscoveryProvider, IBudgetedBookMetadataProvider, IWorkEditionTitlesProvider
     {
+        private int editionReads;
         private readonly ConcurrentDictionary<DiscoveryOperation, int> reads = new();
         private int physicalAttempts;
 
@@ -74,6 +77,8 @@ public sealed class CatalogAnswerServiceTests
         string IBookMetadataDiscoveryProvider.ProviderId => Id;
 
         string IBudgetedBookMetadataProvider.ProviderId => Id;
+
+        string IWorkEditionTitlesProvider.ProviderId => Id;
 
         public DiscoveryCapabilities Capabilities { get; set; } = new(
             Enum.GetValues<DiscoveryOperation>().Where(operation => operation.IsDiscoveryCapability())
@@ -101,6 +106,11 @@ public sealed class CatalogAnswerServiceTests
         public Func<CancellationToken, Task>? Hold { get; set; }
 
         public int PhysicalAttempts => Volatile.Read(ref physicalAttempts);
+
+        public int EditionReads => Volatile.Read(ref editionReads);
+
+        /// <summary>The edition titles this source reports for a Work, and what it says it has in total.</summary>
+        public Func<SourceRef, (WorkEditionTitle[] Titles, int? Total)> Editions { get; set; } = _ => ([], null);
 
         public int Reads(DiscoveryOperation operation) => reads.TryGetValue(operation, out var count) ? count : 0;
 
@@ -198,6 +208,25 @@ public sealed class CatalogAnswerServiceTests
 
         public Task<BudgetedRead<BookCandidate>> GetDetailsBudgetedAsync(string externalId, IDiscoveryBudget budget, CancellationToken cancellationToken) =>
             throw new InvalidOperationException("Not used by the answer service.");
+
+        public async Task<BudgetedRead<WorkEditionTitlePage>> GetWorkEditionTitlesAsync(
+            SourceRef work, IDiscoveryBudget budget, CancellationToken cancellationToken)
+        {
+            Interlocked.Increment(ref editionReads);
+            var (ok, stop) = await BeginAsync(DiscoveryOperation.GetWorkEditions, budget, paged: true, cancellationToken);
+            var now = new DateTimeOffset(2026, 11, 17, 12, 0, 0, TimeSpan.Zero);
+            if (!ok) return BudgetedRead.NotAnswered<WorkEditionTitlePage>(DiscoveryOutcome.Failed, budget.Usage, now, [stop!]);
+            if (ForcedOutcome is { } forced && forced is not DiscoveryOutcome.Ok)
+            {
+                return BudgetedRead.NotAnswered<WorkEditionTitlePage>(forced, budget.Usage, now, [DiscoveryCodes.ProviderError]);
+            }
+
+            var (titles, total) = Editions(work);
+            budget.RecordItems(titles.Length);
+            return titles.Length == 0
+                ? BudgetedRead.Empty<WorkEditionTitlePage>(budget.Usage, now)
+                : BudgetedRead.Found(new WorkEditionTitlePage(titles, total), budget.Usage, now);
+        }
     }
 
     /// <summary>An active source with only the ordinary, unbudgeted contract: it cannot be used to seed an answer.</summary>
@@ -317,6 +346,9 @@ public sealed class CatalogAnswerServiceTests
         public Task<CatalogAnswer> Ask(CatalogAnswerRequest request, CatalogAnswerCaller? caller = null, CancellationToken cancellationToken = default) =>
             Service.AnswerAsync(caller ?? Reader, request, cancellationToken);
     }
+
+    private static CatalogSubjectRef BookEntry(string id, string title = "Birch") =>
+        CatalogSubjectRef.FromSource(CatalogSubjectKind.Book, title, Work(id));
 
     private static CatalogAnswerRequest Latest(CatalogSubjectRef? subject = null) =>
         new() { Operation = CatalogAnswerOperation.LatestPublished, Subject = subject ?? Saga() };
@@ -846,8 +878,38 @@ public sealed class CatalogAnswerServiceTests
         };
 
     [TestMethod]
-    public async Task ASeriesNameOnlyEverProducesChoicesAndFetchesNothingThatDependsOnTheSelection()
+    public async Task APublicationQuestionNamingAnAuthorOffersThatAuthorFirstAndItsSeriesAfterThem()
     {
+        // "the latest Tom Clancy book" names an author: the same seed read that carries the series claims carries the credit, so the
+        // author is offered before any of that author's series, and both are only choices.
+        var rig = new Rig(configure: source => source.SearchHits = _ =>
+            [Hit("w1", "The Hunt for Red October", new BookAuthorCredit("Tom Clancy", null, "A1"))]);
+
+        var answer = await rig.Ask(new CatalogAnswerRequest { Operation = CatalogAnswerOperation.LatestPublished, Text = "Tom Clancy" });
+
+        Assert.AreEqual(CatalogAnswerOutcome.Clarification, answer.Outcome);
+        Assert.AreEqual(CatalogSubjectKind.Author, answer.Choices[0].Reference.Kind, "The author is offered first, never chosen.");
+        Assert.AreEqual("Tom Clancy", answer.Choices[0].Reference.Label);
+        Assert.AreEqual(CatalogSubjectKind.Series, answer.Choices[^1].Reference.Kind);
+        CollectionAssert.Contains(answer.Reasons.ToArray(), CatalogAnswerCodes.AuthorChoices);
+        CollectionAssert.Contains(answer.Reasons.ToArray(), CatalogAnswerCodes.SeriesChoices);
+        Assert.AreEqual(1, rig.Source.TotalReads, "Both kinds of choice come from the one seed read.");
+    }
+
+    [TestMethod]
+    public async Task APositionQuestionNamingAnAuthorOffersOnlySeriesBecauseAPositionIsNotAnAuthorQuestion()
+    {
+        var rig = new Rig(configure: source => source.SearchHits = _ =>
+            [Hit("w1", "The Hunt for Red October", new BookAuthorCredit("Tom Clancy", null, "A1"))]);
+
+        var answer = await rig.Ask(new CatalogAnswerRequest { Operation = CatalogAnswerOperation.Position, Position = 1m, Text = "Tom Clancy" });
+
+        Assert.AreEqual(CatalogAnswerOutcome.Clarification, answer.Outcome);
+        Assert.IsTrue(answer.Choices.All(choice => choice.Reference.Kind == CatalogSubjectKind.Series));
+    }
+
+    [TestMethod]
+    public async Task ASeriesNameOnlyEverProducesChoicesAndFetchesNothingThatDependsOnTheSelection()    {
         var rig = new Rig(configure: source => source.SearchHits = _ => [Hit("w1", "Alder", new BookAuthorCredit("A. Writer", null, "A1"))]);
 
         var answer = await rig.Ask(new CatalogAnswerRequest { Operation = CatalogAnswerOperation.LatestPublished, Text = "the saga" });
@@ -1369,5 +1431,244 @@ public sealed class CatalogAnswerServiceTests
         Assert.AreEqual(1, rig.Journeys.Count, "The search, the selection and every later read drew on one allowance.");
         Assert.AreEqual(2, rig.Source.TotalReads);
         Assert.AreEqual(2, rig.Source.PhysicalAttempts);
+    }
+
+    // ========================================================================================= series members (R10)
+
+    [TestMethod]
+    public async Task AMembersListKeepsTiesGroupsUnnumberedEntriesApartAndNeverPadsTheSequence()
+    {
+        var rig = new Rig(configure: source => source.Members = _ =>
+        [
+            Member("w1", "Alder", new DateOnly(2001, 5, 1), 1),
+            Member("w2", "Birch", new DateOnly(2005, 3, 9), 2),
+            Member("w2b", "Birch: The Companion", new DateOnly(2005, 3, 9), 2),
+            Member("w5", "A Saga Short", new DateOnly(2004, 1, 1), null)
+        ]);
+
+        var answer = await rig.Ask(new CatalogAnswerRequest { Operation = CatalogAnswerOperation.SeriesMembers, Subject = Saga() });
+
+        Assert.AreEqual(CatalogAnswerOutcome.Qualified, answer.Outcome);
+        Assert.AreEqual("Alder|Birch|Birch: The Companion", string.Join("|", answer.Entries.Select(entry => entry.Title)));
+        Assert.IsTrue(answer.HasQualifier(CatalogAnswerCodes.TiedPosition), "Two records at one place are both kept and said to be tied.");
+        Assert.IsTrue(answer.HasQualifier(CatalogAnswerCodes.ListNotExhaustive), "A read page is never the whole series.");
+        Assert.AreEqual("unnumbered", answer.Groups.Single().Code);
+        Assert.AreEqual("A Saga Short", answer.Groups.Single().Entries.Single().Title);
+    }
+
+    [TestMethod]
+    public async Task AMembersListMovesAClassifiedCollectionOutOfTheNumberedSequence()
+    {
+        var rig = new Rig(configure: source => source.Members = _ =>
+        [
+            Member("w1", "Alder", new DateOnly(2001, 5, 1), 1),
+            new SeriesMember(
+                new DiscoveredBook(
+                    Work("w9"), new TitleForm("The Saga Omnibus"), [],
+                    PublicationEvidence.Dated(new DateOnly(2010, 1, 1), DatePrecision.Day, DateBasis.Original),
+                    new DateTimeOffset(2026, 11, 17, 12, 0, 0, TimeSpan.Zero),
+                    version: new BookCandidateVersion("Collection", "Collection", "The record describes a collected edition.")),
+                SagaSeries, [new Claim("4", 4m, null, SagaSeries)])
+        ]);
+
+        var answer = await rig.Ask(new CatalogAnswerRequest { Operation = CatalogAnswerOperation.SeriesMembers, Subject = Saga() });
+
+        Assert.AreEqual("Alder", answer.Entries.Single().Title);
+        Assert.AreEqual("class-not-original", answer.Groups.Single().Code);
+        Assert.IsTrue(answer.HasQualifier(CatalogAnswerCodes.ClassNotOriginal));
+    }
+
+    // ========================================================================================= edition titles (F12)
+
+    [TestMethod]
+    public async Task EditionTitlesForARetainedWorkReadOnceAndKeepTheStatedLanguageAndMissingOnesUnknown()
+    {
+        var rig = new Rig(configure: source => source.Editions = _ => (
+            [
+                new WorkEditionTitle("OL1M", "Alder", "en", "title"),
+                new WorkEditionTitle("OL2M", "Alder (Large Print)", null, "title")
+            ],
+            null));
+        var asked = await rig.Ask(Latest());
+
+        var editions = await rig.Service.EditionsAsync(Reader, asked.Context!.RootId, BookEntry("w2"), CancellationToken.None);
+
+        Assert.AreEqual(CatalogAnswerOutcome.Qualified, editions.Outcome);
+        Assert.AreEqual("Birch", editions.WorkTitle);
+        Assert.AreEqual("Alder|Alder (Large Print)", string.Join("|", editions.Editions.Select(edition => edition.Title)));
+        Assert.AreEqual("en", editions.Editions[0].Language);
+        Assert.IsNull(editions.Editions[1].Language, "A missing language stays unknown and is never guessed.");
+        Assert.AreEqual("title", editions.Editions[0].SourceField);
+        Assert.IsNotNull(editions.Work, "Every row is scoped to the Work that was asked about.");
+        Assert.AreEqual(1, rig.Source.EditionReads, "One request, never one per edition.");
+        Assert.AreEqual(1, editions.Usage.Attempts);
+        Assert.IsTrue(editions.Qualifiers.Contains(CatalogAnswerCodes.ListNotExhaustive));
+    }
+
+    [TestMethod]
+    public async Task EditionTitlesAreCappedAtOneFirstPageAndANamedSavedRecordNeedsNoCallAtAll()
+    {
+        var rig = new Rig(configure: source => source.Editions = _ => (
+            Enumerable.Range(1, 30).Select(index => new WorkEditionTitle("OL" + index, "Alder " + index, "en", "title")).ToArray(),
+            30));
+        var asked = await rig.Ask(Latest());
+
+        var editions = await rig.Service.EditionsAsync(Reader, asked.Context!.RootId, BookEntry("w2"), CancellationToken.None);
+
+        Assert.HasCount(20, editions.Editions, "At most the first twenty editions are returned.");
+        Assert.IsNotNull(editions.Work, "Every row is scoped to the Work that was asked about.");
+        Assert.AreEqual(1, rig.Source.EditionReads);
+
+        // A saved record has no native Work to expand, and nothing is called for it.
+        var savedWorkId = Guid.NewGuid();
+        rig.Saved.Series.Add(new SavedSeriesEntryEvidence(
+            Guid.NewGuid(), 1, "1", true, SeriesPositionState.SingleSource,
+            new SavedWorkEvidence(savedWorkId, "Alder", new DateOnly(2001, 1, 1), DatePrecision.Year, DateBasis.Original, PublicationStatus.Published, null, [], false)));
+        var saved = await rig.Ask(Latest(CatalogSubjectRef.Saved(CatalogSubjectKind.Series, "The Saga", Guid.NewGuid())));
+        var editionsForSaved = await rig.Service.EditionsAsync(Reader, saved.Context!.RootId, CatalogSubjectRef.Saved(CatalogSubjectKind.Book, "Alder", savedWorkId), CancellationToken.None);
+
+        Assert.AreEqual(CatalogAnswerOutcome.Unsupported, editionsForSaved.Outcome);
+        Assert.AreEqual(1, rig.Source.EditionReads, "An unsupported record costs no provider read.");
+    }
+
+    [TestMethod]
+    public async Task EditionTitlesOnAnExpiredOrForeignRootAreRefusedWithNoCall()
+    {
+        var rig = new Rig(configure: source => source.Editions = _ => ([new WorkEditionTitle("OL1M", "Alder", "en", "title")], null));
+        var asked = await rig.Ask(Latest());
+        var reads = rig.Source.EditionReads;
+
+        var foreign = await rig.Service.EditionsAsync(
+            new CatalogAnswerCaller(Guid.NewGuid(), CatalogAnswerTransport.Web, "web"), asked.Context!.RootId, BookEntry("w2"), CancellationToken.None);
+
+        rig.Clock.Advance(TimeSpan.FromMinutes(11));
+        var expired = await rig.Service.EditionsAsync(Reader, asked.Context.RootId, BookEntry("w2"), CancellationToken.None);
+
+        Assert.AreEqual(CatalogAnswerOutcome.ContextExpired, foreign.Outcome);
+        Assert.AreEqual(CatalogAnswerOutcome.ContextExpired, expired.Outcome);
+        Assert.AreEqual(reads, rig.Source.EditionReads, "Neither refusal makes a provider call.");
+    }
+
+    [TestMethod]
+    public async Task AnEditionReadThatFailsIsTypedAndNeverAnEmptyList()
+    {
+        var rig = new Rig(configure: source =>
+        {
+            source.Editions = _ => ([new WorkEditionTitle("OL1M", "Alder", "en", "title")], null);
+            source.ForcedOutcome = DiscoveryOutcome.TimedOut;
+        });
+        var asked = await rig.Ask(Latest());
+
+        var editions = await rig.Service.EditionsAsync(Reader, asked.Context!.RootId, BookEntry("w2"), CancellationToken.None);
+
+        Assert.AreEqual(CatalogAnswerOutcome.TimedOut, editions.Outcome);
+        Assert.IsEmpty(editions.Editions);
+        Assert.IsFalse(editions.Reasons.Count == 0, "A failure states why; it is never read as 'no editions exist'.");
+    }
+
+    // ============================================================ chat selection through the real service
+
+    /// <summary>Offers the author from a scripted list, then asks the real shared service for everything that follows.</summary>
+    private sealed class RealAfterOffer(ICatalogAnswerService real, ICatalogAnswerService offer) : ICatalogAnswerService
+    {
+        public List<CatalogAnswerRequest> Real { get; } = [];
+
+        public Task<CatalogAnswer> AnswerAsync(CatalogAnswerCaller caller, CatalogAnswerRequest request, CancellationToken cancellationToken)
+        {
+            if (request.Subject is null) return offer.AnswerAsync(caller, request, cancellationToken);
+            Real.Add(request);
+            return real.AnswerAsync(caller, request, cancellationToken);
+        }
+
+        public Task<CatalogEditionsAnswer> EditionsAsync(
+            CatalogAnswerCaller caller, Guid contextRootId, CatalogSubjectRef entry, CancellationToken cancellationToken) =>
+            real.EditionsAsync(caller, contextRootId, entry, cancellationToken);
+    }
+
+    [TestMethod]
+    public async Task AnAuthorSeriesNumberOpensTheSeriesThatWasShownWhenTheSourceReturnedThemInAnotherOrder()
+    {
+        var zeta = new AuthorSeriesEntry(new SeriesRef("Zeta Saga", new SourceRef("fiction", "ZZ", ExternalReferenceEntityType.Series)), RelationshipEvidence.Native);
+        var alpha = new AuthorSeriesEntry(new SeriesRef("Alpha Saga", new SourceRef("fiction", "AA", ExternalReferenceEntityType.Series)), RelationshipEvidence.Native);
+        var rig = new Rig(configure: source => source.AuthorSeriesItems = () => [zeta, alpha]);
+
+        var harness = new ConversationHarness { AnswerContexts = rig.Contexts };
+        harness.Answers.Store = rig.Contexts;
+        harness.Clock.UtcNow = rig.Clock.UtcNow;
+        harness.Answers.Script = _ => TestAnswer.Offering(new CatalogAnswerChoice(Writer(), "b. 1970", 2, "fiction", "credit-on-seed-record"));
+        var hybrid = new RealAfterOffer(rig.Service, harness.Answers);
+        harness.AnswerService = hybrid;
+
+        await harness.SayAsync("which series has A. Writer written");
+        var listed = await harness.SayAsync("1");
+
+        // The real service shows the series sorted and retains them as the source returned them: the two orders differ.
+        StringAssert.Contains(listed.Reply.Text, "1. Alpha Saga");
+        StringAssert.Contains(listed.Reply.Text, "2. Zeta Saga");
+
+        await harness.SayAsync("1");
+
+        var asked = hybrid.Real[^1].Subject!;
+        Assert.AreEqual("AA", asked.Native!.ExternalId, "Number 1 on the screen was Alpha Saga, so that is the series asked about.");
+        Assert.AreEqual(CatalogAnswerOperation.SeriesMembers, hybrid.Real[^1].Operation);
+    }
+
+    [TestMethod]
+    public async Task AMiddlePageWithNothingNewKeepsTheNextCursorSoThePageAfterItIsStillReachable()
+    {
+        // Three provider pages: Alder and Birch, then only Birch again (a duplicate-only page that still issues the next cursor),
+        // then Cedar. The real shared service retains the accumulated entries and issues each cursor.
+        static (SeriesMember[] Items, DiscoveryCursor? Next) Pages(DiscoveryCursor? cursor) => cursor?.Value switch
+        {
+            null => ([Member("w1", "Alder", new DateOnly(2001, 5, 1), 1), Member("w2", "Birch", new DateOnly(2005, 3, 9), 2)], new DiscoveryCursor("p2")),
+            "p2" => ([Member("w2", "Birch", new DateOnly(2005, 3, 9), 2)], new DiscoveryCursor("p3")),
+            "p3" => ([Member("w3", "Cedar", new DateOnly(2003, 8, 2), 3)], null),
+            _ => ([], null)
+        };
+        var rig = new Rig(configure: source => source.PagedMembers = Pages);
+        var harness = new ConversationHarness { AnswerContexts = rig.Contexts };
+        harness.Answers.Store = rig.Contexts;
+        harness.Clock.UtcNow = rig.Clock.UtcNow;
+        harness.Answers.Script = _ => TestAnswer.Offering(new CatalogAnswerChoice(Saga(), "a series", 3, "fiction", "series-claim-on-seed-record"));
+        var hybrid = new RealAfterOffer(rig.Service, harness.Answers);
+        harness.AnswerService = hybrid;
+
+        await harness.SayAsync("reading order of The Saga");
+        var first = await harness.SayAsync("1");
+        StringAssert.Contains(first.Reply.Text, "Alder");
+        StringAssert.Contains(first.Reply.Text, "Birch");
+        Assert.AreEqual(1, rig.Source.Reads(DiscoveryOperation.GetSeriesMembers));
+
+        // The second page adds nothing new but issued the cursor for the third: the list stays usable and the reader is told.
+        var empty = await harness.SayAsync("more");
+        Assert.AreEqual(2, rig.Source.Reads(DiscoveryOperation.GetSeriesMembers), "One explicit more spent one provider page.");
+        StringAssert.Contains(empty.Reply.Text, "nothing new");
+        StringAssert.Contains(empty.Reply.Text, "more");
+        var state = harness.Sessions.Sessions.Values.Single().State;
+        Assert.HasCount(2, state.Choices, "The list the reader is looking at keeps its choices.");
+        var details = await harness.SayAsync("details 2");
+        Assert.AreEqual(ConversationReplyKind.Details, details.Reply.Kind, "A number from the last displayed list still selects the record it showed.");
+        CollectionAssert.Contains(harness.Tools.Calls, "details:w2");
+
+        // The third page is reachable, shows only the new record, and spends exactly one more page.
+        var third = await harness.SayAsync("more");
+        Assert.AreEqual(3, rig.Source.Reads(DiscoveryOperation.GetSeriesMembers));
+        StringAssert.Contains(third.Reply.Text, "1. Cedar");
+        Assert.IsFalse(third.Reply.Text.Contains("Alder", StringComparison.Ordinal), "An earlier record is not repeated.");
+        Assert.IsFalse(third.Reply.Text.Contains("Birch", StringComparison.Ordinal));
+
+        // The cursors used were the ones the service issued, one per more, none repeated.
+        var tokens = hybrid.Real.Select(request => request.ContinuationToken).ToArray();
+        Assert.IsNull(tokens[0]);
+        Assert.IsNotNull(tokens[1]);
+        Assert.IsNotNull(tokens[2]);
+        Assert.AreNotEqual(tokens[1], tokens[2]);
+
+        // Exhausted: nothing more to read, so no provider call and no request.
+        var requestsBefore = hybrid.Real.Count;
+        var done = await harness.SayAsync("more");
+        StringAssert.Contains(done.Reply.Text, "nothing more");
+        Assert.AreEqual(3, rig.Source.Reads(DiscoveryOperation.GetSeriesMembers), "Exhaustion makes no provider read.");
+        Assert.AreEqual(requestsBefore, hybrid.Real.Count, "And no request to the answer service.");
     }
 }

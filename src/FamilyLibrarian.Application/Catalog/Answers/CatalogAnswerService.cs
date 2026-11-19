@@ -67,6 +67,155 @@ public sealed class CatalogAnswerService(
         }
     }
 
+    // ===================================================================================================== edition titles
+
+    public async Task<CatalogEditionsAnswer> EditionsAsync(
+        CatalogAnswerCaller caller, Guid contextRootId, CatalogSubjectRef entry, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(caller);
+        ArgumentNullException.ThrowIfNull(entry);
+
+        // The retained window is the selection: the Work is resolved from this caller's own root and checked against what it holds,
+        // never supplied blind by a client. The request here only carries the operation label a Run needs; no answer is composed from it.
+        var run = new Run(
+            caller, new CatalogAnswerRequest { Operation = CatalogAnswerOperation.SeriesMembers }, clock.UtcNow, timeProvider.GetTimestamp());
+        using var deadline = new CancellationTokenSource(options.Deadline, timeProvider);
+        using var linked = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, deadline.Token);
+        try
+        {
+            var answer = await EditionsCoreAsync(run, contextRootId, entry, linked.Token);
+            linked.Token.ThrowIfCancellationRequested();
+            return answer;
+        }
+        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+        {
+            return EditionsOf(run, CatalogAnswerOutcome.TimedOut, null, string.Empty, [], [CatalogAnswerCodes.DeadlineReached]);
+        }
+        finally
+        {
+            run.Permit?.Dispose();
+        }
+    }
+
+    private async Task<CatalogEditionsAnswer> EditionsCoreAsync(
+        Run run, Guid rootId, CatalogSubjectRef entry, CancellationToken ct)
+    {
+        var lease = contexts.TryGetRoot(run.Caller, rootId, run.Now);
+        var window = contexts.TryGetWindow(run.Caller, rootId, run.Now);
+        if (lease is null || window is null)
+        {
+            // Another reader's, another room's, expired or evicted: one answer, and nothing is fetched or retained.
+            return EditionsOf(run, CatalogAnswerOutcome.ContextExpired, null, string.Empty, [], [CatalogAnswerCodes.ContextExpiredReason]);
+        }
+
+        run.Root = lease;
+        var matched = window.Entries.FirstOrDefault(retained => SameEntry(retained, entry));
+        if (matched?.Source is not { } work)
+        {
+            // A saved-only record, or one this window does not hold (stale, replayed or from another conversation): nothing expands.
+            return EditionsOf(run, CatalogAnswerOutcome.Unsupported, null, matched?.Title ?? string.Empty, [], [CatalogAnswerCodes.OperationNotSupported]);
+        }
+
+        var workTitle = matched.Title;
+        if (work.Kind != ExternalReferenceEntityType.Work)
+        {
+            // An edition record has no Work-level edition list to expand.
+            return EditionsOf(run, CatalogAnswerOutcome.Unsupported, work, workTitle, [], [CatalogAnswerCodes.OperationNotSupported]);
+        }
+
+        var active = await providers.FindActiveProviderAsync(work.ProviderId, ct);
+        if (active is null)
+        {
+            var reason = providers.IsRegistered(work.ProviderId) ? "source-disabled" : "source-removed";
+            return EditionsOf(run, CatalogAnswerOutcome.Unavailable, work, workTitle, [], [reason]);
+        }
+
+        if (active is not IWorkEditionTitlesProvider editions)
+        {
+            return EditionsOf(run, CatalogAnswerOutcome.Unsupported, work, workTitle, [], [CatalogAnswerCodes.EditionTitlesUnavailable]);
+        }
+
+        // Resolving the source awaited a settings read: the root, journey and admission are checked against a fresh instant first.
+        if (Enter(run, work.ProviderId) is { } refusal)
+        {
+            return EditionsOf(run, refusal.Outcome, work, workTitle, [], refusal.Reasons, run.RetryAfter);
+        }
+
+        var operation = run.Journey!.BeginOperation(DiscoveryOperation.GetWorkEditions, work.ProviderId, work);
+        if (operation is null)
+        {
+            return EditionsOf(run, CatalogAnswerOutcome.ContextExpired, work, workTitle, [], [DiscoveryCodes.JourneyExpired]);
+        }
+
+        run.ProviderReads++;
+        run.LastProviderId = work.ProviderId;
+        var read = await editions.GetWorkEditionTitlesAsync(work, operation, ct);
+        run.Usages.Add(read.Usage);
+        ct.ThrowIfCancellationRequested();
+
+        if (read.Outcome is not (DiscoveryOutcome.Ok or DiscoveryOutcome.Empty))
+        {
+            return EditionsOf(run, OutcomeOf(read.Outcome), work, workTitle, [], read.Notes);
+        }
+
+        if (read.Value is null || read.Value.Editions.Count == 0)
+        {
+            // The source answered and listed no edition: no verified match in what it returned, never a global absence.
+            return EditionsOf(run, CatalogAnswerOutcome.NoVerifiedMatch, work, workTitle, [], [CatalogAnswerCodes.NoEntries]);
+        }
+
+        var titles = read.Value.Editions
+            .Where(edition => !string.IsNullOrWhiteSpace(edition.Title))
+            .Take(options.MaxEditionTitles)
+            .Select(edition => new CatalogEditionTitle(
+                edition.EditionId, edition.Title.Trim(), string.IsNullOrWhiteSpace(edition.Language) ? null : edition.Language.Trim(), edition.SourceField))
+            .ToArray();
+        if (titles.Length == 0)
+        {
+            return EditionsOf(run, CatalogAnswerOutcome.NoVerifiedMatch, work, workTitle, [], [CatalogAnswerCodes.NoEntries]);
+        }
+
+        // One page of a Work's editions is never all of them, so the list is qualified whatever the source reported.
+        return EditionsOf(run, CatalogAnswerOutcome.Qualified, work, workTitle, titles, []);
+    }
+
+    /// <summary>True when a retained entry is the record the caller selected: the saved Work or the native source reference, never a title.</summary>
+    private static bool SameEntry(CatalogAnswerEntry retained, CatalogSubjectRef subject)
+    {
+        if (subject.SavedId is { } saved) return retained.SavedWorkId == saved;
+        return subject.Native is { } native && retained.Source == native;
+    }
+
+    private CatalogEditionsAnswer EditionsOf(
+        Run run,
+        CatalogAnswerOutcome outcome,
+        SourceRef? work,
+        string workTitle,
+        IReadOnlyList<CatalogEditionTitle> editions,
+        IReadOnlyList<string> reasons,
+        TimeSpan retryAfter = default)
+    {
+        var usage = new CatalogAnswerUsage(
+            run.ProviderReads,
+            run.Usages.Sum(item => item.Attempts),
+            run.Usages.Sum(item => item.Retries),
+            run.Usages.Sum(item => item.Pages),
+            run.Usages.Sum(item => item.Items),
+            timeProvider.GetElapsedTime(run.Started));
+        return new CatalogEditionsAnswer(
+            outcome,
+            work,
+            workTitle,
+            editions,
+            outcome == CatalogAnswerOutcome.Qualified ? [CatalogAnswerCodes.ListNotExhaustive] : [],
+            reasons,
+            usage,
+            work?.ProviderId,
+            outcome is CatalogAnswerOutcome.Refused or CatalogAnswerOutcome.Throttled
+                ? (retryAfter == TimeSpan.Zero ? run.RetryAfter : retryAfter)
+                : TimeSpan.Zero);
+    }
+
     private static void Validate(CatalogAnswerRequest request)
     {
         if (!Enum.IsDefined(request.Operation)) throw new ArgumentOutOfRangeException(nameof(request), "The operation is not defined.");
@@ -113,6 +262,7 @@ public sealed class CatalogAnswerService(
         CatalogAnswerOperation.Position or CatalogAnswerOperation.AfterAnchor => kind == CatalogSubjectKind.Series,
         CatalogAnswerOperation.AuthorWorks or CatalogAnswerOperation.AuthorSeries => kind == CatalogSubjectKind.Author,
         CatalogAnswerOperation.PublicationForTitle => kind == CatalogSubjectKind.Title,
+        CatalogAnswerOperation.SeriesMembers => kind == CatalogSubjectKind.Series,
         _ => false
     };
 
@@ -220,7 +370,13 @@ public sealed class CatalogAnswerService(
         if (subject is null)
         {
             // The window holds only choices still to be made; they are shown again, with no call.
-            return Compose(run, CatalogAnswerOutcome.Clarification, choices: window.Choices, reasons: [window.ScopeCode == "author-choices" ? CatalogAnswerCodes.AuthorChoices : CatalogAnswerCodes.SeriesChoices],
+            var reasons = window.ScopeCode switch
+            {
+                "author-choices" => new[] { CatalogAnswerCodes.AuthorChoices },
+                "subject-choices" => [CatalogAnswerCodes.AuthorChoices, CatalogAnswerCodes.SeriesChoices],
+                _ => new[] { CatalogAnswerCodes.SeriesChoices }
+            };
+            return Compose(run, CatalogAnswerOutcome.Clarification, choices: window.Choices, reasons: reasons,
                 coverage: CoverageOf(run, window));
         }
 
@@ -340,6 +496,9 @@ public sealed class CatalogAnswerService(
                 break;
             case CatalogAnswerOperation.PublicationForTitle:
                 selection = CatalogAnswerPolicy.PublicationForTitle(page.Entries, subject.Label, today, scope);
+                break;
+            case CatalogAnswerOperation.SeriesMembers:
+                selection = CatalogAnswerPolicy.Members(page.Entries, request.Order, scope, request.Filter);
                 break;
             case CatalogAnswerOperation.AuthorWorks:
                 selection = CatalogAnswerPolicy.AuthorWorks(page.Entries, subject, scope);
@@ -562,6 +721,7 @@ public sealed class CatalogAnswerService(
         var choices = new List<CatalogAnswerChoice>();
         var normalized = CatalogText.NormalizeForMatch(text);
         var truncated = false;
+        var reasons = new List<string>();
 
         // Saved ids first: the library's own authors/series whose normalized name equals the text. An association, never identity.
         if (normalized.Length > 0)
@@ -579,6 +739,9 @@ public sealed class CatalogAnswerService(
             if (found.Count > 0) run.Reports.Add(new CatalogSourceReport("saved-catalog", CatalogSourceState.SavedCatalog, null, null));
         }
 
+        if (kind == CatalogSubjectKind.Author) reasons.Add(CatalogAnswerCodes.AuthorChoices);
+        else reasons.Add(CatalogAnswerCodes.SeriesChoices);
+
         var scopeCode = kind == CatalogSubjectKind.Author ? "author-choices" : "series-choices";
         var seed = await SeedAsync(run, text, run.Request.ProviderId, ct, allowWithoutSource: choices.Count > 0);
         var gaps = seed.Gaps;
@@ -587,7 +750,25 @@ public sealed class CatalogAnswerService(
             var remote = kind == CatalogSubjectKind.Author
                 ? AuthorChoicesFrom(run, seed, text)
                 : await SeriesChoicesFromAsync(run, seed, text, ct);
-            foreach (var choice in remote.Choices)
+            var offered = remote.Choices;
+
+            if (kind == CatalogSubjectKind.Series && AppliesTo(run.Request.Operation, CatalogSubjectKind.Author))
+            {
+                // A publication question naming an author ("the latest Tom Clancy book") is not a question about one of that
+                // author's series. The seed read that produced the series claims carries the credits too, so the author is offered
+                // first among the choices — still a choice: a name never selects, and nothing dependent has been read.
+                var authors = AuthorChoicesFrom(run, seed, text, report: false).Choices;
+                if (authors.Count > 0)
+                {
+                    offered = [.. authors, .. remote.Choices];
+                    scopeCode = remote.Choices.Count > 0 ? "subject-choices" : "author-choices";
+                    reasons = remote.Choices.Count > 0
+                        ? [CatalogAnswerCodes.AuthorChoices, CatalogAnswerCodes.SeriesChoices]
+                        : [CatalogAnswerCodes.AuthorChoices];
+                }
+            }
+
+            foreach (var choice in offered)
             {
                 if (choices.Count >= options.MaxChoices) { truncated = true; break; }
                 choices.Add(choice);
@@ -619,7 +800,6 @@ public sealed class CatalogAnswerService(
         var qualifiers = new List<string>();
         if (truncated) qualifiers.Add(CatalogAnswerCodes.ListNotExhaustive);
         if (gaps) qualifiers.Add(CatalogAnswerCodes.SourceGaps);
-        var reasons = new List<string> { kind == CatalogSubjectKind.Author ? CatalogAnswerCodes.AuthorChoices : CatalogAnswerCodes.SeriesChoices };
         CatalogAnswerContextRef? context = null;
         if (kept is null) reasons.Add(CatalogAnswerCodes.ContextNotRetained);
         else context = ContextFor(run, null);
@@ -628,7 +808,7 @@ public sealed class CatalogAnswerService(
 
     private sealed record ChoiceSet(IReadOnlyList<CatalogAnswerChoice> Choices, bool Gaps, Failure? Failure);
 
-    private static ChoiceSet AuthorChoicesFrom(Run run, SeedResult seed, string text)
+    private static ChoiceSet AuthorChoicesFrom(Run run, SeedResult seed, string text, bool report = true)
     {
         // No source was asked (none eligible, with saved choices still shown): there is nothing to read ids from.
         if (seed.ProviderId is null) return new ChoiceSet([], true, null);
@@ -658,7 +838,11 @@ public sealed class CatalogAnswerService(
         var choices = found.Values.Select(item => item.Choice with { KnownCount = item.Count }).ToArray();
         if (choices.Length == 0 && !sawAnyId)
         {
-            run.Reports.Add(new CatalogSourceReport(seed.ProviderId ?? "answer", CatalogSourceState.Unsupported, CatalogAnswerCodes.AuthorIdsUnavailable, null));
+            if (report)
+            {
+                run.Reports.Add(new CatalogSourceReport(seed.ProviderId ?? "answer", CatalogSourceState.Unsupported, CatalogAnswerCodes.AuthorIdsUnavailable, null));
+            }
+
             return new ChoiceSet([], true, null);
         }
 
@@ -944,6 +1128,7 @@ public sealed class CatalogAnswerService(
             Subject = subject,
             Anchor = anchor,
             Order = subject?.Order is { } order && order != SeriesOrderingKind.Unspecified ? order : run.Request.Order,
+            Position = run.Request.Position,
             Entries = entries ?? [],
             Series = series ?? [],
             Choices = choices ?? [],

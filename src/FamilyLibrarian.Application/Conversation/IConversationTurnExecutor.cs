@@ -15,6 +15,13 @@ public interface IConversationTurnExecutor
     /// </summary>
     Task<ConversationTurnResult?> RunMatrixTurnAsync(MatrixInboundMessage message, string text, CancellationToken cancellationToken);
 
+    /// <summary>
+    /// Whether the message's room link and sender are still verified and the linked account can still use chat, read now and in a
+    /// scope of its own. The adapter asks it after a turn and before sending, because a turn can take as long as a catalog source
+    /// does; a reply is not sent into a room whose link or account changed while it was being prepared.
+    /// </summary>
+    Task<bool> StillAuthorizedAsync(MatrixInboundMessage message, CancellationToken cancellationToken);
+
     /// <summary>Records that a turn's reply was delivered, so a replay of the same event does not send it again.</summary>
     Task MarkDeliveredAsync(ConversationEventKey key, CancellationToken cancellationToken);
 }

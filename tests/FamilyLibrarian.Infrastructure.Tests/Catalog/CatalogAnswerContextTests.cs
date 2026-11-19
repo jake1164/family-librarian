@@ -269,6 +269,58 @@ public sealed class CatalogAnswerContextTests
         Assert.IsNull(store.TryGetChoice(Reader, Guid.NewGuid(), 0, Start));
     }
 
+    [TestMethod]
+    public void ASeriesAndAChoiceAreFoundByIdentityInTheOwnersWindowWhateverOrderItIsRetainedIn()
+    {
+        var store = new CatalogAnswerContextStore();
+        var root = store.CreateRoot(Reader, Start)!;
+        var one = new SourceRef("fiction", "s1", ExternalReferenceEntityType.Series);
+        var two = new SourceRef("fiction", "s2", ExternalReferenceEntityType.Series);
+        var series = new[]
+        {
+            new CatalogAnswerSeries("No id", null, null, RelationshipEvidence.Native, null, null, null),
+            new CatalogAnswerSeries("Zeta", two, null, RelationshipEvidence.Derived("author-works-first-page"), null, null, null),
+            new CatalogAnswerSeries("Alpha", one, null, RelationshipEvidence.Native, null, null, null)
+        };
+        var choices = new[]
+        {
+            new CatalogAnswerChoice(Series("s2", "Two"), null, null, "fiction", "series-claim-on-seed-record"),
+            new CatalogAnswerChoice(Series("s1", "One"), null, null, "fiction", "series-claim-on-seed-record")
+        };
+        store.Retain(Reader, root.RootId, Window(0) with { Subject = null, Series = series, Choices = choices }, Start);
+
+        Assert.AreEqual("Alpha", store.TryFindSeries(Reader, root.RootId, null, one, Start)!.Label, "Found by its own id, not by where it sits.");
+        Assert.AreEqual("Zeta", store.TryFindSeries(Reader, root.RootId, null, two, Start)!.Label);
+        Assert.IsNull(store.TryFindSeries(Reader, root.RootId, null, new SourceRef("fiction", "s3", ExternalReferenceEntityType.Series), Start));
+        Assert.IsNull(store.TryFindSeries(Reader, root.RootId, null, null, Start), "A series with no identity is never selected.");
+        Assert.AreEqual("One", store.TryFindChoice(Reader, root.RootId, CatalogSubjectKind.Series, null, one, SeriesOrderingKind.Unspecified, Start)!.Reference.Label);
+        Assert.IsNull(store.TryFindChoice(Reader, root.RootId, CatalogSubjectKind.Author, null, one, SeriesOrderingKind.Unspecified, Start), "The kind is part of the identity.");
+
+        var stranger = new CatalogAnswerCaller(Guid.NewGuid(), Reader.Transport, Reader.ScopeKey);
+        Assert.IsNull(store.TryFindSeries(stranger, root.RootId, null, one, Start));
+        Assert.IsNull(store.TryFindChoice(stranger, root.RootId, CatalogSubjectKind.Series, null, one, SeriesOrderingKind.Unspecified, Start));
+        Assert.IsNull(store.TryFindSeries(Reader, root.RootId, null, one, Start.AddMinutes(11)), "An expired root selects nothing.");
+    }
+
+    [TestMethod]
+    public void WhatWasShownIsRememberedPerRootForTheOwnerAndReplacedByANewList()
+    {
+        var store = new CatalogAnswerContextStore();
+        var root = store.CreateRoot(Reader, Start)!;
+
+        store.RecordShown(Reader, root.RootId, ["a", "b"], append: false, Start);
+        store.RecordShown(Reader, root.RootId, ["c"], append: true, Start);
+        Assert.AreEqual("a,b,c", string.Join(',', store.GetShown(Reader, root.RootId, Start).Order(StringComparer.Ordinal)));
+
+        store.RecordShown(Reader, root.RootId, ["d"], append: false, Start);
+        Assert.AreEqual("d", string.Join(',', store.GetShown(Reader, root.RootId, Start)), "A new list starts a new record.");
+
+        var stranger = new CatalogAnswerCaller(Guid.NewGuid(), Reader.Transport, Reader.ScopeKey);
+        store.RecordShown(stranger, root.RootId, ["x"], append: true, Start);
+        Assert.IsEmpty(store.GetShown(stranger, root.RootId, Start), "Another owner reads nothing and writes nothing.");
+        Assert.AreEqual("d", string.Join(',', store.GetShown(Reader, root.RootId, Start)));
+        Assert.IsEmpty(store.GetShown(Reader, root.RootId, Start.AddMinutes(11)), "An expired root remembers nothing.");
+    }
     // ================================================== review A-R3: canonical size and record bounds
 
     private static readonly System.Text.Json.JsonSerializerOptions OracleOptions = new(System.Text.Json.JsonSerializerDefaults.Web);

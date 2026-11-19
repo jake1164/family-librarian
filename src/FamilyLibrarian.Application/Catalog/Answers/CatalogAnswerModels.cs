@@ -28,7 +28,14 @@ public enum CatalogAnswerOperation
     AuthorWorks = 7,
 
     /// <summary>Series reached from a selected author, each edge native or derived.</summary>
-    AuthorSeries = 8
+    AuthorSeries = 8,
+
+    /// <summary>
+    /// The known members of the selected series in one stated ordering, listed rather than selected. Always a qualified list: a read
+    /// page is never the whole series, and records the source classifies as a collection, abridgement, adaptation or study guide, or
+    /// that state no numeric place in this ordering, are listed apart instead of being padded into the sequence.
+    /// </summary>
+    SeriesMembers = 9
 }
 
 /// <summary>
@@ -338,6 +345,9 @@ public sealed record CatalogAnswer
     /// <summary>The ordering the answer was selected in. Unspecified is stated, never read as publication order.</summary>
     public SeriesOrderingKind Order { get; init; } = SeriesOrderingKind.Unspecified;
 
+    /// <summary>The position the question asked for, kept so the answer can say which one it is about; null when none was asked.</summary>
+    public decimal? Position { get; init; }
+
     /// <summary>The entries that are the answer: one, or several when ties/overlaps are kept.</summary>
     public IReadOnlyList<CatalogAnswerEntry> Entries { get; init => field = DiscoverySnapshots.Of(value); } = DiscoverySnapshots.Of<CatalogAnswerEntry>([]);
 
@@ -434,4 +444,5 @@ public static class CatalogAnswerCodes
     public const string NoChoicesFound = "no-choices-found";
     public const string ContinuationUnavailable = "continuation-unavailable";
     public const string ContextWindowCut = "context-window-cut";
+    public const string EditionTitlesUnavailable = "edition-titles-unavailable";
 }

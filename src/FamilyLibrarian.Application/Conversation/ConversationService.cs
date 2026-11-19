@@ -2,8 +2,12 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using FamilyLibrarian.Application.Abstractions;
+using FamilyLibrarian.Application.Accounts;
 using FamilyLibrarian.Application.Catalog;
+using FamilyLibrarian.Application.Catalog.Answers;
+using FamilyLibrarian.Application.Catalog.Discovery;
 using FamilyLibrarian.Application.Requests;
+using FamilyLibrarian.Domain.Accounts;
 using FamilyLibrarian.Domain.Requests;
 using FamilyLibrarian.Application.ModelGateway;
 using FamilyLibrarian.Domain.ModelGateway;
@@ -23,7 +27,7 @@ public interface IConversationService
     Task MarkDeliveredAsync(ConversationEventKey key, CancellationToken cancellationToken);
 }
 
-public sealed class ConversationService(
+public sealed partial class ConversationService(
     ICurrentUser currentUser,
     IConversationTools tools,
     IConversationSessionStore sessions,
@@ -32,12 +36,17 @@ public sealed class ConversationService(
     IConversationLimiter limiter,
     ConversationOptions options,
     IClock clock,
+    ICatalogAnswerService answers,
+    CatalogAnswerContextStore answerContexts,
     IBookIntentInterpreter? interpreter = null,
-    IConversationDiagnostics? diagnostics = null, IModelWorkflowObserver? workflow = null) : IConversationService
+    IConversationDiagnostics? diagnostics = null,
+    IModelWorkflowObserver? workflow = null,
+    IUserAccountStore? accounts = null) : IConversationService
 {
     private const int MaxScopeKeyLength = 200;
     private const int MaxEventIdLength = 255;
     private const int MaxReplyJsonLength = 8_000;
+    private const string UnpublishedNotice = "I can't see books that haven't been published yet";
 
     public async Task<ConversationTurnResult> HandleAsync(ConversationTurn turn, CancellationToken cancellationToken)
     {
@@ -83,7 +92,7 @@ public sealed class ConversationService(
             }
 
             var started = System.Diagnostics.Stopwatch.GetTimestamp();
-            var processed = await ProcessAsync(userId, turn.Transport, scopeKey, eventId, parsed, cancellationToken);
+            var processed = await ProcessAsync(userId, turn.Transport, scopeKey, eventId, parsed, turn.ListId, cancellationToken);
             diagnostics?.StepCompleted(ConversationSteps.Turn, System.Diagnostics.Stopwatch.GetElapsedTime(started), processed.Reply.Kind.ToString());
             return processed;
         }
@@ -107,9 +116,23 @@ public sealed class ConversationService(
         parsed.Kind is not (ConversationCommandKind.Help or ConversationCommandKind.Cancel or ConversationCommandKind.Status
             or ConversationCommandKind.Empty);
 
+    /// <summary>The messages that act on the list the reader is looking at. A button for an earlier list must not reach any of them.</summary>
+    private static bool ActsOnList(ParsedConversationMessage parsed) =>
+        parsed.Kind is ConversationCommandKind.Pick or ConversationCommandKind.Details or ConversationCommandKind.Request
+            or ConversationCommandKind.Format or ConversationCommandKind.Reference or ConversationCommandKind.Editions
+            or ConversationCommandKind.More or ConversationCommandKind.Cancel;
+
     private async Task<ConversationTurnResult> ProcessAsync(
-        Guid userId, string transport, string scopeKey, string? eventId, ParsedConversationMessage parsed, CancellationToken cancellationToken)
+        Guid userId, string transport, string scopeKey, string? eventId, ParsedConversationMessage parsed, string? listId,
+        CancellationToken cancellationToken)
     {
+        // The account is read again for every message that does work, so a person removed since their last message gets nothing:
+        // not a lookup, not a pick, and never a request. The checks that follow guard the awaits inside the turn.
+        if (await PrincipalWithdrawnAsync(cancellationToken))
+        {
+            return Terminal(ConversationReplyKind.Unauthenticated, "Your Family Librarian account can no longer use chat.");
+        }
+
         var now = clock.UtcNow;
         var session = await sessions.FindAsync(userId, transport, scopeKey, cancellationToken)
             ?? new ConversationSession(userId, transport, scopeKey, ConversationState.Empty(), 0, now, now);
@@ -131,8 +154,15 @@ public sealed class ConversationService(
                     "We've covered a lot, so I've cleared this conversation. Send your search again to start fresh."),
                 ConversationState.Empty(), null, ResetTurns: true);
         }
+        else if (listId is not null && ActsOnList(parsed) && !string.Equals(listId, session.State.ListId, StringComparison.Ordinal))
+        {
+            // A button drawn for an earlier list: the reader has since been shown another, so this press addresses nothing.
+            plan = Keep(ConversationReply.Of(ConversationReplyKind.NotUnderstood,
+                "That button belongs to an earlier list, so I haven't done anything. Use the newest answer, or ask again."), session.State);
+        }
         else if (expired && parsed.Kind is ConversationCommandKind.Pick or ConversationCommandKind.Request or ConversationCommandKind.Format
-                     or ConversationCommandKind.Details or ConversationCommandKind.Reference)
+                     or ConversationCommandKind.Details or ConversationCommandKind.Reference or ConversationCommandKind.More
+                     or ConversationCommandKind.Editions)
         {
             plan = Keep(ConversationReply.Of(ConversationReplyKind.NotUnderstood,
                 $"That search expired after {options.IdleExpiryMinutes} minutes without activity. Tell me the book again and I'll look it up."),
@@ -140,8 +170,10 @@ public sealed class ConversationService(
         }
         else
         {
-            plan = await PlanAsync(parsed, session.State, cancellationToken);
+            plan = await PlanAsync(parsed, session.State, transport, scopeKey, cancellationToken);
         }
+
+        plan = Stamp(plan);
 
         var reply = await transaction.ExecuteAsync(async token =>
         {
@@ -187,6 +219,9 @@ public sealed class ConversationService(
     private async Task<ConversationReply> CreateRequestAsync(
         Guid userId, string transport, string scopeKey, string? eventId, PendingRequest pending, CancellationToken cancellationToken)
     {
+        // A look before the claim, so a refused turn leaves no key behind...
+        if (await RefusalBeforeWriteAsync(pending, transport, scopeKey, cancellationToken) is { } early) return early;
+
         string? requestKey = eventId is null ? null : RequestKey(transport, scopeKey, eventId);
         if (requestKey is not null)
         {
@@ -197,8 +232,16 @@ public sealed class ConversationService(
                     ConversationReplyKind.RequestExists,
                     $"“{pending.Title}” was already requested from that message.", [], [], ["status"], existingId);
             }
-        }
 
+            // ...and the last look after it, because the claim was awaited: the person may have been withdrawn, or the answer they
+            // picked from may have expired, in that time. Neither reaches the request tools, and the key is released so the recorded
+            // refusal and the key agree (the same message does not later read as "already requested" with no request behind it).
+            if (await RefusalBeforeWriteAsync(pending, transport, scopeKey, cancellationToken) is { } late)
+            {
+                await events.ReleaseRequestKeyAsync(requestKey, cancellationToken);
+                return late;
+            }
+        }
         var result = await tools.CreateBookRequestAsync(pending.WorkId, pending.Formats, cancellationToken);
         switch (result.Outcome)
         {
@@ -231,7 +274,23 @@ public sealed class ConversationService(
         }
     }
 
-    private async Task<TurnPlan> PlanAsync(ParsedConversationMessage parsed, ConversationState state, CancellationToken cancellationToken)
+    /// <summary>
+    /// The refusal, if any, to make just before a request is written: the account is read afresh and the answer's retained root is
+    /// still held for this reader. Null means both still hold.
+    /// </summary>
+    private async Task<ConversationReply?> RefusalBeforeWriteAsync(PendingRequest pending, string transport, string scopeKey, CancellationToken cancellationToken)
+    {
+        if (await PrincipalWithdrawnAsync(cancellationToken))
+        {
+            return ConversationReply.Of(ConversationReplyKind.Unauthenticated, "Your Family Librarian account can no longer use chat.");
+        }
+
+        return pending.AnswerRoot is { } root && !AnswerRootLive(transport, scopeKey, root)
+            ? ExpiredChoicePlan(ConversationState.Empty()).Reply
+            : null;
+    }
+    private async Task<TurnPlan> PlanAsync(
+        ParsedConversationMessage parsed, ConversationState state, string transport, string scopeKey, CancellationToken cancellationToken)
     {
         switch (parsed.Kind)
         {
@@ -255,7 +314,7 @@ public sealed class ConversationService(
                 return Keep(await LibraryReplyAsync(parsed.Text!, cancellationToken), state);
 
             case ConversationCommandKind.Series:
-                return await SeriesPlanAsync(parsed, state, cancellationToken);
+                return await SeriesPlanAsync(parsed, state, transport, scopeKey, cancellationToken);
 
             case ConversationCommandKind.Isbn:
                 return await SearchPlanAsync(parsed.Text!, $"ISBN {parsed.Text}", null, requestIntent: false, state, cancellationToken);
@@ -265,33 +324,587 @@ public sealed class ConversationService(
                     parsed.Text!, parsed.Text!, parsed.Formats, parsed.RequestIntent, state, cancellationToken, tryInterpretIfEmpty: true);
 
             case ConversationCommandKind.Details:
-                return Keep(await DetailsReplyAsync(state, parsed.Number!.Value, cancellationToken), state);
+                return Keep(await DetailsReplyAsync(state, parsed.Number!.Value, transport, scopeKey, cancellationToken), state);
+
+            case ConversationCommandKind.More:
+                return await MorePlanAsync(state, transport, scopeKey, cancellationToken);
 
             case ConversationCommandKind.Reference:
-                return await ReferencePlanAsync(parsed, state, cancellationToken);
+                return await ReferencePlanAsync(parsed, state, transport, scopeKey, cancellationToken);
 
             case ConversationCommandKind.Release:
-                return await ReleasePlanAsync(parsed, state, cancellationToken);
+                return await ReleasePlanAsync(parsed, state, transport, scopeKey, cancellationToken);
+
+            case ConversationCommandKind.Author:
+                return await AuthorPlanAsync(parsed, state, transport, scopeKey, cancellationToken);
+
+            case ConversationCommandKind.Editions:
+                return await EditionsPlanAsync(parsed, state, transport, scopeKey, cancellationToken);
 
             case ConversationCommandKind.Pick:
+                if (state.Phase == ConversationPhase.ChoosingSubject)
+                {
+                    return await SubjectPickPlanAsync(state, parsed.Number!.Value, transport, scopeKey, cancellationToken);
+                }
+
+                if (state.Phase == ConversationPhase.ChoosingOrder)
+                {
+                    return await OrderPickPlanAsync(state, parsed.Number!.Value, transport, scopeKey, cancellationToken);
+                }
+
+                return await PickPlanAsync(state, parsed.Number!.Value, parsed.Formats, transport, scopeKey, cancellationToken);
+
             case ConversationCommandKind.Request:
-                return await PickPlanAsync(state, parsed.Number!.Value, parsed.Formats, cancellationToken);
+                if (state.Phase is ConversationPhase.ChoosingSubject or ConversationPhase.ChoosingOrder)
+                {
+                    return Keep(ConversationReply.Of(ConversationReplyKind.NotUnderstood,
+                        "Pick the one you mean by number first, then I can request it."), state);
+                }
+
+                return await PickPlanAsync(state, parsed.Number!.Value, parsed.Formats, transport, scopeKey, cancellationToken);
 
             case ConversationCommandKind.Format:
-                return await FormatPlanAsync(state, parsed.Formats!, cancellationToken);
+                return await FormatPlanAsync(state, parsed.Formats!, transport, scopeKey, cancellationToken);
 
             default:
                 return Keep(ConversationReply.Of(ConversationReplyKind.NotUnderstood, "I didn't catch that. Say “help” to see what I can do."), state);
         }
     }
 
-    private async Task<TurnPlan> SeriesPlanAsync(ParsedConversationMessage parsed, ConversationState state, CancellationToken cancellationToken)
+    // ======================================================================================== shared catalog answers
+
+    /// <summary>
+    /// "Latest", "book N", "in order": one question put to the shared answer service. The wording decides which operation is asked
+    /// and whether a filter was stated; the answer decides what is shown. A question that names a series or author is answered with
+    /// choices first, never with a subject guessed from the name.
+    /// </summary>
+    private async Task<TurnPlan> SeriesPlanAsync(
+        ParsedConversationMessage parsed, ConversationState state, string transport, string scopeKey, CancellationToken cancellationToken)
+    {
+        if (parsed.SeriesAfterTitle is not null)
+        {
+            // "what comes after <a title>": without the book's own identity there is no anchor to continue from, so the labelled
+            // catalog fallback is used and never presented as a settled next-in-order fact.
+            return await AfterTitlePlanAsync(parsed, state, transport, scopeKey, cancellationToken);
+        }
+
+        var operation = parsed.SeriesPosition switch
+        {
+            null => CatalogAnswerOperation.SeriesMembers,
+            SeriesPositionResolver.LastPosition => CatalogAnswerOperation.LatestPublished,
+            _ => CatalogAnswerOperation.Position
+        };
+        var filter = FilterOf(parsed.Text);
+        var request = new CatalogAnswerRequest
+        {
+            Operation = operation,
+            Text = string.IsNullOrWhiteSpace(parsed.SeriesName) ? null : parsed.SeriesName,
+            Position = operation == CatalogAnswerOperation.Position ? parsed.SeriesPosition : null,
+            Filter = filter
+        };
+        var (plan, answer) = await AskAsync(request, filter, transport, scopeKey, state, parsed.RequestIntent, parsed.Formats, cancellationToken);
+
+        // The name matched no series at all (not "the position is missing"): the ordinary search still helps, and the reply says the
+        // order could not be confirmed rather than presenting keyword hits as an answer. A title that merely looks like a series
+        // question is still shown as typed when the catalog has exactly that title.
+        if (answer is { Entries.Count: 0, Choices.Count: 0, AvailableOrders.Count: 0 } &&
+            answer.Reasons.Contains(CatalogAnswerCodes.NoChoicesFound, StringComparer.Ordinal))
+        {
+            return await SeriesNotFoundPlanAsync(parsed, state, cancellationToken);
+        }
+
+        return plan;
+    }
+
+    /// <summary>
+    /// Unreleased books, release dates and release years are answered from the shared answer service where a source states them, and
+    /// said plainly where nothing does. A named title is still looked up so the person gets something useful.
+    /// </summary>
+    private async Task<TurnPlan> ReleasePlanAsync(
+        ParsedConversationMessage parsed, ConversationState state, string transport, string scopeKey, CancellationToken cancellationToken)
+    {
+        if (parsed.Action == ConversationActions.Year)
+        {
+            return Keep(ConversationReply.Of(ConversationReplyKind.Text,
+                "I can't filter by release year. Ask about a series or a title and I'll look up what the sources state."), state);
+        }
+
+        var operation = parsed.Action switch
+        {
+            ConversationActions.When => CatalogAnswerOperation.PublicationForTitle,
+            ConversationActions.Next => CatalogAnswerOperation.NextRelease,
+            _ => CatalogAnswerOperation.UpcomingReleases
+        };
+        var subject = parsed.Action == ConversationActions.When
+            ? parsed.Text
+            : string.IsNullOrWhiteSpace(parsed.SeriesName) ? parsed.Text : parsed.SeriesName;
+        var request = new CatalogAnswerRequest { Operation = operation, Text = subject };
+        var (plan, _) = await AskAsync(request, CatalogAnswerFilter.None, transport, scopeKey, state, requestIntent: false, formats: null, cancellationToken);
+        return plan;
+    }
+
+    /// <summary>"What has X written", "what series is X credited on": an author question, answered with choices first.</summary>
+    private async Task<TurnPlan> AuthorPlanAsync(
+        ParsedConversationMessage parsed, ConversationState state, string transport, string scopeKey, CancellationToken cancellationToken)
+    {
+        var operation = parsed.Action == ConversationActions.Series
+            ? CatalogAnswerOperation.AuthorSeries
+            : CatalogAnswerOperation.AuthorWorks;
+        var request = new CatalogAnswerRequest { Operation = operation, Text = parsed.Text };
+        var (plan, _) = await AskAsync(request, CatalogAnswerFilter.None, transport, scopeKey, state, requestIntent: false, formats: null, cancellationToken);
+        if (plan.Reply.Kind is ConversationReplyKind.Clarification or ConversationReplyKind.Answer) return plan;
+
+        // Nothing that could be an author was found: the wording may still be a title ("Books by the Sea"), so it is searched as
+        // typed rather than refused.
+        return await SearchPlanAsync(parsed.Text!, parsed.Text!, null, requestIntent: false, state, cancellationToken);
+    }
+
+    /// <summary>
+    /// "editions": the source's edition titles for the record the conversation is about. The record is resolved from the server's own
+    /// retained answer, so an expired or foreign list means no provider call at all.
+    /// </summary>
+    private async Task<TurnPlan> EditionsPlanAsync(
+        ParsedConversationMessage parsed, ConversationState state, string transport, string scopeKey, CancellationToken cancellationToken)
+    {
+        if (RootOf(state) is not { } root || CallerOf(transport, scopeKey) is not { } caller)
+        {
+            return Keep(ConversationReply.Of(ConversationReplyKind.NotUnderstood,
+                "I don't have a book to list edition titles for. Tell me a book first, or ask about a series again."), state);
+        }
+
+        var number = parsed.Number ?? (state.EntryChoices.Count == 1 ? 1 : 0);
+        if (number == 0)
+        {
+            return Keep(ConversationReply.Of(ConversationReplyKind.NotUnderstood,
+                $"Which book? Say “editions 1” to “editions {state.EntryChoices.Count}”."), state);
+        }
+
+        if (number < 1 || number > state.EntryChoices.Count || state.EntryChoices[number - 1]?.ToReference() is not { } selected)
+        {
+            return Keep(ConversationReply.Of(ConversationReplyKind.NotUnderstood,
+                $"Pick a book from 1 to {state.EntryChoices.Count} of the list I showed."), state);
+        }
+
+        if (await PrincipalWithdrawnAsync(cancellationToken)) return WithdrawnPlan();
+
+        var editions = await answers.EditionsAsync(caller, root, selected, cancellationToken);
+        var rendered = ConversationAnswerText.ForEditions(editions, BudgetFor(transport));
+        var kind = editions.Editions.Count > 0 ? ConversationReplyKind.Editions : ConversationReplyKind.Answer;
+        return Keep(new ConversationReply(kind, rendered.Text, [], [], ["cancel"], null, rendered.Cards), state);
+    }
+
+    /// <summary>One question to the shared answer service, with the principal re-read before any provider work.</summary>
+    private async Task<(TurnPlan Plan, CatalogAnswer? Answer)> AskAsync(
+        CatalogAnswerRequest request, CatalogAnswerFilter filter, string transport, string scopeKey, ConversationState state,
+        bool requestIntent, IReadOnlyList<RequestMediaType>? formats, CancellationToken cancellationToken, IReadOnlySet<string>? alreadyShown = null)
+    {
+        if (CallerOf(transport, scopeKey) is not { } caller)
+        {
+            return (Keep(ConversationReply.Of(ConversationReplyKind.Unauthenticated,
+                "You need to be signed in to Family Librarian to ask about books."), state), null);
+        }
+
+        if (await PrincipalWithdrawnAsync(cancellationToken)) return (WithdrawnPlan(), null);
+
+        var answer = await answers.AnswerAsync(caller, request, cancellationToken);
+        return (await AnswerTurnPlanAsync(answer, filter, requestIntent, formats, state, transport, scopeKey, cancellationToken, alreadyShown), answer);
+    }
+
+    /// <summary>
+    /// The answer the reader is shown and the state the next turn acts on, built together so they are one list. The numbers drawn are
+    /// the most that the bounded state keeps whole, then the fewest that the reply's budget lets the text show; the state keeps
+    /// exactly those, so a number on the screen is never one the conversation refuses.
+    /// </summary>
+    private async Task<TurnPlan> AnswerTurnPlanAsync(
+        CatalogAnswer answer, CatalogAnswerFilter filter, bool requestIntent, IReadOnlyList<RequestMediaType>? formats,
+        ConversationState previous, string transport, string scopeKey, CancellationToken cancellationToken, IReadOnlySet<string>? alreadyShown = null)
+    {
+        ArgumentNullException.ThrowIfNull(answer);
+        var budget = BudgetFor(transport);
+        var context = answer.Context?.ToJson();
+        var next = new ConversationState
+        {
+            Query = previous.Query,
+            FormatHint = formats?.ToList() ?? [],
+            RequestIntent = requestIntent,
+            AnswerOperation = answer.Operation,
+            AnswerPosition = answer.Position,
+            AnswerNovelOnly = filter.NovelOnly,
+            AnswerMainOnly = filter.MainOnly
+        };
+
+        // The largest count of numbered items whose state is kept whole. Fewer than that may be shown (a long line can use the budget),
+        // never more.
+        int Fit(int available, Action<int> build)
+        {
+            for (var count = available; count > 0; count--)
+            {
+                build(count);
+                if (next.FitsWhole()) return count;
+            }
+
+            build(0);
+            return 0;
+        }
+
+        ConversationAnswerText.Rendered rendered;
+        if (answer.Outcome == CatalogAnswerOutcome.ContextExpired)
+        {
+            // Nothing is refetched and nothing is selected: the reader restarts, as the retained context layer requires.
+            next = new ConversationState { FormatHint = formats?.ToList() ?? [], RequestIntent = requestIntent };
+            rendered = ConversationAnswerText.ForAnswer(answer, budget, 0);
+        }
+        else if (answer.Outcome == CatalogAnswerOutcome.Clarification && answer.Choices.Count > 0)
+        {
+            var offerable = ConversationAnswerText.OfferableChoices(answer);
+            void Build(int count)
+            {
+                next.SubjectChoices = offerable.Take(count).Select(ConversationSubjectChoice.From).OfType<ConversationSubjectChoice>().ToList();
+                next.Phase = next.SubjectChoices.Count > 0 ? ConversationPhase.ChoosingSubject : ConversationPhase.Idle;
+                next.AnswerContext = context;
+            }
+
+            var fit = Fit(offerable.Count, Build);
+            rendered = ConversationAnswerText.ForAnswer(answer, budget, fit);
+            Build(rendered.Offered);
+        }
+        else if (answer.Outcome == CatalogAnswerOutcome.Clarification && answer.AvailableOrders.Count > 0)
+        {
+            next.Phase = ConversationPhase.ChoosingOrder;
+            next.Orders = answer.AvailableOrders.Take(ConversationState.MaxSubjectChoices).ToList();
+            next.SubjectChoices = answer.Subject is { } selected && ConversationSubjectChoice.From(
+                new CatalogAnswerChoice(selected, null, null, null, null)) is { } kept
+                ? [kept]
+                : [];
+            next.AnswerContext = context;
+            rendered = ConversationAnswerText.ForAnswer(answer, budget, 0);
+        }
+        else if (answer.Series.Count > 0)
+        {
+            // An author's series: each one with an identity can be opened by number; the rest are listed and say why they cannot be.
+            var offerable = ConversationAnswerText.OfferableSeries(answer, alreadyShown);
+            void Build(int count)
+            {
+                next.SubjectChoices = offerable.Take(count)
+                    .Select(ConversationAnswerText.SubjectChoiceOf)
+                    .OfType<ConversationSubjectChoice>()
+                    .ToList();
+                next.Phase = next.SubjectChoices.Count > 0 ? ConversationPhase.ChoosingSubject : ConversationPhase.Idle;
+                next.PicksFromSeries = next.SubjectChoices.Count > 0;
+                next.AnswerContext = context;
+            }
+
+            var fit = Fit(offerable.Count, Build);
+            rendered = ConversationAnswerText.ForAnswer(answer, budget, fit, alreadyShown);
+            Build(rendered.Offered);
+        }
+        else
+        {
+            var offerable = ConversationAnswerText.OfferableEntries(answer, alreadyShown);
+            void Build(int count)
+            {
+                var taken = offerable.Take(count).ToArray();
+                next.Choices = Pickable(taken).ToList();
+                next.Phase = taken.Length > 0 ? ConversationPhase.ChoosingBook : ConversationPhase.Idle;
+                next.AnswerContext = context;
+                next.EntryChoices = taken.Select(FocusOf).ToList();
+                next.FocusEntry = answer.Entries.Count == 1 && taken.Length == 1 ? next.EntryChoices[0] : null;
+            }
+
+            var fit = Fit(Math.Min(options.MaxChoices, offerable.Count), Build);
+            rendered = ConversationAnswerText.ForAnswer(answer, budget, fit, alreadyShown);
+            Build(rendered.Offered);
+        }
+
+        // Where "more" resumes: it shows the records of this answer not yet shown, first from what is retained and then from the
+        // source's next page. What was shown is remembered by identity with the retained root, so a page that sorts new records in
+        // among the earlier ones neither skips a new record nor repeats an old one.
+        if (ConversationAnswerText.IsPageable(answer.Operation) && answer.Choices.Count == 0)
+        {
+            next.MoreEntries = rendered.Remaining;
+            next.ContinuationToken = answer.ContinuationToken is { Length: > 0 and <= MaxContinuationTokenLength } token ? token : null;
+            if (answer.Context is { } held && CallerOf(transport, scopeKey) is { } owner)
+            {
+                answerContexts.RecordShown(owner, held.RootId, rendered.ShownKeys ?? [], append: alreadyShown is not null, clock.UtcNow);
+            }
+        }
+        var kind = answer.Outcome == CatalogAnswerOutcome.Clarification ? ConversationReplyKind.Clarification : ConversationReplyKind.Answer;
+        var suggested = answer.Outcome == CatalogAnswerOutcome.Clarification && answer.Choices.Count > 0 ? new[] { "1", "cancel" } : [];
+        var reply = new ConversationReply(kind, rendered.Text, rendered.Choices, [], suggested, null, rendered.Cards);
+
+        // The person already said it was a request ("request the latest ..."): the existing format and confirmation flow continues.
+        if (requestIntent && next.Choices.Count == 1 && kind == ConversationReplyKind.Answer)
+        {
+            return await PickPlanAsync(next, 1, formats, transport, scopeKey, cancellationToken);
+        }
+
+        return new TurnPlan(reply, next, null);
+    }
+
+    private const int MaxContinuationTokenLength = 128;
+
+    /// <summary>
+    /// "more": the next page of the answer being read. Records the retained answer still holds are shown first, with no provider
+    /// read; only when they are all shown does one explicit "more" spend one provider page. Nothing is continued once the answer's
+    /// context has expired or belongs to another reader, and an exhausted list says so without asking anything.
+    /// </summary>
+    private async Task<TurnPlan> MorePlanAsync(ConversationState state, string transport, string scopeKey, CancellationToken cancellationToken)
+    {
+        if (state.AnswerContext is null || state.AnswerOperation is not { } operation || !ConversationAnswerText.IsPageable(operation)
+            || !CatalogAnswerContextRef.TryParse(state.AnswerContext, out var reference) || reference is null)
+        {
+            return Keep(ConversationReply.Of(ConversationReplyKind.NotUnderstood,
+                "I don't have a list to show more of. Ask about a series or an author first."), state);
+        }
+
+        if (!ListLive(state, transport, scopeKey)) return ExpiredChoicePlan(state);
+        if (state.MoreEntries <= 0 && state.ContinuationToken is null)
+        {
+            return Keep(ConversationReply.Of(ConversationReplyKind.Text, "There is nothing more to show for that list."), state);
+        }
+
+        var filter = FilterOf(state);
+        var request = new CatalogAnswerRequest
+        {
+            Operation = operation,
+            Position = state.AnswerPosition,
+            Subject = reference.Subject,
+            ContextRootId = reference.RootId,
+            Order = reference.Order,
+            Filter = filter,
+            ContinuationToken = state.MoreEntries > 0 ? null : state.ContinuationToken
+        };
+        var shown = CallerOf(transport, scopeKey) is { } caller
+            ? answerContexts.GetShown(caller, reference.RootId, clock.UtcNow)
+            : new HashSet<string>(StringComparer.Ordinal);
+        var (plan, answer) = await AskAsync(request, filter, transport, scopeKey, state, requestIntent: false, state.FormatHint, cancellationToken, shown);
+        if (answer is null || answer.Outcome == CatalogAnswerOutcome.ContextExpired) return plan;
+
+        if (ConversationAnswerText.PrimaryKeys(answer).Any(key => !shown.Contains(key))) return plan;
+
+        // The read gave nothing further. The list the reader is looking at stays usable; the reply says why, and a continuation the
+        // service refused is forgotten so the same word does not keep asking for it.
+        var unavailable = answer.Reasons.Contains(CatalogAnswerCodes.ContinuationUnavailable, StringComparer.Ordinal);
+
+        // A page that added no record the reader has not seen (a duplicate-only or empty page) can still have issued the cursor for
+        // the page after it. That new cursor replaces the one just spent, so the next explicit "more" reads that page; nothing is
+        // read on its own, and the displayed list and its choices are exactly as they were.
+        if (!unavailable && answer.ContinuationToken is { Length: > 0 and <= MaxContinuationTokenLength } issued
+            && !string.Equals(issued, state.ContinuationToken, StringComparison.Ordinal))
+        {
+            var advanced = state.WithoutMore();
+            advanced.ContinuationToken = issued;
+            return new TurnPlan(
+                ConversationReply.Of(ConversationReplyKind.Text,
+                    "That page had nothing new in it. Say “more” and I'll read the next one.", "more"),
+                advanced, null);
+        }
+
+        var kept = unavailable || answer.Outcome is CatalogAnswerOutcome.Answered or CatalogAnswerOutcome.Qualified or CatalogAnswerOutcome.NoVerifiedMatch
+            ? state.WithoutMore()
+            : state;
+        return new TurnPlan(
+            plan.Reply with { Choices = [], Answers = null, SuggestedReplies = [] }, kept, null);
+    }
+
+    /// <summary>A retained subject choice is selected by number, but the reference itself is the one the server retained.</summary>
+    private async Task<TurnPlan> SubjectPickPlanAsync(
+        ConversationState state, int number, string transport, string scopeKey, CancellationToken cancellationToken)
+    {
+        if (number < 1 || number > state.SubjectChoices.Count)
+        {
+            return Keep(ConversationReply.Of(ConversationReplyKind.NotUnderstood,
+                $"Pick a number from 1 to {state.SubjectChoices.Count}, or say “cancel”."), state);
+        }
+
+        if (RootOf(state) is not { } root || CallerOf(transport, scopeKey) is not { } caller)
+        {
+            return ExpiredChoicePlan(state);
+        }
+
+        // The number on the screen is only a position, and the retained window is not necessarily in the order that was shown (the
+        // answer sorts what the source returned). What the reader chose is the identity the screen offered, and that identity is
+        // looked up in this owner's own retained window: the reference acted on is the retained one, or nothing is selected and no
+        // provider is contacted.
+        var filter = FilterOf(state);
+        if (state.SubjectChoices[number - 1].ToReference() is not { } offered) return ExpiredChoicePlan(state);
+        CatalogAnswerRequest request;
+        if (state.PicksFromSeries)
+        {
+            // An author's series answer: the offered series, and its books are asked in the same root.
+            var series = answerContexts.TryFindSeries(caller, root, offered.SavedId, offered.Native, clock.UtcNow);
+            if (series is null || ConversationAnswerText.SubjectChoiceOf(series)?.ToReference() is not { } chosen)
+            {
+                return ExpiredChoicePlan(state);
+            }
+
+            request = new CatalogAnswerRequest
+            {
+                Operation = CatalogAnswerOperation.SeriesMembers,
+                Subject = chosen,
+                ContextRootId = root,
+                Filter = filter
+            };
+        }
+        else
+        {
+            var retained = answerContexts.TryFindChoice(caller, root, offered.Kind, offered.SavedId, offered.Native, offered.Order, clock.UtcNow);
+            if (retained is null) return ExpiredChoicePlan(state);
+            request = new CatalogAnswerRequest
+            {
+                Operation = state.AnswerOperation ?? CatalogAnswerOperation.SeriesMembers,
+                Position = state.AnswerPosition,
+                Subject = retained.Reference,
+                ContextRootId = root,
+                Order = retained.Reference.Order,
+                Filter = filter
+            };
+        }
+        var (plan, _) = await AskAsync(request, filter, transport, scopeKey, state, state.RequestIntent, state.FormatHint, cancellationToken);
+        return plan;
+    }
+
+    /// <summary>The books state more than one ordering; the chosen one is applied to the same retained subject and read.</summary>
+    private async Task<TurnPlan> OrderPickPlanAsync(
+        ConversationState state, int number, string transport, string scopeKey, CancellationToken cancellationToken)
+    {
+        if (number < 1 || number > state.Orders.Count)
+        {
+            return Keep(ConversationReply.Of(ConversationReplyKind.NotUnderstood,
+                $"Pick a number from 1 to {state.Orders.Count}, or say “cancel”."), state);
+        }
+
+        if (RootOf(state) is not { } root || state.SubjectChoices.FirstOrDefault()?.ToReference() is not { } subject)
+        {
+            return ExpiredChoicePlan(state);
+        }
+
+        var filter = FilterOf(state);
+        var request = new CatalogAnswerRequest
+        {
+            Operation = state.AnswerOperation ?? CatalogAnswerOperation.SeriesMembers,
+            Position = state.AnswerPosition,
+            Subject = subject.WithOrder(state.Orders[number - 1]),
+            ContextRootId = root,
+            Order = state.Orders[number - 1],
+            Filter = filter
+        };
+        var (plan, _) = await AskAsync(request, filter, transport, scopeKey, state, state.RequestIntent, state.FormatHint, cancellationToken);
+        return plan;
+    }
+
+    private static TurnPlan ExpiredChoicePlan(ConversationState state) =>
+        new(
+            ConversationReply.Of(ConversationReplyKind.NotUnderstood,
+                "That list has expired, so I haven't looked anything up. Ask the question again and I'll start over."),
+            new ConversationState { FormatHint = state.FormatHint }, null);
+
+    private static CatalogAnswerFilter FilterOf(ConversationState state) => new(state.AnswerMainOnly, state.AnswerNovelOnly, null);
+
+    /// <summary>"latest novel in ...", "main series": a stated filter is part of the question and continues on a follow-up.</summary>
+    internal static CatalogAnswerFilter FilterOf(string? text)
+    {
+        if (string.IsNullOrWhiteSpace(text)) return CatalogAnswerFilter.None;
+        var lower = text.ToLowerInvariant();
+        var novel = NovelCuePattern().IsMatch(lower);
+        var main = MainCuePattern().IsMatch(lower);
+        return novel || main ? new CatalogAnswerFilter(main, novel, null) : CatalogAnswerFilter.None;
+    }
+
+    private static Guid? RootOf(ConversationState state) =>
+        state.AnswerContext is { } json && CatalogAnswerContextRef.TryParse(json, out var reference) && reference is not null
+            ? reference.RootId
+            : null;
+
+    private CatalogAnswerCaller? CallerOf(string transport, string scopeKey) =>
+        currentUser.UserId is { } userId && scopeKey.Length is > 0 and <= CatalogAnswerCaller.MaxScopeKeyLength
+            ? new CatalogAnswerCaller(
+                userId,
+                transport == ConversationTransports.Matrix ? CatalogAnswerTransport.Matrix : CatalogAnswerTransport.Web,
+                scopeKey)
+            : null;
+
+    /// <summary>
+    /// The principal is re-read at the async boundaries that matter: before provider work and before an action. A web turn and a
+    /// Matrix turn both take this path; the transports' own authentication is unchanged, and no identity ever comes from a body.
+    /// </summary>
+    private async Task<bool> PrincipalWithdrawnAsync(CancellationToken cancellationToken)
+    {
+        if (accounts is null || currentUser.UserId is not { } userId) return false;
+        var account = await accounts.FindAsync(userId, cancellationToken);
+        return account is null || !UserStatuses.CanSignIn(account.Status);
+    }
+
+    private static int BudgetFor(string transport) =>
+        transport == ConversationTransports.Matrix ? ConversationAnswerText.MatrixMaxLength : ConversationAnswerText.WebMaxLength;
+
+    /// <summary>
+    /// The records as the state keeps them. The title is display text, so a very long one is cut with a visible mark and the
+    /// record is still selected by its own id; the id is never cut.
+    /// </summary>
+    private static IEnumerable<ConversationChoiceRef> Pickable(IEnumerable<CatalogAnswerEntry> entries) =>
+        entries.Select(entry => new ConversationChoiceRef(
+            entry.Source?.ProviderId ?? string.Empty,
+            entry.Source?.ExternalId ?? string.Empty,
+            ConversationState.Ellipsize(entry.Title, ConversationState.MaxFieldLength, "Untitled record"),
+            ConversationState.Clip(string.Join(", ", entry.Credits.Where(credit => credit.IsAuthorRole).Select(credit => credit.Label).Take(3))),
+            ConversationState.Clip(EntryDetail(entry)),
+            ConversationState.Clip(entry.SeriesLabel),
+            entry.SavedWorkId));
+
+    private static ConversationSubjectChoice? FocusOf(CatalogAnswerEntry entry)
+    {
+        try
+        {
+            var label = ConversationState.Ellipsize(entry.Title, ConversationSubjectChoice.MaxLabelLength, "Untitled record");
+            var reference = entry.Source is { } source
+                ? CatalogSubjectRef.FromSource(CatalogSubjectKind.Book, label, source)
+                : entry.SavedWorkId is { } saved
+                    ? CatalogSubjectRef.Saved(CatalogSubjectKind.Book, label, saved)
+                    : null;
+            return reference is null ? null : ConversationSubjectChoice.From(new CatalogAnswerChoice(reference, null, null, entry.ProviderId, null));
+        }
+        catch (ArgumentException)
+        {
+            // A reference that cannot be built whole is not offered for expansion: the record is shown, and the action says nothing.
+            return null;
+        }
+    }
+
+    private static string EntryDetail(CatalogAnswerEntry entry)
+    {
+        var parts = new List<string>();
+        if (entry.Positions.FirstOrDefault(claim => claim.Sort is not null)?.Sort is { } sort)
+        {
+            parts.Add("book " + sort.ToString("0.##", System.Globalization.CultureInfo.InvariantCulture));
+        }
+
+        if (entry.Publication.Date is { } date) parts.Add(date.Year.ToString(System.Globalization.CultureInfo.InvariantCulture));
+        else if (entry.Publication.State == PublicationDateState.KnownUndated) parts.Add("no date stated");
+        if (!string.IsNullOrWhiteSpace(entry.Language)) parts.Add(entry.Language!.Trim());
+        return string.Join(" · ", parts);
+    }
+
+    [System.Text.RegularExpressions.GeneratedRegex(@"\bnovels?\b")]
+    private static partial System.Text.RegularExpressions.Regex NovelCuePattern();
+
+    [System.Text.RegularExpressions.GeneratedRegex(@"\bmain\b")]
+    private static partial System.Text.RegularExpressions.Regex MainCuePattern();
+
+
+    /// <summary>
+    /// "what comes after <i>a title</i>": the anchor's own identity is not held, so this uses the labelled catalog fallback — its
+    /// results are explicitly choices, never a settled next-in-order answer.
+    /// </summary>
+    private async Task<TurnPlan> AfterTitlePlanAsync(
+        ParsedConversationMessage parsed, ConversationState state, string transport, string scopeKey, CancellationToken cancellationToken)
     {
         var lookup = await tools.FindSeriesBooksAsync(parsed.SeriesName!, parsed.SeriesPosition, parsed.SeriesAfterTitle, options.MaxChoices, cancellationToken);
         switch (lookup.Kind)
         {
             case SeriesLookupKind.NotFound:
                 return await SeriesNotFoundPlanAsync(parsed, state, cancellationToken);
+
 
             case SeriesLookupKind.AmbiguousSeries:
                 if (string.IsNullOrWhiteSpace(parsed.SeriesName) && parsed.SeriesAfterTitle is { } anchor)
@@ -323,16 +936,6 @@ public sealed class ConversationService(
 
         // "Latest" needs enough of the series to see. With only a book or two known, the highest of them is not evidence of the
         // newest (it may be a companion or an early book), so say how little is visible and search the series name instead.
-        if (parsed.SeriesPosition == SeriesPositionResolver.LastPosition && lookup.KnownPositions.Count < options.MinKnownPositionsForLatest)
-        {
-            var subject = string.IsNullOrWhiteSpace(parsed.SeriesName) ? lookup.SeriesName ?? string.Empty : parsed.SeriesName;
-            var seen = lookup.KnownPositions.Count;
-            return await SearchPlanAsync(
-                subject, subject, parsed.Formats, parsed.RequestIntent, state, cancellationToken,
-                lead: $"I can only see {seen} numbered {(seen == 1 ? "book" : "books")} of {lookup.SeriesName ?? subject} in the catalog, " +
-                      $"which isn't enough to say which is the latest. Here's what I found for “{subject}”:");
-        }
-
         var choices = lookup.Books
             .Where(book => book.ExternalId.Length is > 0 and <= ConversationState.MaxFieldLength)
             .Select(book => new ConversationChoiceRef(
@@ -340,7 +943,7 @@ public sealed class ConversationService(
                 ConversationState.Clip(book.Position is null ? book.SeriesName : $"{book.SeriesName} #{FormatPosition(book.Position.Value)}"),
                 string.IsNullOrWhiteSpace(book.SeriesName) ? null : ConversationState.Clip(book.SeriesName)))
             .ToList();
-        var label = parsed.SeriesAfterTitle is not null ? $"{lookup.SeriesName} after {parsed.SeriesAfterTitle}" : parsed.SeriesPosition is null ? $"{lookup.SeriesName} in order" : $"{lookup.SeriesName} #{FormatPositionOrLast(parsed.SeriesPosition.Value, lookup)}";
+        var label = $"{lookup.SeriesName} after {parsed.SeriesAfterTitle}";
         var next = new ConversationState
         {
             Phase = ConversationPhase.ChoosingBook,
@@ -349,28 +952,16 @@ public sealed class ConversationService(
             FormatHint = parsed.Formats?.ToList() ?? [],
             RequestIntent = parsed.RequestIntent
         };
-        if (choices.Count == 1 && (parsed.SeriesPosition is not null || parsed.SeriesAfterTitle is not null) && parsed.RequestIntent)
+        if (choices.Count == 1 && parsed.RequestIntent)
         {
-            return await PickPlanAsync(next, 1, parsed.Formats, cancellationToken);
+            return await PickPlanAsync(next, 1, parsed.Formats, transport, scopeKey, cancellationToken);
         }
 
         var shown = choices.Select((choice, index) => new ConversationChoice(index + 1, choice.Title, choice.Authors, choice.Detail)).ToArray();
-        // "Latest" and "in order" are read from whatever books the catalog happened to show for the series, so they are never
-        // worded as settled fact: a newer book, or an earlier one, may simply not have been listed.
-        var latest = parsed.SeriesPosition == SeriesPositionResolver.LastPosition;
-        var lines = new StringBuilder(parsed.SeriesAfterTitle is not null
-            ? shown.Length == 1
-                ? $"After {parsed.SeriesAfterTitle}, the next book in {lookup.SeriesName} is:"
-                : $"After {parsed.SeriesAfterTitle}, more than one book is listed next in {lookup.SeriesName}:"
-            : parsed.SeriesPosition is null
-            ? $"{lookup.SeriesName}, in order (these are only the books the catalog showed me, so the list may be incomplete):"
-            : latest
-                ? shown.Length == 1
-                    ? $"The highest-numbered book I can find in {lookup.SeriesName} is #{FormatPositionOrLast(parsed.SeriesPosition.Value, lookup)}. The catalog may not list every book, so there could be a newer one:"
-                    : $"More than one book is listed as the highest-numbered in {lookup.SeriesName}, #{FormatPositionOrLast(parsed.SeriesPosition.Value, lookup)}. The catalog may not list every book, so there could be a newer one:"
-            : shown.Length == 1
-                ? $"In {lookup.SeriesName}, book {FormatPositionOrLast(parsed.SeriesPosition.Value, lookup)} is:"
-                : $"More than one book is listed as book {FormatPositionOrLast(parsed.SeriesPosition.Value, lookup)} of {lookup.SeriesName}:");
+        // This comes from whatever books the catalog happened to show for the series, so it is never worded as a settled fact.
+        var lines = new StringBuilder(shown.Length == 1
+            ? $"After {parsed.SeriesAfterTitle}, the next book in {lookup.SeriesName} is:"
+            : $"After {parsed.SeriesAfterTitle}, more than one book is listed next in {lookup.SeriesName}:");
         foreach (var choice in shown)
         {
             var authors = choice.Authors.Length > 0 ? $" — {choice.Authors}" : "";
@@ -430,8 +1021,14 @@ public sealed class ConversationService(
     /// "it", "that one": an action on the single book the conversation is about. The book is the one chosen for a format, or the
     /// only one offered. When several were offered "it" is ambiguous and the person is asked for a number: nothing is ever guessed.
     /// </summary>
-    private async Task<TurnPlan> ReferencePlanAsync(ParsedConversationMessage parsed, ConversationState state, CancellationToken cancellationToken)
+    private async Task<TurnPlan> ReferencePlanAsync(
+        ParsedConversationMessage parsed, ConversationState state, string transport, string scopeKey, CancellationToken cancellationToken)
     {
+        if (parsed.Action == ConversationActions.Next && state.AnswerContext is not null)
+        {
+            return await NextAfterFocusPlanAsync(state, transport, scopeKey, cancellationToken);
+        }
+
         if (FocusIndex(state) is not { } index)
         {
             return Keep(ConversationReply.Of(ConversationReplyKind.NotUnderstood,
@@ -444,23 +1041,70 @@ public sealed class ConversationService(
         switch (parsed.Action)
         {
             case ConversationActions.Request:
-                return await PickPlanAsync(state, index + 1, parsed.Formats, cancellationToken);
+                return await PickPlanAsync(state, index + 1, parsed.Formats, transport, scopeKey, cancellationToken);
 
             case ConversationActions.Details:
-                return Keep(await DetailsReplyAsync(state, index + 1, cancellationToken), state);
+                return Keep(await DetailsReplyAsync(state, index + 1, transport, scopeKey, cancellationToken), state);
 
             case ConversationActions.Availability:
+                if (!ListLive(state, transport, scopeKey)) return ExpiredChoicePlan(state);
+                if (string.IsNullOrEmpty(choice.ExternalId))
+                {
+                    // A record the library already holds: its own page is the check, and nothing is looked up again.
+                    return Keep(ConversationReply.Of(ConversationReplyKind.Library,
+                        $"“{choice.Title}” is already in your catalog, so open it to see what the library has."), state);
+                }
+
                 // The chosen record itself, not a text search that may rank some other record first.
                 var checkedChoice = await tools.CheckLibraryForChoiceAsync(choice, cancellationToken);
                 return Keep(LibraryReply(checkedChoice, choice.Title, "Say “request it” to request it."), state);
 
             default:
-                return await SeriesPlanAsync(
+                return await AfterTitlePlanAsync(
                     new ParsedConversationMessage(
                         ConversationCommandKind.Series, Text: choice.Title, SeriesName: choice.SeriesName ?? string.Empty,
                         SeriesAfterTitle: choice.Title, Action: ConversationActions.Next),
-                    state, cancellationToken);
+                    state, transport, scopeKey, cancellationToken);
         }
+    }
+
+    /// <summary>
+    /// "what comes next?" about the book the last answer was about: the next strictly greater place in the retained series, read from
+    /// the retained window with no provider call. Without a retained series or a single book in focus the person is asked, not guessed.
+    /// </summary>
+    private async Task<TurnPlan> NextAfterFocusPlanAsync(
+        ConversationState state, string transport, string scopeKey, CancellationToken cancellationToken)
+    {
+        if (!CatalogAnswerContextRef.TryParse(state.AnswerContext, out var reference) || reference is null)
+        {
+            return ExpiredChoicePlan(state);
+        }
+
+        if (reference.Subject is not { } subject)
+        {
+            return Keep(ConversationReply.Of(ConversationReplyKind.NotUnderstood,
+                "Which series do you mean? Tell me the series or ask for its latest book first."), state);
+        }
+
+        var anchor = state.FocusEntry?.ToReference() ?? reference.Anchor;
+        if (anchor is null)
+        {
+            return Keep(ConversationReply.Of(ConversationReplyKind.NotUnderstood,
+                "Which book should I continue from? Reply with its number first."), state);
+        }
+
+        var filter = FilterOf(state);
+        var request = new CatalogAnswerRequest
+        {
+            Operation = CatalogAnswerOperation.AfterAnchor,
+            Subject = subject,
+            Anchor = anchor,
+            ContextRootId = reference.RootId,
+            Order = reference.Order,
+            Filter = filter
+        };
+        var (plan, _) = await AskAsync(request, filter, transport, scopeKey, state, requestIntent: false, formats: null, cancellationToken);
+        return plan;
     }
 
     private static int? FocusIndex(ConversationState state)
@@ -471,53 +1115,6 @@ public sealed class ConversationService(
         }
 
         return state.Choices.Count == 1 ? 0 : null;
-    }
-
-    private const string UnpublishedNotice = "I can't see books that haven't been published yet";
-
-    /// <summary>
-    /// Unreleased books, release dates and release years are not in the catalog sources chat reads, so chat says so rather than
-    /// returning search hits that look like an answer. A named title is still looked up so the person gets something useful.
-    /// </summary>
-    private async Task<TurnPlan> ReleasePlanAsync(ParsedConversationMessage parsed, ConversationState state, CancellationToken cancellationToken)
-    {
-        if (parsed is { Action: ConversationActions.When, Text: { Length: >= 2 } title })
-        {
-            return await SearchPlanAsync(
-                title, title, null, requestIntent: false, state, cancellationToken,
-                lead: $"I can't confirm release dates, and {UnpublishedNotice}. Here's what the catalog has for “{title}”:");
-        }
-
-        if (parsed is { Action: ConversationActions.Next, SeriesName: { Length: > 0 } series })
-        {
-            var lookup = await tools.FindSeriesBooksAsync(series, SeriesPositionResolver.LastPosition, null, options.MaxChoices, cancellationToken);
-            if (lookup is { Kind: SeriesLookupKind.Found, Books.Count: > 0 } && lookup.KnownPositions.Count < options.MinKnownPositionsForLatest)
-            {
-                // Too little of the series is visible to name a highest book without misleading.
-                var seen = lookup.KnownPositions.Count;
-                return Keep(ConversationReply.Of(ConversationReplyKind.Text,
-                    $"{UnpublishedNotice}, so I can't say what's next in {lookup.SeriesName}. " +
-                    $"I can only see {seen} numbered {(seen == 1 ? "book" : "books")} of it, so I can't tell you which is the latest either."), state);
-            }
-
-            if (lookup is { Kind: SeriesLookupKind.Found, Books.Count: > 0 })
-            {
-                var top = lookup.Books[0].Position is { } position ? $" #{FormatPosition(position)}" : string.Empty;
-                return Keep(ConversationReply.Of(ConversationReplyKind.Text,
-                    $"{UnpublishedNotice}, so I can't say what's next in {lookup.SeriesName}. " +
-                    $"The highest-numbered book I can find is{top}: {string.Join("; ", lookup.Books.Select(book => book.Title))}. " +
-                    "The catalog may not list every book."), state);
-            }
-
-            return Keep(ConversationReply.Of(ConversationReplyKind.Text,
-                $"{UnpublishedNotice}, so I can't say what's next in “{series}”. Ask for “the latest {series} book” or a title and I'll look it up."), state);
-        }
-
-        return Keep(ConversationReply.Of(ConversationReplyKind.Text,
-            parsed.Action == ConversationActions.Year
-                ? "I can't filter by release year, so I can't answer that. Ask for a title or a series and I'll look it up."
-                : $"{UnpublishedNotice}, and the catalogs I use don't list upcoming releases. " +
-                  "Ask for a title, or “the latest” book of a series, and I'll look it up."), state);
     }
 
     private static string FormatPosition(decimal position) => position.ToString("0.##", System.Globalization.CultureInfo.InvariantCulture);
@@ -655,8 +1252,23 @@ public sealed class ConversationService(
         }
     }
 
+    /// <summary>
+    /// Whether the answer a list came from is still held for this reader. A list from an ordinary search has no such answer and is
+    /// governed by the session alone; one from a catalog answer is also gone when its context expired or was evicted, however recently
+    /// the reader last spoke.
+    /// </summary>
+    private bool ListLive(ConversationState state, string transport, string scopeKey)
+    {
+        if (state.AnswerContext is null) return true;
+        return RootOf(state) is { } root && AnswerRootLive(transport, scopeKey, root);
+    }
+
+    private bool AnswerRootLive(string transport, string scopeKey, Guid root) =>
+        CallerOf(transport, scopeKey) is { } caller && answerContexts.TryGetRoot(caller, root, clock.UtcNow) is not null;
+
     private async Task<TurnPlan> PickPlanAsync(
-        ConversationState state, int number, IReadOnlyList<RequestMediaType>? formats, CancellationToken cancellationToken)
+        ConversationState state, int number, IReadOnlyList<RequestMediaType>? formats, string transport, string scopeKey,
+        CancellationToken cancellationToken)
     {
         if (state.Choices.Count == 0)
         {
@@ -670,17 +1282,22 @@ public sealed class ConversationService(
                 $"Pick a number from 1 to {state.Choices.Count}, or say “cancel”."), state);
         }
 
+        if (!ListLive(state, transport, scopeKey)) return ExpiredChoicePlan(state);
+
         var choice = state.Choices[number - 1];
         var chosen = formats is { Count: > 0 } ? formats : state.FormatHint is { Count: > 0 } ? state.FormatHint : null;
         if (chosen is null)
         {
+            // The format step is part of the same list: it keeps the answer it came from (so it ends with it) and the list's identity.
             var next = new ConversationState
             {
                 Phase = ConversationPhase.ChoosingFormat,
                 Query = state.Query,
                 Choices = state.Choices,
                 SelectedIndex = number - 1,
-                RequestIntent = state.RequestIntent
+                RequestIntent = state.RequestIntent,
+                AnswerContext = state.AnswerContext,
+                ListId = state.ListId
             };
             return new TurnPlan(
                 ConversationReply.Of(ConversationReplyKind.AskFormat,
@@ -689,11 +1306,11 @@ public sealed class ConversationService(
                 next, null);
         }
 
-        return await RequestPlanAsync(choice, chosen, cancellationToken);
+        return await RequestPlanAsync(choice, chosen, RootOf(state), cancellationToken);
     }
 
     private async Task<TurnPlan> FormatPlanAsync(
-        ConversationState state, IReadOnlyList<RequestMediaType> formats, CancellationToken cancellationToken)
+        ConversationState state, IReadOnlyList<RequestMediaType> formats, string transport, string scopeKey, CancellationToken cancellationToken)
     {
         if (formats.Count == 0)
         {
@@ -702,7 +1319,8 @@ public sealed class ConversationService(
 
         if (state is { Phase: ConversationPhase.ChoosingFormat, SelectedIndex: { } index } && index >= 0 && index < state.Choices.Count)
         {
-            return await RequestPlanAsync(state.Choices[index], formats, cancellationToken);
+            if (!ListLive(state, transport, scopeKey)) return ExpiredChoicePlan(state);
+            return await RequestPlanAsync(state.Choices[index], formats, RootOf(state), cancellationToken);
         }
 
         return Keep(ConversationReply.Of(ConversationReplyKind.NotUnderstood,
@@ -712,9 +1330,17 @@ public sealed class ConversationService(
     }
 
     private async Task<TurnPlan> RequestPlanAsync(
-        ConversationChoiceRef choice, IReadOnlyList<RequestMediaType> formats, CancellationToken cancellationToken)
+        ConversationChoiceRef choice, IReadOnlyList<RequestMediaType> formats, Guid? answerRoot, CancellationToken cancellationToken)
     {
-        var workId = await tools.ResolveWorkAsync(choice, cancellationToken);
+        // A record the library already holds needs no catalog write at all: its own saved id is the identity.
+        Guid? workId = choice.SavedWorkId;
+        if (workId is null && !string.IsNullOrEmpty(choice.ExternalId))
+        {
+            // Resolving a source record saves it to the catalog, which only a person who can still use chat may cause.
+            if (await PrincipalWithdrawnAsync(cancellationToken)) return WithdrawnPlan();
+            workId = await tools.ResolveWorkAsync(choice, cancellationToken);
+        }
+
         if (workId is null)
         {
             return new TurnPlan(
@@ -726,10 +1352,15 @@ public sealed class ConversationService(
         var distinct = formats.Distinct().ToArray();
         return new TurnPlan(
             ConversationReply.Of(ConversationReplyKind.Text, "Requesting…"), ConversationState.Empty(),
-            new PendingRequest(workId.Value, distinct, choice.Title));
+            new PendingRequest(workId.Value, distinct, choice.Title, answerRoot));
     }
 
-    private async Task<ConversationReply> DetailsReplyAsync(ConversationState state, int number, CancellationToken cancellationToken)
+    private static TurnPlan WithdrawnPlan() =>
+        new(ConversationReply.Of(ConversationReplyKind.Unauthenticated, "Your Family Librarian account can no longer use chat."),
+            ConversationState.Empty(), null);
+
+    private async Task<ConversationReply> DetailsReplyAsync(
+        ConversationState state, int number, string transport, string scopeKey, CancellationToken cancellationToken)
     {
         if (state.Choices.Count == 0 || number > state.Choices.Count)
         {
@@ -737,6 +1368,8 @@ public sealed class ConversationService(
                 state.Choices.Count == 0 ? "I don't have a list to show details from. Tell me a book to look for first."
                     : $"Pick a number from 1 to {state.Choices.Count}.");
         }
+
+        if (!ListLive(state, transport, scopeKey)) return ExpiredChoicePlan(state).Reply;
 
         var details = await tools.GetBookDetailsAsync(state.Choices[number - 1], cancellationToken);
         return details is null
@@ -798,6 +1431,11 @@ public sealed class ConversationService(
         "• Tell me a title, author or ISBN, e.g. “Find Weather by Jenny Offill”\n" +
         "• Pick a result by number, or “details 2”\n" +
         "• “request 2 audiobook” (ebook, audiobook or both)\n" +
+        "• “the latest Expanse book”, “book 5 of The Expanse”, “what comes next?”\n" +
+        "• “upcoming Murderbot books”, “when is <title> coming out?”\n" +
+        "• “what has Becky Chambers written?” for an author's works\n" +
+        "• “editions 1” lists a book's edition titles from its source\n" +
+        "• “more” shows the next part of a long list\n" +
         "• “Do we have Dune?” checks the library\n" +
         "• “status” shows your requests\n" +
         "• “cancel” clears the conversation",
@@ -821,12 +1459,37 @@ public sealed class ConversationService(
     private static ConversationTurnResult Terminal(ConversationReplyKind kind, string text) =>
         new(ConversationReply.Of(kind, text), Replayed: false, DeliveryPending: false, null);
 
+    /// <summary>
+    /// The reply as it is recorded for a replay, within the bound. When the whole reply is too large the cards go first, because they
+    /// restate the text; then the reply keeps its text with the numbered choices and the suggested replies, so a replay still says
+    /// what the first reply said and still offers what it offered. Only a reply too large even then is cut to its opening text.
+    /// </summary>
     private static string SerializeReply(ConversationReply reply)
     {
         var json = JsonSerializer.Serialize(reply);
-        return json.Length <= MaxReplyJsonLength
-            ? json
-            : JsonSerializer.Serialize(ConversationReply.Of(reply.Kind, ConversationState.Clip(reply.Text, 1_500)));
+        if (json.Length <= MaxReplyJsonLength) return json;
+
+        var plain = reply with { Answers = null };
+        json = JsonSerializer.Serialize(plain);
+        if (json.Length <= MaxReplyJsonLength) return json;
+
+        json = JsonSerializer.Serialize(plain with { Requests = [] });
+        if (json.Length <= MaxReplyJsonLength) return json;
+
+        return JsonSerializer.Serialize(ConversationReply.Of(reply.Kind, ConversationState.Clip(reply.Text, 1_500)) with { ListId = reply.ListId });
+    }
+
+    private static string NewListId() => Guid.NewGuid().ToString("N")[..12];
+
+    /// <summary>
+    /// Gives a list its identity and puts it on the reply. A plan that kept the reader's list keeps its id, so a button drawn for it
+    /// still works; a plan that offers a new list (its state was built fresh) gets a new id, which makes every earlier button stale.
+    /// </summary>
+    private static TurnPlan Stamp(TurnPlan plan)
+    {
+        if (plan.State.Phase == ConversationPhase.Idle) return plan;
+        plan.State.ListId ??= NewListId();
+        return plan with { Reply = plan.Reply with { ListId = plan.State.ListId } };
     }
 
     private static ConversationReply? DeserializeReply(string? json)
@@ -861,7 +1524,7 @@ public sealed class ConversationService(
         return builder.ToString();
     }
 
-    private sealed record PendingRequest(Guid WorkId, IReadOnlyList<RequestMediaType> Formats, string Title);
+    private sealed record PendingRequest(Guid WorkId, IReadOnlyList<RequestMediaType> Formats, string Title, Guid? AnswerRoot = null);
 
     private sealed record TurnPlan(ConversationReply Reply, ConversationState State, PendingRequest? Request, bool ResetTurns = false);
 }

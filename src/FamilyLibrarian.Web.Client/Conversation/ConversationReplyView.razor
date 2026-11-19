@@ -3,7 +3,15 @@
    back through the same chat, so nothing here can do more than typing the same words would. *@
 <MudPaper Outlined="true" Class="pa-3" role="article" aria-label="Chat answer">
     <MudStack Spacing="2">
-        @if (DisplayText.Length > 0)
+        @if (Reply.Answers.Count > 0)
+        {
+            @* The card states the same facts as the text; showing both would repeat every line. *@
+            @foreach (var card in Reply.Answers)
+            {
+                <ConversationAnswerCardView Card="card" />
+            }
+        }
+        else if (DisplayText.Length > 0)
         {
             <MudText Typo="Typo.body1" Style="white-space: pre-line;">@DisplayText</MudText>
         }

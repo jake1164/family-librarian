@@ -127,6 +127,29 @@ public sealed class ConversationPersistenceTests
     }
 
     [TestMethod]
+    public async Task AReleasedRequestKeyCanBeClaimedAgainButOneWithARequestAttachedStaysClaimed()
+    {
+        await using var scope = WebTestFixture.Require(fixture).Services.CreateAsyncScope();
+        var database = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        var log = scope.ServiceProvider.GetRequiredService<IConversationEventLog>();
+        var userId = await AnyUserAsync(database);
+        var released = ConversationService.RequestKey("matrix", $"!{Unique()}:example.test", "$released");
+        var kept = ConversationService.RequestKey("matrix", $"!{Unique()}:example.test", "$kept");
+        var requestId = Guid.NewGuid();
+
+        Assert.IsTrue((await log.TryClaimRequestKeyAsync(userId, released, CancellationToken.None)).Claimed);
+        await log.ReleaseRequestKeyAsync(released, CancellationToken.None);
+        Assert.IsTrue((await log.TryClaimRequestKeyAsync(userId, released, CancellationToken.None)).Claimed, "A released key is free again.");
+
+        Assert.IsTrue((await log.TryClaimRequestKeyAsync(userId, kept, CancellationToken.None)).Claimed);
+        await log.AttachRequestAsync(kept, requestId, CancellationToken.None);
+        await log.ReleaseRequestKeyAsync(kept, CancellationToken.None);
+        var again = await log.TryClaimRequestKeyAsync(userId, kept, CancellationToken.None);
+        Assert.IsFalse(again.Claimed, "A key that has a request behind it is never released.");
+        Assert.AreEqual(requestId, again.ExistingRequestId);
+    }
+
+    [TestMethod]
     public async Task AFailureInsideTheTransactionRollsBackEveryWriteMadeInIt()
     {
         await using var scope = WebTestFixture.Require(fixture).Services.CreateAsyncScope();

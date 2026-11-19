@@ -1809,6 +1809,13 @@ public sealed class OpenLibraryDiscoveryTests
             gate.Dispose();
         }
 
+        /// <summary>A budget for the edition-title read, entirely separate from the discovery operations above.</summary>
+        public DiscoveryOperationBudget EditionsBudget(TimeProvider? clock = null)
+        {
+            var journey = new DiscoveryJourney(Guid.NewGuid(), DiscoveryLimits.Default, clock ?? Time);
+            return journey.BeginOperation(DiscoveryOperation.GetWorkEditions, "openlibrary", null)!;
+        }
+
         private Task<HttpResponseMessage> Handle(HttpRequestMessage request, CancellationToken cancellationToken)
         {
             Interlocked.Increment(ref requests);
@@ -1826,5 +1833,60 @@ public sealed class OpenLibraryDiscoveryTests
             protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken) =>
                 send(request, cancellationToken);
         }
+    }
+
+    // ---- edition titles: one request, no retry, the first page only ----------------------------------------------
+
+    [TestMethod]
+    public async Task EditionTitlesAreOneRequestWithNoRetryAndKeepEachStatedLanguage()
+    {
+        const string editions = """
+            {"entries":[
+              {"key":"/books/OL1M","title":"Alder","languages":[{"key":"/languages/eng"}]},
+              {"key":"/books/OL2M","title":"Alder (Large Print)"}
+            ]}
+            """;
+        using var rig = Rig.With(Json(editions));
+
+        var read = await rig.Provider.GetWorkEditionTitlesAsync(
+            new SourceRef("openlibrary", "OL45804W", ExternalReferenceEntityType.Work), rig.EditionsBudget(), CancellationToken.None);
+
+        Assert.AreEqual(DiscoveryOutcome.Ok, read.Outcome);
+        Assert.AreEqual(2, read.Value!.Editions.Count);
+        Assert.AreEqual("OL1M", read.Value.Editions[0].EditionId);
+        Assert.AreEqual("Alder", read.Value.Editions[0].Title);
+        Assert.AreEqual("en", read.Value.Editions[0].Language);
+        Assert.IsNull(read.Value.Editions[1].Language, "A source that states no language leaves it unknown.");
+        Assert.AreEqual("title", read.Value.Editions[0].SourceField);
+        Assert.AreEqual(1, rig.Requests, "One request, never one per edition.");
+        StringAssert.Contains(rig.Uris.Single(), "works/OL45804W/editions.json?limit=20");
+    }
+
+    [TestMethod]
+    public async Task AFailedEditionReadIsTypedAndNeverRetried()
+    {
+        using var rig = Rig.With(new HttpResponseMessage(HttpStatusCode.InternalServerError));
+
+        var read = await rig.Provider.GetWorkEditionTitlesAsync(
+            new SourceRef("openlibrary", "OL45804W", ExternalReferenceEntityType.Work), rig.EditionsBudget(), CancellationToken.None);
+
+        Assert.AreNotEqual(DiscoveryOutcome.Ok, read.Outcome);
+        Assert.AreEqual(1, rig.Requests, "A single attempt: there is no retry on this read.");
+        Assert.IsNotEmpty(read.Notes);
+    }
+
+    [TestMethod]
+    public async Task OnlyAWellFormedWorkIdIsReadAtAllAndNothingElseIsRequested()
+    {
+        using var rig = Rig.With(Json("""{"entries":[]}"""));
+
+        var notAWork = await rig.Provider.GetWorkEditionTitlesAsync(
+            new SourceRef("openlibrary", "OL1M", ExternalReferenceEntityType.Edition), rig.EditionsBudget(), CancellationToken.None);
+        var malformed = await rig.Provider.GetWorkEditionTitlesAsync(
+            new SourceRef("openlibrary", "not-a-work", ExternalReferenceEntityType.Work), rig.EditionsBudget(), CancellationToken.None);
+
+        Assert.AreNotEqual(DiscoveryOutcome.Ok, notAWork.Outcome);
+        Assert.AreNotEqual(DiscoveryOutcome.Ok, malformed.Outcome);
+        Assert.AreEqual(0, rig.Requests);
     }
 }

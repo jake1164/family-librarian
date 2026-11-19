@@ -1,5 +1,6 @@
 using FamilyLibrarian.Application.Catalog;
 using FamilyLibrarian.Application.Catalog.Discovery;
+using FamilyLibrarian.Domain.Catalog;
 
 namespace FamilyLibrarian.Infrastructure.Metadata;
 
@@ -13,11 +14,69 @@ namespace FamilyLibrarian.Infrastructure.Metadata;
 /// carries the search document's own edition facts and the result says the list was not read, rather than hiding an unbudgeted
 /// request. Nothing here writes or persists.
 /// </remarks>
-public sealed partial class OpenLibraryBookMetadataProvider : IBudgetedBookMetadataProvider
+public sealed partial class OpenLibraryBookMetadataProvider : IBudgetedBookMetadataProvider, IWorkEditionTitlesProvider
 {
     private const string EditionListNotRead = "edition-list-not-read";
 
+    /// <summary>The first page of editions only: one request, never a walk through every edition of a Work.</summary>
+    public const int MaxEditionTitles = 20;
+
     string IBudgetedBookMetadataProvider.ProviderId => Id;
+
+    string IWorkEditionTitlesProvider.ProviderId => Id;
+
+    /// <summary>
+    /// One request, no retry: the editions list for one Work, admitted from the journey budget as a single attempt, and cut to the
+    /// first <see cref="MaxEditionTitles"/> entries whether or not the source lists more. The reported title, edition key and stated
+    /// language are kept exactly; a missing language stays unknown.
+    /// </summary>
+    public async Task<BudgetedRead<WorkEditionTitlePage>> GetWorkEditionTitlesAsync(
+        SourceRef work, IDiscoveryBudget budget, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(work);
+        ArgumentNullException.ThrowIfNull(budget);
+        if (work.Kind != ExternalReferenceEntityType.Work || !IsValidWorkId(work.ExternalId))
+        {
+            return BudgetStopped<WorkEditionTitlePage>(budget, DiscoveryOutcome.Failed, DiscoveryCodes.SubjectInvalid);
+        }
+
+        if (!budget.TryAdmitPage())
+        {
+            return BudgetStopped<WorkEditionTitlePage>(budget, DiscoveryOutcome.Failed, DiscoveryCodes.PageCeiling);
+        }
+
+        using var scope = budget.BeginWork();
+        var reply = await GetAsync<OpenLibraryEditionsListResponse>(
+            $"works/{work.ExternalId}/editions.json?limit={MaxEditionTitles}", budget, cancellationToken);
+        if (!reply.HasData)
+        {
+            return BudgetStopped<WorkEditionTitlePage>(budget, reply.Transport, reply.Code);
+        }
+
+        var entries = reply.Data!.Entries ?? [];
+        var titles = entries
+            .Take(MaxEditionTitles)
+            .Select(entry => new WorkEditionTitle(
+                EditionIdOf(entry.Key),
+                entry.Title?.Trim() ?? string.Empty,
+                entry.Languages is { Count: > 0 } languages ? LanguageCodeNormalizer.Normalize(GetLanguageCode(languages[0].Key)) : null,
+                "title"))
+            .Where(edition => edition.Title.Length > 0)
+            .ToArray();
+        budget.RecordItems(titles.Length);
+        return BudgetedRead.Found<WorkEditionTitlePage>(
+            new WorkEditionTitlePage(titles, entries.Count > MaxEditionTitles ? entries.Count : null),
+            budget.Usage, time.GetUtcNow());
+    }
+
+    /// <summary>The edition's own key without its path prefix; an id is never invented for an entry the source left unnamed.</summary>
+    private static string? EditionIdOf(string? key)
+    {
+        const string prefix = "/books/";
+        if (key is null || !key.StartsWith(prefix, StringComparison.Ordinal)) return null;
+        var id = key[prefix.Length..];
+        return id.Length is > 0 and <= SourceRef.MaxExternalIdLength ? id : null;
+    }
 
     public async Task<BudgetedRead<BookCandidateSearchPage>> SearchBudgetedAsync(
         BookSearchQuery query, IDiscoveryBudget budget, CancellationToken cancellationToken)

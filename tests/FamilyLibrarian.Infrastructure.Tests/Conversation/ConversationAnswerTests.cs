@@ -1,4 +1,6 @@
 using FamilyLibrarian.Application.Catalog;
+using FamilyLibrarian.Application.Catalog.Answers;
+using FamilyLibrarian.Application.Catalog.Discovery;
 using FamilyLibrarian.Application.Conversation;
 using FamilyLibrarian.Domain.Requests;
 
@@ -278,99 +280,85 @@ public sealed class ConversationAnswerTests
     // ---- honest wording ---------------------------------------------------------------------------------------------
 
     [TestMethod]
-    public async Task TheLatestBookIsOnlyEverTheHighestOneTheCatalogShowed()
+    public async Task TheLatestComesFromTheSharedAnswerAndIsNeverTheHighestNumberChatSaw()
     {
         var harness = new ConversationHarness();
-        harness.Tools.SeriesResults["Lantern Road"] = WithKnown("The Lantern Road", [1m, 2m, 4m], Book("The Lantern Road", 4, "Road's End"));
+        harness.Answers.Script = _ => TestAnswer.Latest(TestAnswer.Entry("Road's End", 4));
 
         var reply = await harness.SayAsync("What is the latest Lantern Road book?");
 
-        Assert.AreEqual(ConversationReplyKind.Choices, reply.Reply.Kind);
-        StringAssert.Contains(reply.Reply.Text, "highest-numbered");
-        StringAssert.Contains(reply.Reply.Text, "may not list every book");
-        Assert.IsFalse(reply.Reply.Text.Contains("book 4 is", StringComparison.Ordinal), "It must not be worded as a settled fact.");
+        var request = harness.Answers.Requests.Single();
+        Assert.AreEqual(CatalogAnswerOperation.LatestPublished, request.Operation);
+        Assert.AreEqual("Lantern Road", request.Text);
+        Assert.AreEqual(ConversationReplyKind.Answer, reply.Reply.Kind);
+        StringAssert.Contains(reply.Reply.Text, "latest published book I can find in The Lantern Road");
+        StringAssert.Contains(reply.Reply.Text, "Only part of what exists could be checked");
+        Assert.IsFalse(reply.Reply.Text.Contains("highest-numbered", StringComparison.Ordinal),
+            "A series number is not a publication date.");
     }
 
-    /// <summary>A lookup that found the book(s) at the requested position and knows these positions for the series.</summary>
-    private static SeriesLookupResult WithKnown(string series, decimal[] knownPositions, params SeriesBook[] books) =>
-        new(SeriesLookupKind.Found, series, books, [], knownPositions);
-
     [TestMethod]
-    [DataRow(1)]
-    [DataRow(2)]
-    public async Task LatestFromTooFewKnownBooksIsNotClaimedAndTheSeriesNameIsSearchedInstead(int known)
+    public async Task AThinLookupIsQualifiedRatherThanPresentedAsACertainLatest()
     {
         var harness = new ConversationHarness();
-        var positions = Enumerable.Range(1, known).Select(position => (decimal)position).ToArray();
-        harness.Tools.SeriesResults["Lantern Road"] = WithKnown("The Lantern Road", positions, Book("The Lantern Road", known, "Road's Beginning"));
-        harness.Tools.Results["Lantern Road"] = new ConversationSearchResult([FakeTools.Choice("l1", "The Last Lantern")], false, []);
+        harness.Answers.Script = request => TestAnswer.Latest(TestAnswer.Entry("Road's Beginning", 1)) with
+        {
+            Qualifiers = [CatalogAnswerCodes.IncompleteCoverage, CatalogAnswerCodes.ListNotExhaustive]
+        };
 
         var reply = await harness.SayAsync("What is the latest Lantern Road book?");
 
-        Assert.AreEqual(ConversationReplyKind.Choices, reply.Reply.Kind);
-        Assert.IsFalse(reply.Reply.Text.Contains("highest-numbered", StringComparison.Ordinal), "One or two sampled books are not evidence of the latest.");
-        StringAssert.Contains(reply.Reply.Text, $"I can only see {known} numbered");
-        StringAssert.Contains(reply.Reply.Text, "isn't enough to say which is the latest");
-        CollectionAssert.Contains(harness.Tools.Calls, "search:Lantern Road");
+        StringAssert.Contains(reply.Reply.Text, "Only part of what exists could be checked");
+        Assert.IsFalse(reply.Reply.Text.Contains("highest-numbered", StringComparison.Ordinal));
+        Assert.IsFalse(harness.Tools.Calls.Any(call => call.StartsWith("search:", StringComparison.Ordinal)),
+            "The shared answer is shown, not replaced by a speculative search.");
     }
 
     [TestMethod]
-    public async Task HowManyKnownBooksAreEnoughToNameTheLatestIsAnOptionNotAConstant()
+    public async Task AListingAndAMissingBookBothSayWhatWasActuallyChecked()
     {
         var harness = new ConversationHarness();
-        harness.Options.MinKnownPositionsForLatest = 1;
-        harness.Tools.SeriesResults["Lantern Road"] = WithKnown("The Lantern Road", [4m], Book("The Lantern Road", 4, "Road's End"));
+        harness.Answers.Script = request => request.Operation == CatalogAnswerOperation.SeriesMembers
+            ? TestAnswer.Members(TestAnswer.Entry("The Lantern Road", 1), TestAnswer.Entry("Lanterns at Dusk", 2))
+            : TestAnswer.Nothing(request.Operation, CatalogAnswerCodes.PositionNotInCheckedEntries);
 
-        var reply = await harness.SayAsync("What is the latest Lantern Road book?");
-
-        StringAssert.Contains(reply.Reply.Text, "highest-numbered");
-    }
-
-    [TestMethod]
-    public async Task AListingAndAMissingBookBothSayTheCatalogMayBeIncomplete()
-    {
-        var harness = new ConversationHarness();
-        harness.Tools.SeriesResults["Lantern Road"] = Found(
-            "The Lantern Road", Book("The Lantern Road", 1, "The Lantern Road"), Book("The Lantern Road", 2, "Lanterns at Dusk"));
         var listing = await harness.SayAsync("reading order of Lantern Road");
-
-        harness.Tools.SeriesResults["Lantern Road"] = new SeriesLookupResult(SeriesLookupKind.PositionMissing, "The Lantern Road", [], [], [1m, 2m]);
         var missing = await harness.SayAsync("the fifth Lantern Road book");
 
         StringAssert.Contains(listing.Reply.Text, "in order");
-        StringAssert.Contains(listing.Reply.Text, "may be incomplete");
-        StringAssert.Contains(missing.Reply.Text, "I know of 1, 2");
-        StringAssert.Contains(missing.Reply.Text, "may not list every book");
+        StringAssert.Contains(listing.Reply.Text, "not a complete list");
+        StringAssert.Contains(missing.Reply.Text, "No book I checked claims book 5 of The Lantern Road");
+        Assert.IsFalse(missing.Reply.Text.Contains("may not list every book", StringComparison.Ordinal),
+            "A missing position is not padded with keyword hits.");
     }
 
     [TestMethod]
-    public async Task ASeriesQuestionWithNoKnownSeriesSearchesTheSeriesNameAndSaysItCouldNotConfirmTheOrder()
+    public async Task ASeriesQuestionWithNoKnownSeriesIsSearchedAndSaysTheOrderCouldNotBeConfirmed()
     {
         var harness = new ConversationHarness();
         harness.Tools.Results["Murderbot"] = new ConversationSearchResult([FakeTools.Choice("m1", "Rogue Protocol")], false, []);
 
-        var reply = await harness.SayAsync("What is the 3rd Murderbot book?");
+        var reply = await harness.SayAsync("reading order of Murderbot");
 
         CollectionAssert.Contains(harness.Tools.Calls, "search:Murderbot");
         Assert.AreEqual(ConversationReplyKind.Choices, reply.Reply.Kind);
         StringAssert.Contains(reply.Reply.Text, "couldn't confirm");
-        Assert.IsFalse(harness.Tools.Calls.Contains("search:What is the 3rd Murderbot book?"), "The whole sentence is never the search.");
     }
 
     [TestMethod]
     [DataRow("book three of Lantern Road")]
     [DataRow("the third Lantern Road book")]
     [DataRow("Lantern Road book 3")]
-    public async Task ASeriesQuestionThatIsNotAFullSentenceSearchesTheSeriesNameWhenItIsNotATitleEither(string text)
+    public async Task ANumberAtAPositionIsAnsweredByTheSharedContractWithoutASearch(string text)
     {
         var harness = new ConversationHarness();
-        harness.Tools.Results["Lantern Road"] = new ConversationSearchResult([FakeTools.Choice("l1", "The Last Lantern")], false, []);
+        harness.Answers.Script = request => TestAnswer.Nothing(request.Operation, CatalogAnswerCodes.PositionNotInCheckedEntries);
 
         var reply = await harness.SayAsync(text);
 
-        CollectionAssert.Contains(harness.Tools.Calls, "search:Lantern Road");
-        StringAssert.Contains(reply.Reply.Text, "couldn't confirm");
-        Assert.AreEqual(ConversationReplyKind.Choices, reply.Reply.Kind);
+        Assert.AreEqual(ConversationReplyKind.Answer, reply.Reply.Kind);
+        StringAssert.Contains(reply.Reply.Text, "No book I checked claims book 3 of The Lantern Road");
+        Assert.IsFalse(harness.Tools.Calls.Any(call => call.StartsWith("search:", StringComparison.Ordinal)));
     }
 
     [TestMethod]
@@ -412,59 +400,60 @@ public sealed class ConversationAnswerTests
     // ---- unreleased books and release years --------------------------------------------------------------------------
 
     [TestMethod]
-    public async Task UpcomingBooksAndReleaseYearsAreSaidToBeOutsideWhatChatCanSeeWithoutSearching()
+    public async Task UpcomingBooksAreAskedOfTheSharedAnswerAndReleaseYearsAreRefused()
     {
         var harness = new ConversationHarness();
+        harness.Answers.Script = _ => TestAnswer.Latest(TestAnswer.Entry("The Heretics", 2));
 
         var upcoming = await harness.SayAsync("Show me upcoming Jack Ryan books");
         var year = await harness.SayAsync("Show me Expanse novels released after 2030");
 
-        StringAssert.Contains(upcoming.Reply.Text, "can't see");
-        StringAssert.Contains(upcoming.Reply.Text, "haven't been published");
-        StringAssert.Contains(year.Reply.Text, "release year");
-        Assert.IsFalse(harness.Tools.Calls.Any(call => call.StartsWith("search:", StringComparison.Ordinal)), "No irrelevant results are shown.");
+        var request = harness.Answers.Requests.First();
+        Assert.AreEqual(CatalogAnswerOperation.UpcomingReleases, request.Operation);
+        Assert.AreEqual("Jack Ryan", request.Text, "The series is carried to the answer, not the whole sentence.");
+        Assert.AreEqual(ConversationReplyKind.Answer, upcoming.Reply.Kind);
+        StringAssert.Contains(year.Reply.Text, "release year", "A release-year filter is still refused plainly.");
     }
 
     [TestMethod]
-    public async Task AReleaseDateQuestionLooksTheTitleUpAndSaysItCannotConfirmADate()
+    public async Task AReleaseDateQuestionAsksForTheTitlePublicationAndKeepsEachSourceAttributed()
     {
         var harness = new ConversationHarness();
-        harness.Tools.Results["The Winds of Winter"] = new ConversationSearchResult([FakeTools.Choice("w1", "The Winds of Winter", "George R.R. Martin")], false, []);
+        harness.Answers.Script = request => new CatalogAnswer
+        {
+            Operation = request.Operation,
+            Outcome = CatalogAnswerOutcome.Qualified,
+            Subject = CatalogSubjectRef.Title("The Winds of Winter"),
+            Entries = [TestAnswer.Entry("The Winds of Winter") with { Publication = PublicationEvidence.KnownUndated() }],
+            Qualifiers = [CatalogAnswerCodes.StatusUnverified],
+            Today = new DateOnly(2026, 11, 18)
+        };
 
         var reply = await harness.SayAsync("When is The Winds of Winter coming out?");
 
-        Assert.AreEqual(ConversationReplyKind.Choices, reply.Reply.Kind);
-        StringAssert.Contains(reply.Reply.Text, "can't confirm release dates");
-        Assert.HasCount(1, reply.Reply.Choices);
+        var request = harness.Answers.Requests.Single();
+        Assert.AreEqual(CatalogAnswerOperation.PublicationForTitle, request.Operation);
+        Assert.AreEqual("The Winds of Winter", request.Text);
+        Assert.AreEqual(ConversationReplyKind.Answer, reply.Reply.Kind);
+        StringAssert.Contains(reply.Reply.Text, "announced, no date stated");
+        StringAssert.Contains(reply.Reply.Text, "did not state whether it is published");
+        Assert.IsFalse(reply.Reply.Text.Contains("2027", StringComparison.Ordinal), "No date is invented for an undated announcement.");
     }
 
     [TestMethod]
-    public async Task TheNextBookOfASeriesSaysItCannotSeeReleasesAndOffersTheLatestItKnows()
+    public async Task TheNextReleaseOfASeriesIsAskedOfTheSharedAnswer()
     {
         var harness = new ConversationHarness();
-        harness.Tools.SeriesResults["Expanse"] = WithKnown("The Expanse", [1m, 5m, 9m], Book("The Expanse", 9, "Leviathan Falls"));
-
-        var known = await harness.SayAsync("What is the next Expanse novel?");
-        var none = await new ConversationHarness().SayAsync("What is the next Expanse novel?");
-
-        CollectionAssert.Contains(harness.Tools.Calls, "series:Expanse|-1");
-        StringAssert.Contains(known.Reply.Text, "can't see books that haven't been published");
-        StringAssert.Contains(known.Reply.Text, "Leviathan Falls");
-        StringAssert.Contains(none.Reply.Text, "can't see books that haven't been published");
-    }
-
-    [TestMethod]
-    public async Task TheNextBookOfASeriesWithTooFewKnownBooksDoesNotNameAHighestOne()
-    {
-        var harness = new ConversationHarness();
-        harness.Tools.SeriesResults["Expanse"] = WithKnown("The Expanse", [1.1m], Book("The Expanse", 1.1m, "A Companion Guide"));
+        harness.Answers.Script = _ => TestAnswer.Latest(TestAnswer.Entry("Leviathan Falls", 9));
 
         var reply = await harness.SayAsync("What is the next Expanse novel?");
 
-        StringAssert.Contains(reply.Reply.Text, "can't see books that haven't been published");
-        StringAssert.Contains(reply.Reply.Text, "I can only see 1 numbered book");
-        Assert.IsFalse(reply.Reply.Text.Contains("highest-numbered", StringComparison.Ordinal));
-        Assert.IsFalse(reply.Reply.Text.Contains("A Companion Guide", StringComparison.Ordinal), "A single sampled book is not offered as the latest.");
+        var request = harness.Answers.Requests.Single();
+        Assert.AreEqual(CatalogAnswerOperation.NextRelease, request.Operation);
+        Assert.AreEqual("Expanse", request.Text);
+        Assert.AreEqual(ConversationReplyKind.Answer, reply.Reply.Kind);
+        Assert.IsFalse(reply.Reply.Text.Contains("haven't been published", StringComparison.Ordinal),
+            "The blanket refusal was replaced by what the sources actually state.");
     }
 
     // ---- follow-ups about "it" ---------------------------------------------------------------------------------------
@@ -472,7 +461,7 @@ public sealed class ConversationAnswerTests
     private static async Task<ConversationHarness> WithOneBookInFocusAsync()
     {
         var harness = new ConversationHarness();
-        harness.Tools.SeriesResults["Lantern Road"] = Found("The Lantern Road", Book("The Lantern Road", 3, "The Last Lantern"));
+        harness.Answers.Script = _ => TestAnswer.Position(3, TestAnswer.Entry("The Last Lantern", 3));
         await harness.SayAsync("the third Lantern Road book");
         return harness;
     }
@@ -527,22 +516,29 @@ public sealed class ConversationAnswerTests
         var reply = await harness.SayAsync("Is it available as an audiobook?");
 
         Assert.AreEqual(ConversationReplyKind.Library, reply.Reply.Kind);
-        CollectionAssert.Contains(harness.Tools.Calls, "library-choice:the-last-lantern", "The offered record is checked by its id.");
+        CollectionAssert.Contains(harness.Tools.Calls, "library-choice:w-the-last-lantern", "The offered record is checked by its id.");
         Assert.IsFalse(harness.Tools.Calls.Any(call => call.StartsWith("library:", StringComparison.Ordinal)), "Never a text search that may rank another record first.");
         StringAssert.Contains(reply.Reply.Text, "request it");
         Assert.IsEmpty(harness.Tools.Created);
     }
 
     [TestMethod]
-    public async Task WhatComesNextAsksTheSeriesTheBookWasOfferedIn()
+    public async Task WhatComesNextUsesTheRetainedSeriesAndTheBookInFocusWithNoProviderCall()
     {
         var harness = await WithOneBookInFocusAsync();
 
+        // The follow-up must reuse the retained window: one more ask, and one that is a next-in-order question about that series.
+        harness.Answers.Script = _ => TestAnswer.Latest(TestAnswer.Entry("Lanterns at Dusk", 4));
         var reply = await harness.SayAsync("What comes out next?");
 
-        CollectionAssert.Contains(harness.Tools.Calls, "series:The Lantern Road|all|after:The Last Lantern", "The series the catalog gave the book is passed on.");
-        Assert.AreNotEqual(ConversationReplyKind.Status, reply.Reply.Kind);
-        StringAssert.Contains(reply.Reply.Text, "The Last Lantern");
+        var request = harness.Answers.Requests[^1];
+        Assert.AreEqual(CatalogAnswerOperation.AfterAnchor, request.Operation);
+        Assert.AreEqual(TestAnswer.Series, request.Subject!.Native);
+        Assert.AreEqual(CatalogSubjectKind.Book, request.Anchor!.Kind);
+        Assert.AreEqual(TestAnswer.Work("The Last Lantern"), request.Anchor.Native);
+        Assert.IsNotNull(request.ContextRootId, "The follow-up stays on the retained root.");
+        Assert.AreEqual(ConversationReplyKind.Answer, reply.Reply.Kind);
+        Assert.IsFalse(harness.Tools.Calls.Any(call => call.StartsWith("series:", StringComparison.Ordinal)));
     }
 
     [TestMethod]

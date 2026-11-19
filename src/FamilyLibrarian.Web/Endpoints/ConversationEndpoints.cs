@@ -13,6 +13,7 @@ internal static class ConversationEndpoints
     public const string RateLimitPolicy = "conversation-messages";
     public const string WebScopeKey = "web";
     private const int MaxMessageIdLength = 100;
+    private const int MaxListIdLength = 40;
 
     public static void MapConversationEndpoints(this IEndpointRouteBuilder app)
     {
@@ -45,8 +46,14 @@ internal static class ConversationEndpoints
             return Results.ValidationProblem(new Dictionary<string, string[]> { ["messageId"] = ["The message id is too long."] });
         }
 
+        var listId = string.IsNullOrWhiteSpace(request.ListId) ? null : request.ListId.Trim();
+        if (listId is { Length: > MaxListIdLength })
+        {
+            return Results.ValidationProblem(new Dictionary<string, string[]> { ["listId"] = ["The list id is too long."] });
+        }
+
         var result = await conversation.HandleAsync(
-            new ConversationTurn(ConversationTransports.Web, WebScopeKey, messageId, request.Text ?? string.Empty), cancellationToken);
+            new ConversationTurn(ConversationTransports.Web, WebScopeKey, messageId, request.Text ?? string.Empty, listId), cancellationToken);
 
         var response = ToResponse(result);
         return result.Reply.Kind switch
@@ -66,5 +73,15 @@ internal static class ConversationEndpoints
             request.RequestId, request.Title, request.Authors, request.Status, request.Formats)).ToArray(),
         result.Reply.SuggestedReplies,
         result.Reply.RequestId,
-        result.Replayed);
+        result.Replayed,
+        (result.Reply.Answers ?? []).Select(card => new ConversationAnswerCardResponse(
+            card.Kind,
+            card.Heading,
+            card.Lines.Select(line => new ConversationAnswerLineResponse(line.Title, line.Authors, line.Facts, line.Href)).ToArray(),
+            card.Groups.Select(group => new ConversationAnswerGroupResponse(
+                group.Heading,
+                group.Lines.Select(line => new ConversationAnswerLineResponse(line.Title, line.Authors, line.Facts, line.Href)).ToArray())).ToArray(),
+            card.Notes,
+            card.Href)).ToArray(),
+        result.Reply.ListId);
 }

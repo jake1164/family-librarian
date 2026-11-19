@@ -136,7 +136,7 @@ public sealed class ConversationHostTests
     }
 
     [TestMethod]
-    public async Task ASeriesPositionIsAnsweredFromSeriesTheCatalogAlreadyRecordsAndAnUnknownPositionIsNotGuessed()
+    public async Task ASeriesPositionIsAnsweredFromTheSavedCatalogThroughAChoiceAndAnUnknownPositionIsNotGuessed()
     {
         await using var factory = Factory();
         var user = await CreateLinkedUserAsync(factory);
@@ -144,13 +144,20 @@ public sealed class ConversationHostTests
         await SayAsMatrixAsync(factory, user, "Find A Wrinkle in Time", "$w1");
         await SayAsMatrixAsync(factory, user, "request 1 ebook", "$w2");
 
-        var first = await SayAsMatrixAsync(factory, user, "the first book of Time Quintet", "$w3");
-        var fifth = await SayAsMatrixAsync(factory, user, "the fifth book of Time Quintet", "$w4");
+        // A name is never an identity: the saved series is offered and the reader picks it.
+        var offered = await SayAsMatrixAsync(factory, user, "the first book of Time Quintet", "$w3");
+        Assert.AreEqual(ConversationReplyKind.Clarification, offered.Reply.Kind);
+        Assert.HasCount(1, offered.Reply.Choices);
 
-        Assert.AreEqual(ConversationReplyKind.Choices, first.Reply.Kind);
+        var first = await SayAsMatrixAsync(factory, user, "1", "$w4");
+        Assert.AreEqual(ConversationReplyKind.Answer, first.Reply.Kind);
         StringAssert.Contains(first.Reply.Text, "A Wrinkle in Time");
-        StringAssert.Contains(fifth.Reply.Text, "not that book");
-        StringAssert.Contains(fifth.Reply.Text, "I know of 1");
+
+        // A new question again offers the subject, and an unclaimed position is stated as such rather than guessed.
+        var offeredAgain = await SayAsMatrixAsync(factory, user, "the fifth book of Time Quintet", "$w5");
+        Assert.AreEqual(ConversationReplyKind.Clarification, offeredAgain.Reply.Kind);
+        var fifth = await SayAsMatrixAsync(factory, user, "1", "$w6");
+        StringAssert.Contains(fifth.Reply.Text, "No book I checked claims book 5");
     }
 
     [TestMethod]

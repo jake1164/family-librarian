@@ -162,7 +162,24 @@ public sealed class MatrixInboundRouterTests
     {
         public Task<ConversationTurnResult?> RunMatrixTurnAsync(MatrixInboundMessage message, string text, CancellationToken cancellationToken) => run();
 
-        public Task MarkDeliveredAsync(ConversationEventKey key, CancellationToken cancellationToken) => Task.CompletedTask;
+        /// <summary>What the room link and account look like when the router asks again after the turn.</summary>
+        public bool StillAuthorized { get; set; } = true;
+
+        public int Rechecks { get; private set; }
+
+        public List<ConversationEventKey> Delivered { get; } = [];
+
+        public Task<bool> StillAuthorizedAsync(MatrixInboundMessage message, CancellationToken cancellationToken)
+        {
+            Rechecks++;
+            return Task.FromResult(StillAuthorized);
+        }
+
+        public Task MarkDeliveredAsync(ConversationEventKey key, CancellationToken cancellationToken)
+        {
+            Delivered.Add(key);
+            return Task.CompletedTask;
+        }
     }
 
     private static ConversationTurnResult Answer(string text) =>
@@ -188,6 +205,52 @@ public sealed class MatrixInboundRouterTests
 
         CollectionAssert.AreEqual(OnSendOff, context.MatrixClient.Log.ToArray());
         Assert.AreEqual("Here you go.", context.MatrixClient.LastReply);
+    }
+
+    private static (TestContext Context, FakeTurnExecutor Executor, UserMatrixDestination Destination) Rechecked(ConversationTurnResult result)
+    {
+        var executor = new FakeTurnExecutor(() => Task.FromResult<ConversationTurnResult?>(result));
+        var context = new TestContext(executor, new ConversationOptions { Enabled = true, MatrixEnabled = true });
+        context.ConfigureMatrix();
+        return (context, executor, context.SeedVerifiedDestination());
+    }
+
+    private static readonly ConversationEventKey RecordedEvent = new(ConversationTransports.Matrix, "!room:example.test", "$e1");
+
+    [TestMethod]
+    public async Task AReplyIsNotSentIntoTheRoomWhenTheLinkOrAccountIsGoneAfterTheTurn()
+    {
+        var (context, executor, destination) = Rechecked(
+            new ConversationTurnResult(ConversationReply.Of(ConversationReplyKind.Text, "Requested."), Replayed: false, DeliveryPending: true, RecordedEvent));
+        executor.StillAuthorized = false;
+
+        await context.Router.HandleMessageAsync(
+            new MatrixInboundMessage(destination.RoomId!, destination.MatrixUserId!, "request 1 audiobook", EventId: "$e1"), CancellationToken.None);
+
+        Assert.AreEqual(1, executor.Rechecks, "The room, sender and account are read again after the awaited turn.");
+        CollectionAssert.AreEqual(OnOff, context.MatrixClient.Log.ToArray(), "Nothing is sent; only the typing indicator is cleared.");
+        Assert.IsEmpty(executor.Delivered, "A reply that was not sent is not recorded as delivered.");
+    }
+
+    [TestMethod]
+    public async Task AReplayedReplyIsCheckedAgainBeforeItIsSentAgain()
+    {
+        var (context, executor, destination) = Rechecked(
+            new ConversationTurnResult(ConversationReply.Of(ConversationReplyKind.Text, "Requested."), Replayed: true, DeliveryPending: true, RecordedEvent));
+        executor.StillAuthorized = false;
+
+        await context.Router.HandleMessageAsync(
+            new MatrixInboundMessage(destination.RoomId!, destination.MatrixUserId!, "request 1 audiobook", EventId: "$e1"), CancellationToken.None);
+
+        Assert.AreEqual(1, executor.Rechecks);
+        CollectionAssert.DoesNotContain(context.MatrixClient.Log.ToArray(), "send");
+
+        executor.StillAuthorized = true;
+        await context.Router.HandleMessageAsync(
+            new MatrixInboundMessage(destination.RoomId!, destination.MatrixUserId!, "request 1 audiobook", EventId: "$e1"), CancellationToken.None);
+
+        CollectionAssert.Contains(context.MatrixClient.Log.ToArray(), "send");
+        Assert.HasCount(1, executor.Delivered, "Once the check passes, the reply is sent and recorded.");
     }
 
     [TestMethod]

@@ -13,8 +13,10 @@ public static class ConversationTransports
 /// One user message, already tied to a transport. <paramref name="ScopeKey"/> is the Matrix room or the web channel the
 /// conversation lives in; <paramref name="EventId"/> is the transport's id for this message (the Matrix event id, or a
 /// client-generated id on the web) and is what makes a replayed message harmless. It is never an identity.
+/// <paramref name="ListId"/> is set only by a button on an earlier reply: it names the list that button was drawn for, so a press that
+/// arrives after a newer list replaced it is recognised as stale and does nothing. Typed text never carries one.
 /// </summary>
-public sealed record ConversationTurn(string Transport, string ScopeKey, string? EventId, string Text);
+public sealed record ConversationTurn(string Transport, string ScopeKey, string? EventId, string Text, string? ListId = null);
 
 public enum ConversationReplyKind
 {
@@ -37,11 +39,38 @@ public enum ConversationReplyKind
     RateLimited,
     TooLong,
     Disabled,
-    Unavailable
+    Unavailable,
+
+    /// <summary>A bibliographic answer from the shared catalog-answer service: entries, groups and the checked scope.</summary>
+    Answer,
+
+    /// <summary>The edition titles one source states for a selected record.</summary>
+    Editions,
+
+    /// <summary>A selection is needed before the question can be answered (a series, an author or an ordering).</summary>
+    Clarification
 }
 
 /// <summary>A numbered option the user can pick by number. Display text only; the real reference stays in server-side state.</summary>
 public sealed record ConversationChoice(int Number, string Title, string Authors, string? Detail);
+
+/// <summary>One line of an answer card: a record with the facts that line rests on. Every string is built on the server.</summary>
+public sealed record ConversationAnswerCardLine(string Title, string? Authors, IReadOnlyList<string> Facts, string? Href);
+
+/// <summary>A named group of records that is not the answer itself (undated, other classes, unverified credits, ...).</summary>
+public sealed record ConversationAnswerCardGroup(string Heading, IReadOnlyList<ConversationAnswerCardLine> Lines);
+
+/// <summary>
+/// A structured answer for the page that can render more than plain text. It states the same facts as the text, and its links are
+/// built only from validated application references (a saved catalog id), never from a provider string.
+/// </summary>
+public sealed record ConversationAnswerCard(
+    string Kind,
+    string Heading,
+    IReadOnlyList<ConversationAnswerCardLine> Lines,
+    IReadOnlyList<ConversationAnswerCardGroup> Groups,
+    IReadOnlyList<string> Notes,
+    string? Href = null);
 
 /// <summary>A request as the requester may see it. No other user's data and no internal ids beyond the request's own.</summary>
 public sealed record ConversationRequestSummary(Guid RequestId, string Title, string Authors, string Status, IReadOnlyList<string> Formats);
@@ -56,7 +85,9 @@ public sealed record ConversationReply(
     IReadOnlyList<ConversationChoice> Choices,
     IReadOnlyList<ConversationRequestSummary> Requests,
     IReadOnlyList<string> SuggestedReplies,
-    Guid? RequestId = null)
+    Guid? RequestId = null,
+    IReadOnlyList<ConversationAnswerCard>? Answers = null,
+    string? ListId = null)
 {
     public static ConversationReply Of(ConversationReplyKind kind, string text, params string[] suggestedReplies) =>
         new(kind, text, [], [], suggestedReplies);

@@ -114,12 +114,14 @@ internal sealed class QuestionConversation : IConversationTurnExecutor
     public int Calls { get; private set; }
     public Task<ConversationTurnResult?> RunMatrixTurnAsync(MatrixInboundMessage message, string text, CancellationToken cancellationToken)
     { Calls++; return Task.FromResult<ConversationTurnResult?>(null); }
+    public Task<bool> StillAuthorizedAsync(MatrixInboundMessage message, CancellationToken cancellationToken) => Task.FromResult(true);
     public Task MarkDeliveredAsync(ConversationEventKey key, CancellationToken cancellationToken) => Task.CompletedTask;
 }
 
 internal sealed class QuestionMatrixClient : IMatrixClient
 {
     public string? LastReply { get; private set; }
+    public void Clear() => LastReply = null;
     public Task<SendResult> SendMessageAsync(MatrixSettings settings, string accessToken, string roomId, string text, CancellationToken cancellationToken)
     { LastReply = text; return Task.FromResult(SendResult.Success()); }
     public Task<ConnectionTestOutcome> TestConnectionAsync(MatrixSettings settings, string accessToken, CancellationToken cancellationToken) => throw new NotSupportedException();

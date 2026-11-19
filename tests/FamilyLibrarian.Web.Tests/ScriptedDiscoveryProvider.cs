@@ -12,7 +12,8 @@ namespace FamilyLibrarian.Web.Tests;
 /// concurrency and cancellation. Nothing it returns is a provider response; it is scripted data.
 /// </summary>
 internal sealed class ScriptedDiscoveryProvider(
-    string id = "demo", string name = "Demo Source", BookCandidate[]? books = null) : IBookMetadataProvider, IBookMetadataDiscoveryProvider
+    string id = "demo", string name = "Demo Source", BookCandidate[]? books = null)
+    : IBookMetadataProvider, IBookMetadataDiscoveryProvider, IBudgetedBookMetadataProvider, IWorkEditionTitlesProvider
 {
     public static readonly SourceRef SagaSeries = new("demo", "S1", ExternalReferenceEntityType.Series);
     public static readonly SourceRef UnnamedSeries = new("demo", "S2", ExternalReferenceEntityType.Series);
@@ -28,6 +29,15 @@ internal sealed class ScriptedDiscoveryProvider(
     public string DisplayName => name;
 
     string IBookMetadataDiscoveryProvider.ProviderId => id;
+
+    string IBudgetedBookMetadataProvider.ProviderId => id;
+
+    string IWorkEditionTitlesProvider.ProviderId => id;
+
+    /// <summary>The edition titles the scripted source reports for a Work, and the number of edition reads it was asked for.</summary>
+    public Func<SourceRef, WorkEditionTitle[]> Editions { get; set; } = _ => [];
+
+    public int EditionCalls => Calls(DiscoveryOperation.GetWorkEditions);
 
     public DiscoveryCapabilities Capabilities { get; set; } = new(
         Enum.GetValues<DiscoveryOperation>().Select(operation =>
@@ -145,6 +155,46 @@ internal sealed class ScriptedDiscoveryProvider(
     }
 
     private static DateTimeOffset Observed => new(2026, 11, 17, 12, 0, 0, TimeSpan.Zero);
+
+    /// <summary>One ordinary search under a journey budget, charged the way a real adapter charges it.</summary>
+    public async Task<BudgetedRead<BookCandidateSearchPage>> SearchBudgetedAsync(
+        BookSearchQuery query, IDiscoveryBudget budget, CancellationToken cancellationToken)
+    {
+        if (!budget.TryAdmitPage())
+        {
+            return BudgetedRead.NotAnswered<BookCandidateSearchPage>(DiscoveryOutcome.Failed, budget.Usage, Observed, [DiscoveryCodes.PageCeiling]);
+        }
+
+        await BeginAsync(DiscoveryOperation.SearchBooks, budget, cancellationToken);
+        budget.RecordItems(books?.Length ?? 0);
+        return BudgetedRead.Found(new BookCandidateSearchPage(books ?? [], false), budget.Usage, Observed);
+    }
+
+    public async Task<BudgetedRead<BookCandidate>> GetDetailsBudgetedAsync(string externalId, IDiscoveryBudget budget, CancellationToken cancellationToken)
+    {
+        await BeginAsync(DiscoveryOperation.GetBookDetails, budget, cancellationToken);
+        var found = (books ?? []).FirstOrDefault(book => book.ExternalId == externalId);
+        return found is null
+            ? BudgetedRead.Empty<BookCandidate>(budget.Usage, Observed)
+            : BudgetedRead.Found(found, budget.Usage, Observed);
+    }
+
+    /// <summary>The first page of edition titles, charged as one attempt and one page: one request, no retry.</summary>
+    public async Task<BudgetedRead<WorkEditionTitlePage>> GetWorkEditionTitlesAsync(
+        SourceRef work, IDiscoveryBudget budget, CancellationToken cancellationToken)
+    {
+        if (!budget.TryAdmitPage())
+        {
+            return BudgetedRead.NotAnswered<WorkEditionTitlePage>(DiscoveryOutcome.Failed, budget.Usage, Observed, [DiscoveryCodes.PageCeiling]);
+        }
+
+        await BeginAsync(DiscoveryOperation.GetWorkEditions, budget, cancellationToken);
+        var editions = Editions(work);
+        budget.RecordItems(editions.Length);
+        return editions.Length == 0
+            ? BudgetedRead.Empty<WorkEditionTitlePage>(budget.Usage, Observed)
+            : BudgetedRead.Found(new WorkEditionTitlePage(editions, null), budget.Usage, Observed);
+    }
 
     private async Task BeginAsync(DiscoveryOperation operation, IDiscoveryBudget budget, CancellationToken cancellationToken)
     {

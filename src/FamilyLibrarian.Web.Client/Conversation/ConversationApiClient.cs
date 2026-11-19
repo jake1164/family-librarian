@@ -16,13 +16,15 @@ public sealed class ConversationApiClient(HttpClient httpClient, AntiforgeryToke
 
     /// <summary>
     /// Sends one message. <paramref name="messageId"/> makes a retry of the same message harmless. Null when the chat is
-    /// switched off or the member is no longer signed in.
+    /// switched off or the member is no longer signed in. <paramref name="listId"/> is the list a button was drawn for; the host
+    /// ignores a press for any list but the current one.
     /// </summary>
-    public async Task<ConversationReplyResponse?> SendAsync(string text, string messageId, CancellationToken cancellationToken = default)
+    public async Task<ConversationReplyResponse?> SendAsync(
+        string text, string messageId, string? listId = null, CancellationToken cancellationToken = default)
     {
         using var request = new HttpRequestMessage(HttpMethod.Post, $"{BasePath}/messages")
         {
-            Content = JsonContent.Create(new ConversationMessageRequest(text, messageId))
+            Content = JsonContent.Create(new ConversationMessageRequest(text, messageId, listId))
         };
         await antiforgery.AttachAsync(request, cancellationToken);
         using var response = await httpClient.SendAsync(request, cancellationToken);

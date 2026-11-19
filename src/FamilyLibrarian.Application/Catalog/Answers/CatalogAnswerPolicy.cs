@@ -470,6 +470,77 @@ public static class CatalogAnswerPolicy
         return state.Finish(state.Qualifiers.Count == 0 ? CatalogAnswerOutcome.Answered : CatalogAnswerOutcome.Qualified, matches);
     }
 
+    // ======================================================================================================= series members
+
+    /// <summary>
+    /// The known members of one selected series in one stated ordering, listed rather than selected. Ties, fractional positions and
+    /// entries claiming several places in the same ordering are kept; entries the source classifies as something other than an
+    /// original work are grouped apart, and an entry with no numeric place in this ordering is never padded into the sequence. The
+    /// result is always qualified: a page of a series is not the whole series.
+    /// </summary>
+    public static CatalogSelection Members(
+        IReadOnlyList<CatalogAnswerEntry> entries, SeriesOrderingKind order, CatalogPolicyScope scope, CatalogAnswerFilter? filter = null)
+    {
+        ArgumentNullException.ThrowIfNull(entries);
+        ArgumentNullException.ThrowIfNull(scope);
+        var state = new Builder();
+        var kept = ApplyFilter(entries, filter ?? CatalogAnswerFilter.None, state);
+
+        var orders = OrdersOf(kept);
+        if (order == SeriesOrderingKind.Unspecified && orders.Count > 1)
+        {
+            // Publication, reading and chronological numbers are different facts: one list cannot silently mix them.
+            state.Reason(CatalogAnswerCodes.OrderAmbiguous);
+            return state.Finish(CatalogAnswerOutcome.Clarification, [], orders);
+        }
+
+        // The same record read twice is one book; two records that happen to share a title or position are not merged.
+        var distinct = kept
+            .GroupBy(entry => entry.IdentityKey, StringComparer.Ordinal)
+            .Select(group => group.First())
+            .ToArray();
+        if (distinct.Length == 0)
+        {
+            state.Reason(CatalogAnswerCodes.NoEntries);
+            state.Coverage(scope);
+            return scope.Exhausted && !scope.SourceGaps && state.Groups.Count == 0
+                ? state.Finish(CatalogAnswerOutcome.NoVerifiedMatch, [])
+                : state.Finish(CatalogAnswerOutcome.InsufficientEvidence, []);
+        }
+
+        var listed = new List<CatalogAnswerEntry>();
+        var otherClass = new List<CatalogAnswerEntry>();
+        var unnumbered = new List<CatalogAnswerEntry>();
+        foreach (var entry in distinct)
+        {
+            if (ClaimedSorts(entry, order).Length == 0) unnumbered.Add(entry);
+            else if (IsNotOriginalClass(entry.Class)) otherClass.Add(entry);
+            else listed.Add(entry);
+        }
+
+        var ordered = listed
+            .OrderBy(entry => ClaimedSorts(entry, order)[0])
+            .ThenBy(entry => CatalogIdentityPolicy.TitleKey(entry.Title), StringComparer.Ordinal)
+            .ThenBy(entry => entry.IdentityKey, StringComparer.Ordinal)
+            .ToArray();
+
+        var tied = ordered
+            .GroupBy(entry => ClaimedSorts(entry, order)[0])
+            .Any(group => group.Count() > 1);
+        state.Group("class-not-original", otherClass);
+        state.Group("unnumbered", unnumbered);
+        if (tied) state.Qualify(CatalogAnswerCodes.TiedPosition);
+        if (ordered.Any(entry => ClaimedSorts(entry, order).Length > 1)) state.Qualify(CatalogAnswerCodes.PositionConflict);
+        if (otherClass.Count > 0) state.Qualify(CatalogAnswerCodes.ClassNotOriginal);
+        if (unnumbered.Count > 0) state.Qualify(CatalogAnswerCodes.UnnumberedEntriesPresent);
+        if (ordered.Any(entry => entry.LegacyPrecision)) state.Qualify(CatalogAnswerCodes.LegacyPrecision);
+        if (scope.SourceGaps) state.Qualify(CatalogAnswerCodes.SourceGaps);
+        if (scope.SavedOnly) state.Qualify(CatalogAnswerCodes.KnownLocalOnly);
+        state.Qualify(CatalogAnswerCodes.ListNotExhaustive);
+        state.Coverage(scope);
+        return state.Finish(CatalogAnswerOutcome.Qualified, ordered);
+    }
+
     // ======================================================================================================== authors
 
     public static CatalogSelection AuthorWorks(

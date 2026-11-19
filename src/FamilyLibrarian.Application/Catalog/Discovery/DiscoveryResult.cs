@@ -62,7 +62,13 @@ public enum DiscoveryOperation
     SearchBooks = 6,
 
     /// <summary>One ordinary book detail read under a journey's budget. A seed read, not a discovery capability.</summary>
-    GetBookDetails = 7
+    GetBookDetails = 7,
+
+    /// <summary>
+    /// One read of a Work's edition titles under a journey's budget (see <see cref="IWorkEditionTitlesProvider"/>). An expansion,
+    /// not a discovery capability: it never appears in a <see cref="DiscoveryCapabilities"/> table.
+    /// </summary>
+    GetWorkEditions = 8
 }
 
 public static class DiscoveryOperations

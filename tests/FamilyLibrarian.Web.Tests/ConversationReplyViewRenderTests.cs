@@ -27,7 +27,35 @@ public sealed class ConversationReplyViewRenderTests
 
     private static ConversationReplyResponse Reply(string text, IReadOnlyList<ConversationChoiceResponse>? choices = null,
         IReadOnlyList<ConversationRequestSummaryResponse>? requests = null, IReadOnlyList<string>? suggested = null, Guid? requestId = null) =>
-        new("Text", text, choices ?? [], requests ?? [], suggested ?? [], requestId, false);
+        new("Text", text, choices ?? [], requests ?? [], suggested ?? [], requestId, false, []);
+
+    [TestMethod]
+    public async Task AnAnswerCardShowsItsRecordsFactsLinksAndQualificationsInsteadOfRepeatingTheText()
+    {
+        var card = new ConversationAnswerCardResponse(
+            "answer",
+            "The books I can see in The Lantern Road, in order:",
+            [
+                new ConversationAnswerLineResponse("1. The Lantern Road", "Mara Quill", ["book 1", "2001 (year only)"], "/works/1a2b3c4d-0000-0000-0000-000000000000"),
+                new ConversationAnswerLineResponse("2. Lanterns at Dusk", "Mara Quill", ["book 2"], null)
+            ],
+            [new ConversationAnswerGroupResponse("Collections:", [new ConversationAnswerLineResponse("• The Omnibus", null, [], null)])],
+            ["This is what I could check, not a complete list."],
+            null);
+        var reply = new ConversationReplyResponse(
+            "Answer", "The books I can see in The Lantern Road, in order:\n1. The Lantern Road\n2. Lanterns at Dusk", [], [], [], null, false, [card]);
+
+        var html = await RenderAsync(reply);
+
+        StringAssert.Contains(html, "family-librarian-chat-answer");
+        StringAssert.Contains(html, "The books I can see in The Lantern Road, in order:");
+        StringAssert.Contains(html, "href=\"/works/1a2b3c4d-0000-0000-0000-000000000000\"");
+        StringAssert.Contains(html, "book 1");
+        StringAssert.Contains(html, "2001 (year only)");
+        StringAssert.Contains(html, "Collections:");
+        StringAssert.Contains(html, "not a complete list");
+        Assert.IsFalse(html.Contains("2. Lanterns at Dusk\n", StringComparison.Ordinal), "The entry lines are not repeated as plain text.");
+    }
 
     [TestMethod]
     public async Task TextFromACatalogSourceIsEncodedNeverRenderedAsMarkup()
@@ -103,10 +131,10 @@ public sealed class ConversationReplyViewRenderTests
     [TestMethod]
     public void TextIsLeftAloneWhenThereAreNoStructuredItemsOrOnlyAnotherKindOfLine()
     {
-        var plain = new ConversationReplyResponse("Text", "1. not a result\n• not a request", [], [], [], null, false);
+        var plain = new ConversationReplyResponse("Text", "1. not a result\n• not a request", [], [], [], null, false, []);
         var onlyRequests = new ConversationReplyResponse(
             "Status", "Your requests:\n• A\n1. kept because there are no structured choices", [],
-            [new ConversationRequestSummaryResponse(Guid.NewGuid(), "A", "", "Pending", [])], [], null, false);
+            [new ConversationRequestSummaryResponse(Guid.NewGuid(), "A", "", "Pending", [])], [], null, false, []);
 
         Assert.AreEqual("1. not a result\n• not a request", ConversationReplyText.ForStructuredDisplay(plain));
         Assert.AreEqual("Your requests:\n1. kept because there are no structured choices", ConversationReplyText.ForStructuredDisplay(onlyRequests));
