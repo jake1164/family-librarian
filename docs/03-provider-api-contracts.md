@@ -372,6 +372,111 @@ Raw payload/version where useful
 
 but internal Work/Author/Series IDs remain authoritative.
 
+### Read-only source discovery
+
+A metadata integration may also implement the optional `IBookMetadataDiscoveryProvider` (same provider instance and credential
+pipeline, never a second registry). It answers five bounded, read-only questions: the series a book is stated to belong to
+(`FindSeriesClaimsForBookAsync`, each claim with that book's own position; `FindSeriesForBookAsync` is a projection of the same
+single read), the members of a series by the source's own series id, resolving an author, an author's works, and series reached
+from an author. Rules that every implementation keeps:
+
+- **Identity.** A source id is used as given; a name alone never selects an author (it yields choices, or needs an anchor book the
+  source itself credited it on); a label is never promoted to a source id; an author-to-series relationship computed from works
+  is marked derived and page-scoped.
+- **Honest results.** A result states its outcome (found, empty, ambiguous, partial, no usable items, throttled, timed out,
+  unavailable, unsupported, unverified), how far the checked scope was read, the continuation, and stable note codes. "Empty"
+  means the stated scope held nothing, never that the source knows of nothing. Each operation also carries a declared capability:
+  *supported*, *unverified* (implemented against the source's documentation but not yet confirmed against its live service) or
+  *unsupported*. Only an unsupported operation is refused without a request; an unverified one is offered and called like a
+  supported one, and its answer is then reported as it was observed (including `unverified` when it could not be confirmed), so a
+  declared-unverified operation does make requests.
+- **Bounded.** Every physical attempt is reserved from a server-owned budget before it is dispatched (at most 5 attempts, one retry,
+  5 pages and 15 s per operation; 12 attempts and 30 s per journey), a provider's own `Retry-After` is honoured in full or
+  reported, never shortened, and caller cancellation is never turned into an answer.
+- **Read-only.** Discovery changes no catalog, request, follow or notification row; its results live only in the requesting user's
+  short-lived, size-limited browse context in host memory. Reading or rendering a browse or discovery window that is already held
+  never contacts a provider. A provider is contacted only when an authenticated user takes an explicit, anti-forgery-protected
+  action: a source lookup, or expanding a window into a book's series, a series' members or an author's works or series. Each such
+  action is bounded by the budgets above and a per-user start limit.
+- **Dates and titles.** A publication date keeps its precision and whether it describes the original or one edition; unstated stays
+  unstated. Hardcover's published-date guidance lets a year-only date be recorded as January 1 and a month-only date as that month's
+  first day, so a Hardcover `release_date` is never reported as more precise than that allows: January 1 is a year, another
+  first-of-month a month, any other full date a day. The stated value is kept; the bound is not a claim that a given value was a
+  placeholder, and the same rule applies to the ordinary Work and Edition mapping.
+  A title keeps the source's reported form, any explicit normalization with its rule, and any alternate titles the source
+  states with their field, language (when stated) and Work-or-Edition scope.
+
+Current integrations: Open Library implements all five (series-author listings derived, never native); Hardcover implements all five
+and declares them supported after one bounded live run (a single author and series; the author-series listing covers the primary
+author only, and no completeness is claimed for any author or series); Google Books implements only the book-to-series
+read (volume-level series ids without names, declared unverified) and declares the series, author and bibliography operations
+unsupported. Throttling is remembered per integration: Hardcover reads its documented `RateLimit` header; Open Library, which
+publishes no quota, refuses further requests locally after a 429 for the response's full `Retry-After` (seconds or HTTP-date), or an
+application default when it sends none that is usable. How long one operation is willing to wait is a separate, per-operation
+decision: a wait that does not fit is reported, and it never shortens when later callers may ask again.
+
+### Catalog identity, evidence and enrichment
+
+The catalog stays authoritative for Work, Edition, Author and Series identity; a provider supplies observations, never
+identity. Nothing is saved by searching or browsing. Provider data reaches the saved catalog only through two actions, both
+handled by one observation service that runs each change as one attempt, one PostgreSQL transaction and one cross-process
+advisory lock, with at most one clean retry. Provider calls happen outside the transaction and are never repeated by a retry.
+
+**Resolve** (`POST /api/v1/catalog/candidates/{providerId}/{externalId}/resolve`, signed-in user, anti-forgery protected)
+saves the one record the user picked. A reference that is already saved returns its Work with no provider call and no write.
+Otherwise only that provider, and only while it is enabled, is asked once:
+
+| Result | Meaning |
+| --- | --- |
+| `201 Created` + `Location` | A new Work was created (this also covers a record whose proof was contested; its detail is kept as evidence) |
+| `200 OK` | The reference was already saved, or the record attached to the one Work its ISBN proof names |
+| `404` `catalog.provider_unknown` / `catalog.candidate_not_found` | No such source, or the source has no such record |
+| `409` `catalog.provider_not_enabled` / `catalog.conflict` | The source is switched off; or a concurrent writer contested the rows twice and nothing was added |
+| `503` + `Retry-After` `catalog.busy` / `catalog.unavailable` / `catalog.outcome_unknown` | Lock wait expired; database unreachable; or the commit outcome could not be confirmed (check before repeating). A lost reply is settled from PostgreSQL's own record of the attempt's transaction, never from clock times: committed means the effects are reported as they are; rolled back means one retry, but only if no other writer has changed that source record's evidence since, otherwise the outcome is reported unknown so an older record never overwrites a later one |
+
+A record attaches to an existing Work only when the ISBN-13s of its *compatible* editions belong to exactly one saved Work and
+the record also passes the identity checks: version class, language, a shared author where both sides credit one, the title (or
+an equal edition title), and an original-publication year within one year where both sides state one. A shared source id never
+waives a check. Anything else creates a separate Work and keeps the contested ISBNs only in the observation snapshot, so the
+global ISBN uniqueness is never what decides. Translations, abridgments, adaptations, study guides and collections are separate
+Works; each edition is also gated on its own class and language, so a rejected edition can neither be written nor supply proof.
+A record that names no language and whose editions state several with no strict majority (for example one English and one German
+edition) has no coherent language view: every edition that states a language is kept as evidence only (`LanguageConflict`), so it
+supplies no proof and is written to no Work, and no translation is chosen. An edition that states no language is judged as before.
+Title and author resemblance alone is never proof: such a record is only a tentative proposal.
+
+Authors are added only when a Work is created. A credited name matched by several existing authors, and no source id, gets its own
+provisional Author for that Work; a series name matched by several series stays an unbound claim. Neither attaches to a namesake.
+
+**Evidence.** Every size below is a budget of serialized UTF-8 bytes, measured as PostgreSQL returns the JSON, not a character count;
+anything shortened to fit is cut between whole characters, stays valid JSON and says `"truncated": true`. Each observation keeps a
+normalized snapshot (at most 64 KiB, never a raw payload or a credential): the first, plus
+the latest three, per source record. Each attributed statement about a series position, a publication date, a description, a
+cover or a page count is a *claim* (at most 16 KiB; at most 11 rows per source key: current, selected, first and the latest eight
+superseded). A claim does not reference a snapshot, so pruning cannot remove a selected value's source. Series positions and dates
+are selected deterministically from the current claims (disagreement is always visible; sources are never assumed independent);
+a description, cover or page count is first-accepted and moves only when the same source changes its own statement. A year-only or
+month-only date stays that precise; a Google date is an edition-derived fallback that an original date replaces. A future date is
+never "published". Legacy values stay as they were and participate as one unattributed claim once any source states something; a legacy date keeps its
+unknown precision, basis and status until a genuine original date replaces it, and a fallback never gives it an exact day. A series
+name that cannot be bound is kept as an unbound claim even when the source gives no position (none is invented); once a source id
+later binds it, that statement stops being current but stays as history.
+
+**Administrator routes** (role `Admin`, anti-forgery on every state change):
+
+| Route | Purpose |
+| --- | --- |
+| `POST /api/v1/admin/catalog/works/{workId}/refresh` | Refreshes each stored reference of an enabled provider (at most one fetch each, re-validated under the lock) and looks for other sources (at most six providers, one search and three detail fetches each, 60-second overall deadline). Each provider commits on its own; the response lists every step (`Refreshed`, `Unchanged`, `Attached`, `Contradiction`, `Collision`, `NoProof`, `Tentative`, `NotFound`, `ProviderUnavailable`, `ProviderNotActive`, `DeadlineReached`, ...) and any tentative proposals. The 60-second deadline covers waiting for the catalog lock and every database step, not only provider calls: when it ends, no further observation starts, steps that already committed are kept, and nothing commits after the response. A contradicting record keeps only an evidence snapshot; nothing is merged, moved, deleted or announced |
+| `GET /api/v1/admin/catalog/works/{workId}/sources` | Read-only: references (a reference from before evidence existed shows `NoSnapshotRetained`; a provider that is no longer installed shows `NotConfigured`), at most 50 snapshots and 100 claims, each fact's selected value beside every claimed one; a snapshot is returned only if it fits 8 KiB as sent (JSON escapes included), otherwise it is withheld and flagged |
+| `GET /api/v1/admin/catalog/issues?category=&cursor=&take=` | Read-only, bounded pages of possible duplicates, same-name authors or series, provisional credits, unbound series claims, conflicted positions and contested observations; `nextCursor` is an opaque, versioned key of that category (duplicates continue from title and first author, so a group larger than one scan window is reported once); a cursor that is not a key of the requested category is a 400. A cursor is lossless for every key the catalog can store (a title or series name up to 1,000 characters, an author name up to 512, any Unicode), so it is never shortened and never silently restarts a page; the longest is about 6 KB and the host accepts exactly that |
+
+Disabling or removing a provider's configuration deletes no reference, claim or snapshot, and a saved reference keeps resolving
+with the provider off. Refresh, discovery, attachment and corrections never notify followers or reset read receipts; only the
+creation of a new Work does, as a catalog addition ("may be an older title"), not a release. How many Works two providers actually
+share by ISBN is unmeasured, so completeness of cross-source matching is not claimed.
+
+---
+
 ### Unified search enrichment
 
 The host composes the user-facing search response; a metadata provider does not

@@ -1,0 +1,51 @@
+@* The distinct non-success states of a browse page: not found / expired, session ended, bad page, and unavailable. *@
+@switch (Outcome)
+{
+    case CatalogBrowseOutcome.NotFound when Observed:
+        <MudAlert Severity="Severity.Warning" Class="browse-problem browse-expired">
+            <MudText Typo="Typo.subtitle1">This preview has expired or is no longer available</MudText>
+            <MudText Typo="Typo.body2">
+                Previews of a source's books are temporary. They are kept for about 10 minutes after the search or book view
+                that created them and are cleared if the app restarts, or if you sign in as someone else. Search again to
+                get a fresh one. Nothing was saved, requested or imported.
+            </MudText>
+            <MudButton Variant="Variant.Filled" Color="Color.Primary" Href="search" Class="mt-2">Search again</MudButton>
+        </MudAlert>
+        break;
+    case CatalogBrowseOutcome.NotFound:
+        <MudAlert Severity="Severity.Warning" Class="browse-problem browse-not-found">
+            <MudText Typo="Typo.subtitle1">This @Noun could not be found in the catalog</MudText>
+            <MudButton Variant="Variant.Filled" Color="Color.Primary" Href="search" Class="mt-2">Search for a book</MudButton>
+        </MudAlert>
+        break;
+    case CatalogBrowseOutcome.Unauthorized:
+        <MudAlert Severity="Severity.Warning" Class="browse-problem browse-signed-out">
+            <MudText Typo="Typo.subtitle1">Your session has ended</MudText>
+            <MudButton Variant="Variant.Filled" Color="Color.Primary" Href="login" Class="mt-2">Sign in</MudButton>
+        </MudAlert>
+        break;
+    case CatalogBrowseOutcome.InvalidRequest:
+        <MudAlert Severity="Severity.Warning" Class="browse-problem browse-bad-page">
+            <MudText Typo="Typo.subtitle1">That page of results is not available</MudText>
+            @if (!string.IsNullOrEmpty(FirstPageHref))
+            {
+                <MudButton Variant="Variant.Outlined" Href="@FirstPageHref" Class="mt-2">Go to the first page</MudButton>
+            }
+        </MudAlert>
+        break;
+    default:
+        <MudAlert Severity="Severity.Error" Class="browse-problem browse-unavailable">
+            <MudText Typo="Typo.subtitle1">This could not be loaded right now</MudText>
+            <MudText Typo="Typo.body2">The catalog did not answer. Nothing was changed.</MudText>
+            <MudButton Variant="Variant.Outlined" OnClick="OnRetry" Class="mt-2">Try again</MudButton>
+        </MudAlert>
+        break;
+}
+
+@code {
+    [Parameter, EditorRequired] public CatalogBrowseOutcome Outcome { get; set; }
+    [Parameter] public bool Observed { get; set; }
+    [Parameter] public string Noun { get; set; } = "page";
+    [Parameter] public string? FirstPageHref { get; set; }
+    [Parameter] public EventCallback OnRetry { get; set; }
+}

@@ -54,6 +54,16 @@ jobs:
       - name: Install Playwright Chromium
         run: pwsh tests/FamilyLibrarian.Web.Tests/bin/Debug/net10.0/playwright.ps1 install --with-deps chromium
 
+      # compose.release-e2e.yaml serves deterministic metadata over HTTPS from a
+      # test-only fixture. Its certificate is generated per run and never
+      # committed; it is trusted only inside this disposable deployment.
+      - name: Generate metadata fixture certificate
+        run: |
+          mkdir -p "$RUNNER_TEMP/release-e2e-certs"
+          cert_dir="$RUNNER_TEMP/release-e2e-certs"
+          openssl req -x509 -newkey rsa:2048 -nodes -days 1 -subj "/CN=openlibrary.org" -addext "subjectAltName=DNS:openlibrary.org" -keyout "$cert_dir/key.pem" -out "$cert_dir/cert.pem"
+          chmod 644 "$RUNNER_TEMP/release-e2e-certs/"*.pem
+
       # BrowserRequestQueueE2ETests deliberately exercises a deployed Compose
       # application rather than an in-process host. These credentials exist
       # only for this fresh, isolated CI database and are not deployment
@@ -63,6 +73,7 @@ jobs:
           FL_DB_PASSWORD: ci-browser-e2e-database-only
           ADMIN_EMAIL: browser-e2e-admin@family-librarian.example
           ADMIN_PASSWORD: Browser-E2E-CI-Only-Password1!
+          FL_E2E_FIXTURE_CERT_DIR: ${{ runner.temp }}/release-e2e-certs
         run: docker compose -f compose.yaml -f compose.release-e2e.yaml --project-name family-librarian-browser-e2e up --build --wait
 
       - name: Test
@@ -70,6 +81,9 @@ jobs:
           FAMILY_LIBRARIAN_LIVE_BROWSER_TESTS: "1"
           FAMILY_LIBRARIAN_SETTINGS_BROWSER_TESTS: "1"
           FAMILY_LIBRARIAN_AI_DIAGNOSTICS_BROWSER_TESTS: "1"
+          FAMILY_LIBRARIAN_CATALOG_BROWSE_BROWSER_TESTS: "1"
+          FAMILY_LIBRARIAN_SOURCE_LOOKUP_BROWSER_TESTS: "1"
+          FAMILY_LIBRARIAN_CHAT_ANSWER_BROWSER_TESTS: "1"
           FAMILY_LIBRARIAN_E2E_BASE_URL: http://localhost:8080
           FAMILY_LIBRARIAN_E2E_ADMIN_EMAIL: browser-e2e-admin@family-librarian.example
           FAMILY_LIBRARIAN_E2E_ADMIN_PASSWORD: Browser-E2E-CI-Only-Password1!
@@ -81,4 +95,5 @@ jobs:
           FL_DB_PASSWORD: ci-browser-e2e-database-only
           ADMIN_EMAIL: browser-e2e-admin@family-librarian.example
           ADMIN_PASSWORD: Browser-E2E-CI-Only-Password1!
+          FL_E2E_FIXTURE_CERT_DIR: ${{ runner.temp }}/release-e2e-certs
         run: docker compose -f compose.yaml -f compose.release-e2e.yaml --project-name family-librarian-browser-e2e down --volumes --remove-orphans

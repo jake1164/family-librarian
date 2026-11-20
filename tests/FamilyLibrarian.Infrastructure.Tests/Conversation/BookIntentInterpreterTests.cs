@@ -15,6 +15,8 @@ public sealed class BookIntentInterpreterTests
     private static readonly string[] ExpectedMembers = ["Author", "Intent", "Title"];
     private static readonly string[] ExpectedIntents = ["FindBook", "CheckStatus", "OutOfDomain", "Unclear"];
     private const string Prose = "that sad book about a lighthouse keeper by the australian author";
+    private const string StatusProse = "has the thing I asked for last week arrived yet";
+    private const string OffTopicProse = "what is the capital of france and why is it so big";
 
     private sealed class FakeInterpreter(Func<string, BookIntentInterpretation?> answer) : IBookIntentInterpreter
     {
@@ -355,8 +357,10 @@ public sealed class BookIntentInterpreterTests
         var unclear = Harness(new FakeInterpreter(_ => new BookIntentInterpretation(BookIntent.Unclear, null, null)));
         var throws = Harness(new FakeInterpreter(_ => throw new InvalidOperationException("model client bug")));
 
-        var statusReply = await status.SayAsync(Prose);
-        var offReply = await off.SayAsync(Prose);
+        // CHAT-ANSWER-1: the model's verdict is only taken when the words agree. A status verdict needs the message to mention
+        // requests; an off-topic verdict needs the message to carry no book cue (the book-cue case has its own test).
+        var statusReply = await status.SayAsync(StatusProse);
+        var offReply = await off.SayAsync(OffTopicProse);
         var unclearReply = await unclear.SayAsync(Prose);
         var throwsReply = await throws.SayAsync(Prose);
 

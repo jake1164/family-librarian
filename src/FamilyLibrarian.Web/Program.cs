@@ -43,6 +43,9 @@ builder.Services.AddScoped<SystemReadinessService>();
 builder.Services.AddSingleton<AvailabilityRunCoordinator>();
 builder.Services.AddHostedService<AvailabilityRunHostedService>();
 builder.Services.AddSingleton<CatalogSearchRunCoordinator>();
+// The browse context store, discovery journeys, admission limiter and CatalogDiscoveryService are the transport-neutral core and
+// are registered with the Infrastructure services, so the web routes and the shared answer service use the same instances.
+builder.Services.AddScoped<CatalogBrowseNavigation>();
 builder.Services.AddHostedService<CatalogSearchRunHostedService>();
 builder.Services.AddSingleton<SecurityEvaluationScheduler>();
 builder.Services.AddHostedService<SecurityEvaluationHostedService>();
@@ -308,6 +311,9 @@ app.MapHealthChecks("/health/ready");
 app.MapAuthenticationEndpoints();
 app.MapCurrentUserEndpoints();
 app.MapCatalogEndpoints();
+app.MapCatalogBrowseEndpoints();
+app.MapCatalogDiscoveryEndpoints();
+app.MapCatalogAdminEndpoints();
 app.MapRequestEndpoints();
 app.MapAdminRequestEndpoints();
 app.MapAdminTasksEndpoints();

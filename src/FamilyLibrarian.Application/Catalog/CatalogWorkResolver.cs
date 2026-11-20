@@ -1,145 +1,40 @@
-using System.Globalization;
 using FamilyLibrarian.Application.Abstractions;
-using FamilyLibrarian.Application.Following;
+using FamilyLibrarian.Application.Catalog.Observation;
+using FamilyLibrarian.Application.Integrations;
 using FamilyLibrarian.Application.Notifications;
 using FamilyLibrarian.Domain.Catalog;
-using FamilyLibrarian.Domain.Following;
 
 namespace FamilyLibrarian.Application.Catalog;
 
+/// <summary>
+/// Resolves a provider record to a catalog Work for the callers that have always asked for one (the request flow, the book page, the
+/// conversation). It owns no catalog-writing logic of its own: every resolution is the single observation path's ordinary
+/// <c>Resolve</c> intent, so identity rules, evidence and write coordination exist exactly once.
+/// </summary>
 public sealed class CatalogWorkResolver(
-    IEnumerable<IBookMetadataProvider> providers,
+    IActiveMetadataProviderResolver providers,
     ICatalogRepository catalogRepository,
-    IFollowRepository followRepository,
+    ICatalogWriteScope writeScope,
     NotificationService notifications,
-    IClock clock)
+    IClock clock,
+    ICatalogResolutionDiagnostics? diagnostics = null)
 {
+    private readonly CatalogObservationService observation =
+        new(providers, catalogRepository, writeScope, notifications, clock, diagnostics);
+
     /// <summary>
-    /// One writer at a time creates catalog rows in this process. Held only for the database work, never for a provider call.
+    /// Resolves a provider record to a catalog Work. A reference that is already saved is returned with no provider call and no
+    /// write. Otherwise only an active provider is asked, once, outside any transaction; the catalog is then changed inside the
+    /// catalog write scope, which serializes writers across processes and retries a recoverable conflict at most once. A record
+    /// whose proof is contested creates a distinct Work (see <see cref="CatalogWorkResolution.Detail"/>); it is never attached.
     /// </summary>
-    private static readonly SemaphoreSlim CreationGate = new(1, 1);
-
-    private readonly Dictionary<string, IBookMetadataProvider> _providers = providers
-        .ToDictionary(provider => provider.Id, StringComparer.OrdinalIgnoreCase);
-
-    public async Task<CatalogWorkResolution> ResolveAsync(
-        string providerId,
-        string externalId,
-        CancellationToken cancellationToken)
-    {
-        ValidateProviderReference(providerId, externalId);
-
-        var existingByReference = await catalogRepository.FindWorkByExternalReferenceAsync(
-            providerId,
-            externalId,
-            cancellationToken);
-        if (existingByReference is not null)
-        {
-            return new CatalogWorkResolution(existingByReference, false);
-        }
-
-        if (!_providers.TryGetValue(providerId, out var provider))
-        {
-            throw new UnknownMetadataProviderException(providerId);
-        }
-
-        // The provider call is slow and touches no catalog data, so it stays outside the gate.
-        var candidate = await provider.GetDetailsAsync(externalId, cancellationToken)
-            ?? throw new CatalogCandidateNotFoundException(providerId, externalId);
-
-        CatalogWorkResolution resolution;
-        var authorFollowerNotifications = new List<(Guid FollowerUserId, Guid AuthorId, string AuthorName)>();
-        var seriesFollowerNotifications = new List<(Guid FollowerUserId, Guid SeriesId, string SeriesName)>();
-
-        // Creating catalog rows is serialized (a fast, database-only section). Without this, two callers resolving the same
-        // new book, or two new books sharing a new author or series, both pass their "does it exist yet?" check and then
-        // collide on the catalog's unique indexes, failing one of them. Whoever enters second re-checks and finds the first's rows.
-        await CreationGate.WaitAsync(cancellationToken);
-        try
-        {
-            resolution = await CreateOrFindAsync(
-                provider, candidate, providerId, externalId, authorFollowerNotifications, seriesFollowerNotifications, cancellationToken);
-        }
-        finally
-        {
-            CreationGate.Release();
-        }
-
-        if (resolution.WasCreated)
-        {
-            // Only after the catalog write actually commits: a notification for
-            // a Work that failed to save would be worse than not sending one.
-            await NotifyFollowersAsync(
-                resolution.Work, authorFollowerNotifications, seriesFollowerNotifications, cancellationToken);
-        }
-
-        return resolution;
-    }
-
-    private async Task<CatalogWorkResolution> CreateOrFindAsync(
-        IBookMetadataProvider provider,
-        BookCandidate candidate,
-        string providerId,
-        string externalId,
-        List<(Guid FollowerUserId, Guid AuthorId, string AuthorName)> authorFollowerNotifications,
-        List<(Guid FollowerUserId, Guid SeriesId, string SeriesName)> seriesFollowerNotifications,
-        CancellationToken cancellationToken)
-    {
-        // Another caller may have created this reference while we were waiting for the gate.
-        var createdMeanwhile = await catalogRepository.FindWorkByExternalReferenceAsync(providerId, externalId, cancellationToken);
-        if (createdMeanwhile is not null)
-        {
-            return new CatalogWorkResolution(createdMeanwhile, false);
-        }
-
-        var observedAtUtc = clock.UtcNow;
-        var isbn13s = candidate.Editions
-            .Select(edition => edition.Isbn13)
-            .Where(isbn13 => !string.IsNullOrWhiteSpace(isbn13))
-            .Select(isbn13 => isbn13!)
-            .Distinct(StringComparer.Ordinal)
-            .ToArray();
-        var existingByIsbn = isbn13s.Length == 0
-            ? null
-            : await catalogRepository.FindWorkByIsbn13Async(isbn13s, cancellationToken);
-
-        if (existingByIsbn is not null)
-        {
-            existingByIsbn.SetCatalogLength(candidate.PageCount is > 0 ? candidate.PageCount : null, null, provider.Id, observedAtUtc);
-            catalogRepository.AddExternalReference(new ExternalReference(
-                provider.Id,
-                ExternalReferenceEntityType.Work,
-                existingByIsbn.Id,
-                candidate.ExternalId,
-                observedAtUtc));
-            await catalogRepository.SaveChangesAsync(cancellationToken);
-            return new CatalogWorkResolution(existingByIsbn, false);
-        }
-
-        var work = new Work(
-            candidate.Title,
-            candidate.Description,
-            candidate.CoverUrl,
-            candidate.PublicationDate,
-            candidate.PublicationDate is null ? PublicationStatus.Unknown : PublicationStatus.Published,
-            observedAtUtc);
-
-        await AddAuthorsAsync(work, candidate.Authors, observedAtUtc, authorFollowerNotifications, cancellationToken);
-        work.SetCatalogLength(candidate.PageCount is > 0 ? candidate.PageCount : null, null, provider.Id, observedAtUtc);
-        AddEditions(work, candidate.Editions, observedAtUtc);
-        await AddSeriesEntriesAsync(
-            work, candidate.Series, observedAtUtc, seriesFollowerNotifications, cancellationToken);
-        catalogRepository.AddWork(work);
-        catalogRepository.AddExternalReference(new ExternalReference(
-            provider.Id,
-            ExternalReferenceEntityType.Work,
-            work.Id,
-            candidate.ExternalId,
-            observedAtUtc));
-        await catalogRepository.SaveChangesAsync(cancellationToken);
-
-        return new CatalogWorkResolution(work, true);
-    }
+    /// <exception cref="CatalogResolutionException">
+    /// An expected, typed failure. For every fault except <see cref="CatalogResolutionFault.OutcomeUnknown"/> nothing was written.
+    /// <c>OutcomeUnknown</c> means the commit's outcome could not be established, so the change may well exist: the caller must
+    /// check before repeating it.
+    /// </exception>
+    public Task<CatalogWorkResolution> ResolveAsync(string providerId, string externalId, CancellationToken cancellationToken) =>
+        observation.ResolveAsync(providerId, externalId, cancellationToken);
 
     public Task<Work?> GetWorkAsync(Guid workId, CancellationToken cancellationToken) =>
         catalogRepository.GetWorkAsync(workId, cancellationToken);
@@ -148,175 +43,83 @@ public sealed class CatalogWorkResolver(
         Guid workId,
         CancellationToken cancellationToken) =>
         catalogRepository.GetWorkSourcesAsync(workId, cancellationToken);
-
-    private async Task AddAuthorsAsync(
-        Work work,
-        IReadOnlyList<string> names,
-        DateTimeOffset observedAtUtc,
-        List<(Guid FollowerUserId, Guid AuthorId, string AuthorName)> followerNotifications,
-        CancellationToken cancellationToken)
-    {
-        foreach (var name in names
-                     .Where(name => !string.IsNullOrWhiteSpace(name))
-                     .Select(name => name.Trim())
-                     .Distinct(StringComparer.OrdinalIgnoreCase)
-                     .Select((name, ordinal) => (name, ordinal)))
-        {
-            var normalizedName = CatalogText.NormalizeForMatch(name.name);
-            var author = await catalogRepository.FindAuthorByNormalizedNameAsync(
-                normalizedName,
-                cancellationToken);
-            // An author nobody could have followed yet (this is the first
-            // time FL has ever seen them) has no followers to look up.
-            var isNewAuthor = author is null;
-            if (author is null)
-            {
-                author = new Author(name.name, null, observedAtUtc);
-                catalogRepository.AddAuthor(author);
-            }
-
-            work.AddAuthor(author, name.ordinal);
-
-            if (!isNewAuthor)
-            {
-                var followers = await followRepository.ListFollowersAsync(
-                    FollowSubjectType.Author, author.Id, cancellationToken);
-                followerNotifications.AddRange(
-                    followers.Select(follower => (follower.UserId, author.Id, author.CanonicalName)));
-            }
-        }
-    }
-
-    private static void AddEditions(
-        Work work,
-        IReadOnlyList<BookEditionCandidate> candidates,
-        DateTimeOffset observedAtUtc)
-    {
-        foreach (var candidate in candidates.Where(candidate =>
-                     !string.IsNullOrWhiteSpace(candidate.Title)))
-        {
-            work.AddEdition(new Edition(
-                work.Id,
-                candidate.Title,
-                ToEditionFormat(candidate.Format),
-                candidate.Isbn13,
-                candidate.PublicationDate,
-                observedAtUtc));
-        }
-    }
-
-    private async Task AddSeriesEntriesAsync(
-        Work work,
-        IReadOnlyList<BookSeriesCandidate> candidates,
-        DateTimeOffset observedAtUtc,
-        List<(Guid FollowerUserId, Guid SeriesId, string SeriesName)> followerNotifications,
-        CancellationToken cancellationToken)
-    {
-        foreach (var candidate in candidates.Where(candidate =>
-                     !string.IsNullOrWhiteSpace(candidate.Name)))
-        {
-            var normalizedName = CatalogText.NormalizeForMatch(candidate.Name);
-            var series = await catalogRepository.FindSeriesByNormalizedNameAsync(
-                normalizedName,
-                cancellationToken);
-            // A series nobody could have followed yet (this is the first time
-            // FL has ever seen it) has no followers to look up.
-            var isNewSeries = series is null;
-            if (series is null)
-            {
-                series = new Series(
-                    candidate.Name,
-                    candidate.IsCompleted ? SeriesStatus.Completed : SeriesStatus.Unknown,
-                    observedAtUtc);
-                catalogRepository.AddSeries(series);
-            }
-            else if (candidate.IsCompleted)
-            {
-                series.MarkCompleted(observedAtUtc);
-            }
-
-            work.AddSeriesEntry(new SeriesEntry(
-                series,
-                work,
-                candidate.PositionLabel,
-                candidate.PositionSort ?? TryParsePosition(candidate.PositionLabel),
-                candidate.IsPrimary,
-                observedAtUtc));
-
-            if (!isNewSeries)
-            {
-                var followers = await followRepository.ListFollowersAsync(
-                    FollowSubjectType.Series, series.Id, cancellationToken);
-                followerNotifications.AddRange(
-                    followers.Select(follower => (follower.UserId, series.Id, series.Name)));
-            }
-        }
-    }
-
-    /// <summary>
-    /// Best-effort: a notification failure must never undo or fail an
-    /// otherwise-successful catalog resolution a request is waiting on.
-    /// </summary>
-    private async Task NotifyFollowersAsync(
-        Work work,
-        List<(Guid FollowerUserId, Guid AuthorId, string AuthorName)> authorFollowerNotifications,
-        List<(Guid FollowerUserId, Guid SeriesId, string SeriesName)> seriesFollowerNotifications,
-        CancellationToken cancellationToken)
-    {
-        try
-        {
-            foreach (var (followerUserId, authorId, authorName) in authorFollowerNotifications)
-            {
-                await notifications.RecordAuthorWorkAddedAsync(
-                    followerUserId, authorId, authorName, work.Id, work.CanonicalTitle, cancellationToken);
-            }
-
-            foreach (var (followerUserId, seriesId, seriesName) in seriesFollowerNotifications)
-            {
-                await notifications.RecordSeriesEntryAddedAsync(
-                    followerUserId, seriesId, seriesName, work.Id, work.CanonicalTitle, cancellationToken);
-            }
-        }
-        catch (Exception exception) when (exception is not OperationCanceledException)
-        {
-            // Swallowed deliberately -- see the summary above.
-        }
-    }
-
-    private static EditionFormat ToEditionFormat(string format) =>
-        format.Trim().ToUpperInvariant() switch
-        {
-            "HARDCOVER" => EditionFormat.Hardcover,
-            "PAPERBACK" => EditionFormat.Paperback,
-            "EBOOK" or "E-BOOK" => EditionFormat.Ebook,
-            "AUDIOBOOK" or "AUDIO BOOK" => EditionFormat.Audiobook,
-            "" or "UNKNOWN FORMAT" => EditionFormat.Unknown,
-            _ => EditionFormat.Other
-        };
-
-    private static decimal? TryParsePosition(string? positionLabel) =>
-        decimal.TryParse(
-            positionLabel,
-            NumberStyles.Number,
-            CultureInfo.InvariantCulture,
-            out var position)
-                ? position
-                : null;
-
-    private static void ValidateProviderReference(string providerId, string externalId)
-    {
-        if (string.IsNullOrWhiteSpace(providerId) || providerId.Length > 128 ||
-            string.IsNullOrWhiteSpace(externalId) || externalId.Length > 512)
-        {
-            throw new ArgumentException("The provider reference is invalid.");
-        }
-    }
 }
 
-public sealed record CatalogWorkResolution(Work Work, bool WasCreated);
+public enum CatalogResolutionOutcome
+{
+    /// <summary>The Work was already saved; nothing was written.</summary>
+    Existing,
 
-public sealed class UnknownMetadataProviderException(string providerId)
-    : InvalidOperationException($"The metadata provider '{providerId}' is not enabled.");
+    /// <summary>A new Work was created.</summary>
+    Created,
 
-public sealed class CatalogCandidateNotFoundException(string providerId, string externalId)
-    : InvalidOperationException($"The metadata candidate '{providerId}/{externalId}' was not found.");
+    /// <summary>The provider reference was added to an existing Work that its validated ISBN proof names.</summary>
+    Attached
+}
+
+/// <param name="Work">The resolved Work. Loaded with its authors, editions and series entries; safe to read after the write scope ended.</param>
+/// <param name="WasCreated">True only for the attempt that committed a new Work.</param>
+public sealed record CatalogWorkResolution(Work Work, bool WasCreated)
+{
+    public CatalogResolutionOutcome Outcome { get; init; } = CatalogResolutionOutcome.Existing;
+
+    /// <summary>Credits and memberships that could not be bound to an existing record, for the caller and tests.</summary>
+    public CatalogResolutionDiagnostics Diagnostics { get; init; } = CatalogResolutionDiagnostics.None;
+
+    /// <summary>
+    /// Why a created Work is separate from a saved Work the record overlapped (a contested ISBN set, a failed identity check, or
+    /// an overlap only on an excluded edition). Null for every other result.
+    /// </summary>
+    public ObservationDetail? Detail { get; init; }
+}
+
+public sealed record CatalogResolutionDiagnostics(
+    IReadOnlyList<AmbiguousAuthorCredit> AmbiguousAuthors,
+    IReadOnlyList<OmittedSeriesMembership> OmittedSeriesMemberships)
+{
+    public static CatalogResolutionDiagnostics None { get; } = new([], []);
+
+    public bool IsEmpty => AmbiguousAuthors.Count == 0 && OmittedSeriesMemberships.Count == 0;
+}
+
+/// <summary>An author credit that matched several existing Authors by name, so it received its own provisional Author instead.</summary>
+public sealed record AmbiguousAuthorCredit(string ReportedName, Guid NewAuthorId, IReadOnlyList<Guid> NamesakeAuthorIds);
+
+/// <summary>A series membership that matched several existing Series by name, so it was kept as an unbound claim, not an entry.</summary>
+public sealed record OmittedSeriesMembership(string ReportedName, IReadOnlyList<Guid> NamesakeSeriesIds);
+
+/// <summary>Receives what a committed creation could not bind, so it can be logged without the Application layer owning a logger.</summary>
+public interface ICatalogResolutionDiagnostics
+{
+    void Report(Guid workId, CatalogResolutionDiagnostics diagnostics);
+}
+
+public enum CatalogResolutionFault
+{
+    /// <summary>No installed provider has this id (HTTP 404).</summary>
+    UnknownProvider,
+
+    /// <summary>The provider is installed but switched off, so it was not asked (HTTP 409).</summary>
+    ProviderNotEnabled,
+
+    /// <summary>The provider has no such record (HTTP 404).</summary>
+    CandidateNotFound,
+
+    /// <summary>A concurrent writer contested the rows and no safe completion exists; nothing was written (HTTP 409).</summary>
+    Conflict,
+
+    /// <summary>The catalog write lock was not available in time; nothing was written (HTTP 503, retryable).</summary>
+    Busy,
+
+    /// <summary>The database could not be reached before anything could commit (HTTP 503, retryable).</summary>
+    Unavailable,
+
+    /// <summary>The commit's outcome could not be established; the change may or may not exist (HTTP 503, retryable).</summary>
+    OutcomeUnknown
+}
+
+/// <summary>An expected, deliberately mapped resolution failure. Programming and storage faults are not wrapped in this type.</summary>
+public sealed class CatalogResolutionException(CatalogResolutionFault fault, string message) : InvalidOperationException(message)
+{
+    public CatalogResolutionFault Fault { get; } = fault;
+}

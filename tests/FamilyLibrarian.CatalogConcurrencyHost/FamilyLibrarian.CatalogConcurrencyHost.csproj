@@ -1,0 +1,21 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!--
+    Test infrastructure, not a product: a second OS process that runs the PRODUCTION catalog resolver, write scope, repository and
+    orphan retirement (registered through the production AddInfrastructure) against a disposable PostgreSQL database, so the
+    Web tests can prove the catalog lock coordinates separate processes. Only the metadata-provider transport is replaced by a
+    deterministic echo provider; the lock/transaction/write algorithm is never reimplemented here.
+  -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <IsPackable>false</IsPackable>
+    <RootNamespace>FamilyLibrarian.CatalogConcurrencyHost</RootNamespace>
+  </PropertyGroup>
+  <ItemGroup>
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="../../src/FamilyLibrarian.Application/FamilyLibrarian.Application.csproj" />
+    <ProjectReference Include="../../src/FamilyLibrarian.Domain/FamilyLibrarian.Domain.csproj" />
+    <ProjectReference Include="../../src/FamilyLibrarian.Infrastructure/FamilyLibrarian.Infrastructure.csproj" />
+  </ItemGroup>
+</Project>

@@ -44,6 +44,27 @@ public sealed class SeriesEntry
 
     public bool IsPrimary { get; private set; }
 
+    /// <summary>Why the entry is bound to the Series. Null is a legacy entry nobody classified.</summary>
+    public SeriesBindingBasis? BindingBasis { get; private set; }
+
+    /// <summary>Whether sources agree on the position. Null is a legacy position nobody attributed.</summary>
+    public SeriesPositionState? PositionState { get; private set; }
+
+    /// <summary>Records why the entry is bound to the Series. Set once, when the entry is created.</summary>
+    public void MarkBinding(SeriesBindingBasis basis) => BindingBasis ??= basis;
+
+    /// <summary>
+    /// The selected position replaces the shown one, with whether sources agree. Only the claim-selection path calls this, so a
+    /// legacy entry keeps its stored position until a source actually states one.
+    /// </summary>
+    public void ApplyPosition(string? positionLabel, decimal? positionSort, SeriesPositionState state, DateTimeOffset at)
+    {
+        PositionLabel = Author.CleanOptionalText(positionLabel);
+        PositionSort = positionSort;
+        PositionState = state;
+        UpdatedAtUtc = at;
+    }
+
     public DateTimeOffset CreatedAtUtc { get; private set; }
 
     public DateTimeOffset UpdatedAtUtc { get; private set; }

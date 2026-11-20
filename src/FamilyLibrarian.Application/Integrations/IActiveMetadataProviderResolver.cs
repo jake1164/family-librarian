@@ -24,4 +24,16 @@ public interface IActiveMetadataProviderResolver
     Task<IBookMetadataProvider?> FindActiveProviderAsync(
         string providerId,
         CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Whether an implementation with this id is installed at all, enabled or not. Only for telling "no such source" from
+    /// "that source is switched off" when reporting an error; it never authorizes calling the provider.
+    /// </summary>
+    bool IsRegistered(string providerId);
+
+    /// <summary>
+    /// The display name of an installed provider, enabled or not, or null when no implementation with this id is installed (a provider
+    /// whose configuration was removed). Used only to label stored evidence; the default reports none.
+    /// </summary>
+    string? RegisteredDisplayName(string providerId) => null;
 }

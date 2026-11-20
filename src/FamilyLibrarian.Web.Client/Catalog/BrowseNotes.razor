@@ -1,0 +1,21 @@
+@* Known-data, identity and truncation qualifications, shown in the page body next to the list (never only a tooltip). *@
+@if (Lines.Count > 0)
+{
+    <MudAlert Severity="Severity.Info" Variant="Variant.Outlined" Class="browse-notes" role="note">
+        <MudText Typo="Typo.subtitle2">What this list is</MudText>
+        <ul style="margin: 4px 0 0; padding-left: 20px;">
+            @foreach (var line in Lines)
+            {
+                <li>@line</li>
+            }
+        </ul>
+    </MudAlert>
+}
+
+@code {
+    [Parameter, EditorRequired] public IReadOnlyList<string> Limitations { get; set; } = [];
+    [Parameter] public bool Observed { get; set; }
+    [Parameter] public string Noun { get; set; } = "books";
+
+    private IReadOnlyList<string> Lines => CatalogBrowseCopy.Describe(Limitations, Observed, Noun);
+}

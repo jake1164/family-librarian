@@ -58,7 +58,72 @@ public sealed class Work
         }
     }
 
+    /// <summary>
+    /// The selected page count replaces the stored one. Used only when the claim that supplied the stored value is itself replaced by
+    /// the same source; <see cref="SetCatalogLength"/> remains the fill-only path.
+    /// </summary>
+    public void ReplaceCatalogPageCount(int pages, string source, DateTimeOffset at)
+    {
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(pages);
+        ArgumentException.ThrowIfNullOrWhiteSpace(source);
+        CatalogPageCount = pages;
+        CatalogLengthSource = source.Trim().Length > 64 ? source.Trim()[..64] : source.Trim();
+        UpdatedAtUtc = at;
+    }
+
+    /// <summary>Records the identity class of a Work being created. A saved Work's class is never reassigned.</summary>
+    public void SetVersionClass(string versionClass)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(versionClass);
+        if (versionClass.Trim().Length > 32)
+        {
+            throw new ArgumentException("A version class is at most 32 characters.", nameof(versionClass));
+        }
+
+        VersionClass = versionClass.Trim();
+    }
+
+    /// <summary>
+    /// Replaces the shown first-publication date with the selected claim, with what it means and how much of it was stated. The
+    /// status is recomputed by the caller from the same date, precision and clock.
+    /// </summary>
+    public void SetFirstPublication(
+        DateOnly? date,
+        DatePrecision? precision,
+        DateBasis? basis,
+        PublicationStatus status,
+        DateTimeOffset at)
+    {
+        FirstPublicationDate = date;
+        FirstPublicationPrecision = date is null ? null : precision;
+        FirstPublicationBasis = date is null ? null : basis;
+        PublicationStatus = status;
+        UpdatedAtUtc = at;
+    }
+
+    /// <summary>The selected description or cover replaces the stored one (the same source changed its own statement).</summary>
+    public void ReplaceDescription(string? description, DateTimeOffset at)
+    {
+        Description = Author.CleanOptionalText(description);
+        UpdatedAtUtc = at;
+    }
+
+    public void ReplaceCoverUrl(string? coverUrl, DateTimeOffset at)
+    {
+        CoverUrl = Author.CleanOptionalText(coverUrl);
+        UpdatedAtUtc = at;
+    }
+
     public PublicationStatus PublicationStatus { get; private set; }
+
+    /// <summary>The identity class of the text (Text, Abridged, Collection, ...). Null is a legacy Work whose class is unknown.</summary>
+    public string? VersionClass { get; private set; }
+
+    /// <summary>How much of <see cref="FirstPublicationDate"/> a source stated. Null is a legacy value of unknown precision.</summary>
+    public DatePrecision? FirstPublicationPrecision { get; private set; }
+
+    /// <summary>What <see cref="FirstPublicationDate"/> means. Null is a legacy value of unknown meaning.</summary>
+    public DateBasis? FirstPublicationBasis { get; private set; }
 
     public bool IsRetired { get; private set; }
 
@@ -87,7 +152,7 @@ public sealed class Work
         UpdatedAtUtc = retiredAtUtc;
     }
 
-    public void AddAuthor(Author author, int ordinal, string? role = null)
+    public void AddAuthor(Author author, int ordinal, string? role = null, AuthorBindingBasis? bindingBasis = null)
     {
         ArgumentNullException.ThrowIfNull(author);
         ArgumentOutOfRangeException.ThrowIfNegative(ordinal);
@@ -97,7 +162,13 @@ public sealed class Work
             return;
         }
 
-        Authors.Add(new WorkAuthor(this, author, ordinal, role));
+        var credit = new WorkAuthor(this, author, ordinal, role);
+        if (bindingBasis is { } basis)
+        {
+            credit.MarkBinding(basis);
+        }
+
+        Authors.Add(credit);
     }
 
     public void AddEdition(Edition edition)

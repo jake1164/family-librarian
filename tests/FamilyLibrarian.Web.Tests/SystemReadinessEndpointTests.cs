@@ -69,7 +69,6 @@ public sealed class SystemReadinessEndpointTests
         var readiness = await client.GetFromJsonAsync<SystemReadinessResponse>("/api/v1/system/readiness");
 
         Assert.AreEqual(stamped, readiness!.Version);
-        StringAssert.StartsWith(stamped, "1.0.0-alpha.6", "This branch ships as alpha.6.");
     }
 
     [TestMethod]

@@ -79,7 +79,7 @@ public sealed class GoogleBooksBookMetadataProviderTests
     }
 
     [TestMethod]
-    public async Task SearchAsyncUsesNormalizedIsbnAndDoesNotInventDatePrecision()
+    public async Task SearchAsyncUsesNormalizedIsbnAndKeepsAYearOnlyDateAtYearPrecision()
     {
         Uri? requestedUri = null;
         using var handler = new StubHttpMessageHandler((request, _) =>
@@ -111,7 +111,12 @@ public sealed class GoogleBooksBookMetadataProviderTests
             CancellationToken.None);
 
         Assert.HasCount(1, results.Candidates);
-        Assert.IsNull(results.Candidates[0].PublicationDate);
+        // A year alone is carried as the first day of that year together with its precision, labelled as an edition-derived fallback;
+        // it is never an exact day and never the original publication date.
+        Assert.AreEqual(new DateOnly(1937, 1, 1), results.Candidates[0].PublicationDate);
+        Assert.AreEqual(FamilyLibrarian.Domain.Catalog.DatePrecision.Year, results.Candidates[0].PublicationDatePrecision);
+        Assert.AreEqual(FamilyLibrarian.Domain.Catalog.DateBasis.EditionDerived, results.Candidates[0].PublicationDateBasis);
+        Assert.AreEqual(FamilyLibrarian.Domain.Catalog.DatePrecision.Year, results.Candidates[0].Editions[0].PublicationDatePrecision);
         Assert.AreEqual("9780547928227", results.Candidates[0].Editions[0].Isbn13);
         Assert.IsNotNull(requestedUri);
         StringAssert.Contains(requestedUri.Query, "q=isbn%3A9780547928227");

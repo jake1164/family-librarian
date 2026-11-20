@@ -44,6 +44,8 @@ internal static class CatalogEndpoints
         string? q,
         int? page,
         ICatalogSearchService search,
+        ICurrentUser currentUser,
+        CatalogBrowseNavigation navigation,
         ILoggerFactory loggerFactory,
         CancellationToken cancellationToken)
     {
@@ -70,13 +72,18 @@ internal static class CatalogEndpoints
         var outcome = await search.SearchAsync(query, cancellationToken);
         LogProviderFailures(logger, outcome.ProviderResults);
 
-        return Results.Ok(ToResponse(outcome, searchText!));
+        var response = ToResponse(outcome, searchText!);
+        return Results.Ok(currentUser.UserId is { } userId
+            ? navigation.Attach(userId, CatalogBrowseNavigation.LegacySearchScope(searchText!, searchPage), outcome, response)
+            : response);
     }
 
     private static async Task<IResult> GetCatalogCandidateAsync(
         string providerId,
         string externalId,
         IActiveMetadataProviderResolver providerResolver,
+        ICurrentUser currentUser,
+        CatalogBrowseNavigation navigation,
         ILoggerFactory loggerFactory,
         CancellationToken cancellationToken)
     {
@@ -91,7 +98,12 @@ internal static class CatalogEndpoints
         try
         {
             var candidate = await provider.GetDetailsAsync(externalId, cancellationToken);
-            return candidate is null ? Results.NotFound() : Results.Ok(ToResponse(candidate));
+            if (candidate is null) return Results.NotFound();
+            // Navigation comes from this one already-fetched record; it never triggers another provider call.
+            var response = ToResponse(candidate);
+            return Results.Ok(currentUser.UserId is { } userId
+                ? response with { Navigation = navigation.ForDetail(userId, candidate) }
+                : response);
         }
         catch (HttpRequestException exception)
         {
@@ -123,6 +135,7 @@ internal static class CatalogEndpoints
         string providerId,
         string externalId,
         CatalogWorkResolver resolver,
+        HttpContext httpContext,
         ILoggerFactory loggerFactory,
         CancellationToken cancellationToken)
     {
@@ -134,13 +147,9 @@ internal static class CatalogEndpoints
                 ? Results.Created($"/api/v1/catalog/works/{result.Work.Id}", response)
                 : Results.Ok(response);
         }
-        catch (UnknownMetadataProviderException)
+        catch (CatalogResolutionException exception)
         {
-            return Results.NotFound();
-        }
-        catch (CatalogCandidateNotFoundException)
-        {
-            return Results.NotFound();
+            return ToResolutionProblem(exception.Fault, httpContext);
         }
         catch (ArgumentException)
         {
@@ -183,6 +192,44 @@ internal static class CatalogEndpoints
                 statusCode: StatusCodes.Status503ServiceUnavailable);
         }
     }
+
+    /// <summary>
+    /// Every expected resolution failure becomes a deliberate status with a safe machine-readable <c>code</c>; no entity, SQL or
+    /// provider payload is exposed. Busy/unavailable/unconfirmed outcomes are retryable and say so.
+    /// </summary>
+    private static IResult ToResolutionProblem(CatalogResolutionFault fault, HttpContext httpContext)
+    {
+        var (status, title, detail, code, retryable) = fault switch
+        {
+            CatalogResolutionFault.UnknownProvider => (StatusCodes.Status404NotFound, "Catalog source not found",
+                "The selected catalog source is not installed.", "catalog.provider_unknown", false),
+            CatalogResolutionFault.CandidateNotFound => (StatusCodes.Status404NotFound, "Catalog record not found",
+                "The selected catalog source has no such record.", "catalog.candidate_not_found", false),
+            CatalogResolutionFault.ProviderNotEnabled => (StatusCodes.Status409Conflict, "Catalog source not enabled",
+                "The selected catalog source is switched off, so it was not asked.", "catalog.provider_not_enabled", false),
+            CatalogResolutionFault.Conflict => (StatusCodes.Status409Conflict, "Catalog changed at the same time",
+                "The catalog changed at the same time and nothing was added. Try again.", "catalog.conflict", false),
+            CatalogResolutionFault.Busy => (StatusCodes.Status503ServiceUnavailable, "Catalog busy",
+                "The catalog is busy with another change. Try again shortly.", "catalog.busy", true),
+            CatalogResolutionFault.OutcomeUnknown => (StatusCodes.Status503ServiceUnavailable, "Catalog change not confirmed",
+                "The result of the catalog change could not be confirmed. Check before trying again.", "catalog.outcome_unknown", true),
+            _ => (StatusCodes.Status503ServiceUnavailable, "Catalog unavailable",
+                "The catalog is temporarily unavailable. Try again shortly.", "catalog.unavailable", true)
+        };
+
+        if (retryable)
+        {
+            httpContext.Response.Headers.RetryAfter = RetryAfterSeconds;
+        }
+
+        return Results.Problem(
+            title: title,
+            detail: detail,
+            statusCode: status,
+            extensions: new Dictionary<string, object?> { ["code"] = code });
+    }
+
+    private const string RetryAfterSeconds = "5";
 
     private static async Task<IResult> GetCatalogWorkAsync(
         Guid workId,
@@ -272,14 +319,17 @@ internal static class CatalogEndpoints
         string? q,
         ICurrentUser currentUser,
         CatalogSearchRunCoordinator coordinator,
-        ICatalogSearchService search)
+        ICatalogSearchService search,
+        CatalogBrowseNavigation navigation)
     {
         if (currentUser.UserId is not { } userId || !coordinator.TryGet(userId, runId, out var run) || run is null)
             return Results.NotFound();
         var snapshot = run.Snapshot()
             .Select(result => new ProviderSearchResult(result.ProviderId, result.ProviderName, result.Succeeded, result.Candidates, result.HasMore))
             .ToArray();
-        var response = ToResponse(search.Compose(snapshot, run.Query), run.Query.Text);
+        var outcome = search.Compose(snapshot, run.Query);
+        // The context is keyed by (owner, run) so polling reuses one; it holds copies, so it outlives the run.
+        var response = navigation.Attach(userId, CatalogBrowseNavigation.RunScope(run.Id), outcome, ToResponse(outcome, run.Query.Text));
         return Results.Ok(new CatalogSearchRunResponse(response, run.IsComplete));
     }
 
@@ -462,7 +512,11 @@ internal static class CatalogEndpoints
         candidate.Language,
         BookCandidateVersion.Assess(candidate).Kind,
         BookCandidateVersion.Assess(candidate).Label,
-        BookCandidateVersion.Assess(candidate).Explanation);
+        BookCandidateVersion.Assess(candidate).Explanation)
+    {
+        PublicationDatePrecision = candidate.PublicationDatePrecision?.ToString(),
+        PublicationDateBasis = candidate.PublicationDateBasis?.ToString()
+    };
 
     private static async Task<CatalogWorkResponse> ToWorkResponseAsync(
         Domain.Catalog.Work work,
@@ -497,12 +551,17 @@ internal static class CatalogEndpoints
                     entry.Series.Name,
                     entry.PositionLabel,
                     entry.IsPrimary,
-                    entry.SeriesId))
+                    entry.SeriesId,
+                    entry.PositionState?.ToString()))
                 .ToArray(),
             sources.Select(source => new CatalogWorkSourceResponse(
                 source.ProviderId,
                 source.ExternalId,
-                source.ObservedAtUtc)).ToArray());
+                source.ObservedAtUtc)).ToArray())
+        {
+            PublicationDatePrecision = work.FirstPublicationPrecision?.ToString(),
+            PublicationDateBasis = work.FirstPublicationBasis?.ToString()
+        };
     }
 
 }

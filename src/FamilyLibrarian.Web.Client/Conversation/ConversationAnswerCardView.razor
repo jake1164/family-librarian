@@ -1,0 +1,82 @@
+@using FamilyLibrarian.Contracts.Conversation
+@* A structured answer. The text of the same reply is what Matrix shows; here the page renders the same facts as a list so a
+   long answer stays readable, with links built on the server from saved catalog ids only. *@
+<MudPaper Outlined="true" Class="pa-3 family-librarian-chat-answer" role="group" aria-label="@("Chat answer: " + Card.Heading)">
+    <MudStack Spacing="2">
+        <MudText Typo="Typo.subtitle2">
+            @if (!string.IsNullOrEmpty(Card.Href))
+            {
+                <MudLink Href="@Card.Href">@Card.Heading</MudLink>
+            }
+            else
+            {
+                @Card.Heading
+            }
+        </MudText>
+
+        @if (Card.Lines.Count > 0)
+        {
+            <ul class="family-librarian-chat-answer-lines">
+                @foreach (var line in Card.Lines)
+                {
+                    <li>
+                        <MudText Typo="Typo.body2">
+                            @if (!string.IsNullOrEmpty(line.Href))
+                            {
+                                <MudLink Href="@line.Href"><strong>@line.Title</strong></MudLink>
+                            }
+                            else
+                            {
+                                <strong>@line.Title</strong>
+                            }
+                            @if (!string.IsNullOrWhiteSpace(line.Authors))
+                            {
+                                <span> — @line.Authors</span>
+                            }
+                        </MudText>
+                        @if (line.Facts.Count > 0)
+                        {
+                            <MudText Typo="Typo.caption">@string.Join(" · ", line.Facts)</MudText>
+                        }
+                    </li>
+                }
+            </ul>
+        }
+
+        @foreach (var group in Card.Groups)
+        {
+            <MudText Typo="Typo.caption">@group.Heading</MudText>
+            <ul class="family-librarian-chat-answer-group">
+                @foreach (var line in group.Lines)
+                {
+                    <li>
+                        <MudText Typo="Typo.body2">
+                            @if (!string.IsNullOrEmpty(line.Href))
+                            {
+                                <MudLink Href="@line.Href">@line.Title</MudLink>
+                            }
+                            else
+                            {
+                                @line.Title
+                            }
+                        </MudText>
+                        @if (line.Facts.Count > 0)
+                        {
+                            <MudText Typo="Typo.caption">@string.Join(" · ", line.Facts)</MudText>
+                        }
+                    </li>
+                }
+            </ul>
+        }
+
+        @foreach (var note in Card.Notes)
+        {
+            <MudText Typo="Typo.caption">@note</MudText>
+        }
+    </MudStack>
+</MudPaper>
+
+@code {
+    [Parameter, EditorRequired]
+    public ConversationAnswerCardResponse Card { get; set; } = default!;
+}

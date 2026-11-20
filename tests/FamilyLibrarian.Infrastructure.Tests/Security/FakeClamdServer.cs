@@ -117,6 +117,10 @@ internal sealed class FakeClamdServer : IAsyncDisposable
         {
             // Listener stopped underneath us.
         }
+        catch (ObjectDisposedException)
+        {
+            // Disposal stopped the listener before this loop's accept began (the loop's first accept can lose that race).
+        }
     }
 
     private async Task HandleConnectionAsync(TcpClient client, CancellationToken cancellationToken)

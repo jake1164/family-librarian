@@ -171,6 +171,12 @@ public sealed class NotificationService(
             cancellationToken);
 
     /// <summary>
+    /// What a follow notice claims, honestly: the book entered Family Librarian's catalog, which says nothing about when it was
+    /// published, so it may be an older title. Not a release announcement.
+    /// </summary>
+    private const string CatalogAdditionDetail = "This book was added to Family Librarian's catalog and may be an older title.";
+
+    /// <summary>
     /// TRACKING-1: tells one follower of a Series that a newly resolved Work
     /// joined it. Called once per follower per new entry -- keying on the
     /// new Work's id rather than the stable Series id means this is never
@@ -189,8 +195,8 @@ public sealed class NotificationService(
             followerUserId,
             NotificationCategories.SeriesNewEntryDetected,
             NotificationSeverity.Info,
-            title: $"\"{newWorkTitle}\" joined {seriesName}",
-            detail: "You're following this series.",
+            title: $"Added to the catalog: \"{newWorkTitle}\" in {seriesName}",
+            detail: CatalogAdditionDetail + " You're following this series.",
             subjectType: NotificationSubjectTypes.Work,
             subjectId: newWorkId.ToString(),
             cancellationToken);
@@ -208,8 +214,8 @@ public sealed class NotificationService(
             followerUserId,
             NotificationCategories.AuthorNewWorkDetected,
             NotificationSeverity.Info,
-            title: $"New from {authorName}: \"{newWorkTitle}\"",
-            detail: "You're following this author.",
+            title: $"Added to the catalog: \"{newWorkTitle}\" by {authorName}",
+            detail: CatalogAdditionDetail + " You're following this author.",
             subjectType: NotificationSubjectTypes.Work,
             subjectId: newWorkId.ToString(),
             cancellationToken);

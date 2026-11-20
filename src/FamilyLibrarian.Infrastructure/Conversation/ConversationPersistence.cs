@@ -102,6 +102,10 @@ public sealed class EfConversationEventLog(AppDbContext database, IClock clock) 
     public Task AttachRequestAsync(string requestKey, Guid requestId, CancellationToken cancellationToken) =>
         database.ConversationRequestKeys.Where(item => item.Key == requestKey)
             .ExecuteUpdateAsync(setters => setters.SetProperty(item => item.RequestId, requestId), cancellationToken);
+
+    public Task ReleaseRequestKeyAsync(string requestKey, CancellationToken cancellationToken) =>
+        database.ConversationRequestKeys.Where(item => item.Key == requestKey && item.RequestId == null)
+            .ExecuteDeleteAsync(cancellationToken);
 }
 
 public sealed class EfConversationTransaction(AppDbContext database) : IConversationTransaction
@@ -144,10 +148,10 @@ public sealed class ConversationLimiter(ConversationOptions options, TimeProvide
 
     private readonly ConcurrentDictionary<Guid, UserSlot> slots = new();
 
-    public async Task<IDisposable?> TryEnterAsync(Guid userId, CancellationToken cancellationToken)
+    public async Task<IDisposable?> TryEnterAsync(Guid userId, CancellationToken cancellationToken, bool countsTowardLimit = true)
     {
         var slot = slots.GetOrAdd(userId, _ => new UserSlot());
-        if (!slot.TryCount(time.GetUtcNow(), Window, options.MaxMessagesPerMinute))
+        if (countsTowardLimit && !slot.TryCount(time.GetUtcNow(), Window, options.MaxMessagesPerMinute))
         {
             return null;
         }

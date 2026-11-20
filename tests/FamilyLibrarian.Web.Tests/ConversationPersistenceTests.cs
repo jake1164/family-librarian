@@ -127,6 +127,29 @@ public sealed class ConversationPersistenceTests
     }
 
     [TestMethod]
+    public async Task AReleasedRequestKeyCanBeClaimedAgainButOneWithARequestAttachedStaysClaimed()
+    {
+        await using var scope = WebTestFixture.Require(fixture).Services.CreateAsyncScope();
+        var database = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        var log = scope.ServiceProvider.GetRequiredService<IConversationEventLog>();
+        var userId = await AnyUserAsync(database);
+        var released = ConversationService.RequestKey("matrix", $"!{Unique()}:example.test", "$released");
+        var kept = ConversationService.RequestKey("matrix", $"!{Unique()}:example.test", "$kept");
+        var requestId = Guid.NewGuid();
+
+        Assert.IsTrue((await log.TryClaimRequestKeyAsync(userId, released, CancellationToken.None)).Claimed);
+        await log.ReleaseRequestKeyAsync(released, CancellationToken.None);
+        Assert.IsTrue((await log.TryClaimRequestKeyAsync(userId, released, CancellationToken.None)).Claimed, "A released key is free again.");
+
+        Assert.IsTrue((await log.TryClaimRequestKeyAsync(userId, kept, CancellationToken.None)).Claimed);
+        await log.AttachRequestAsync(kept, requestId, CancellationToken.None);
+        await log.ReleaseRequestKeyAsync(kept, CancellationToken.None);
+        var again = await log.TryClaimRequestKeyAsync(userId, kept, CancellationToken.None);
+        Assert.IsFalse(again.Claimed, "A key that has a request behind it is never released.");
+        Assert.AreEqual(requestId, again.ExistingRequestId);
+    }
+
+    [TestMethod]
     public async Task AFailureInsideTheTransactionRollsBackEveryWriteMadeInIt()
     {
         await using var scope = WebTestFixture.Require(fixture).Services.CreateAsyncScope();
@@ -221,6 +244,35 @@ public sealed class ConversationPersistenceTests
         using var other = await limiter.TryEnterAsync(Guid.NewGuid(), CancellationToken.None);
         Assert.IsNotNull(other, "Another user is not affected.");
     }
+
+    [TestMethod]
+    public async Task MessagesThatDoNotCountNeitherUseUpNorAreBlockedByTheRateLimitButStillTakeTurns()
+    {
+        var limiter = new ConversationLimiter(new ConversationOptions { MaxMessagesPerMinute = 2 }, new ManualTimeProvider());
+        var user = Guid.NewGuid();
+
+        for (var index = 0; index < 5; index++)
+        {
+            using var control = await limiter.TryEnterAsync(user, CancellationToken.None, countsTowardLimit: false);
+            Assert.IsNotNull(control, "Control messages never consume the allowance.");
+        }
+
+        using (var first = await limiter.TryEnterAsync(user, CancellationToken.None)) Assert.IsNotNull(first);
+        using (var second = await limiter.TryEnterAsync(user, CancellationToken.None)) Assert.IsNotNull(second);
+        Assert.IsNull(await limiter.TryEnterAsync(user, CancellationToken.None), "Real messages are still capped.");
+
+        using var cancel = await limiter.TryEnterAsync(user, CancellationToken.None, countsTowardLimit: false);
+        Assert.IsNotNull(cancel, "A user over the limit can still cancel or ask for help.");
+
+        using var held = await limiter.TryEnterAsync(user, CancellationToken.None, countsTowardLimit: false);
+        using var cancellation = new CancellationTokenSource(TimeSpan.FromMilliseconds(100));
+        await Assert.ThrowsAsync<OperationCanceledException>(
+            () => limiter.TryEnterAsync(user, cancellation.Token, countsTowardLimit: false));
+    }
+
+    [TestMethod]
+    public void TheDefaultAllowanceIsOneHundredAndTwentyMessagesAMinute() =>
+        Assert.AreEqual(120, new ConversationOptions().MaxMessagesPerMinute);
 
     private sealed class ManualTimeProvider : TimeProvider
     {

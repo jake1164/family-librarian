@@ -35,9 +35,9 @@ public sealed class CatalogResolutionConcurrencyTests
     }
 
     /// <summary>Slow on purpose so concurrent callers genuinely overlap before any of them has written.</summary>
-    private sealed class RacingProvider : IBookMetadataProvider
+    private sealed class RacingProvider(string id) : IBookMetadataProvider
     {
-        public string Id => "racer";
+        public string Id => id;
 
         public string DisplayName => "Racing test source";
 
@@ -47,31 +47,52 @@ public sealed class CatalogResolutionConcurrencyTests
         public async Task<BookCandidate?> GetDetailsAsync(string externalId, CancellationToken cancellationToken)
         {
             await Task.Delay(75, cancellationToken);
-            // The shared author and series are new to the catalog; the ISBN is unique per book.
+            // The shared author and series are new to the catalog; the ISBN is unique per book, except that every "shared-" record
+            // carries the one ISBN, whichever provider reports it, so two providers can describe the same book.
             var number = externalId.Replace("book-", string.Empty, StringComparison.Ordinal);
+            var shared = externalId.StartsWith("shared-", StringComparison.Ordinal);
+            var isbn = shared ? SharedIsbn : $"978000000{number.PadLeft(4, '0')}";
+            // Two providers describing one book title it the same way: a shared ISBN alone no longer attaches a differently titled
+            // record (that is a contested ISBN, which gets its own Work), so the shared book carries one title.
+            var title = shared ? "Racing Shared Isbn Book" : $"Racing Title {externalId}";
             return new BookCandidate(
-                "racer", "Racing test source", externalId, $"Racing Title {externalId}", ["Racing Shared Author"], "Fictional.", null,
+                id, "Racing test source", externalId, title,
+                // Own author for the shared-ISBN case: the class shares one database, and a name already carried by several authors
+                // is deliberately ambiguous, which would hide the follower notice this case asserts on.
+                [externalId.StartsWith("shared-", StringComparison.Ordinal) ? "Shared Isbn Author" : "Racing Shared Author"], "Fictional.", null,
                 new DateOnly(2020, 1, 1),
-                [new BookEditionCandidate($"Racing Title {externalId}", $"978000000{number.PadLeft(4, '0')}", "Ebook", new DateOnly(2020, 1, 1))],
+                [new BookEditionCandidate(title, isbn, "Ebook", new DateOnly(2020, 1, 1))],
                 [new BookSeriesCandidate("Racing Shared Series", number, true)]);
         }
     }
 
+    private const string SharedIsbn = "9780007700077";
+
+    // Registered provider ids, so the production enablement rule applies: the test host enables "demo" and disables "openlibrary".
+    private const string Provider = "demo";
+    private const string SecondProvider = "openlibrary";
+
     private static FamilyLibrarianAppFactory Factory() => new(WebTestFixture.Require(fixture).ConnectionString, services =>
     {
         services.RemoveAll<IBookMetadataProvider>();
-        services.AddSingleton<IBookMetadataProvider, RacingProvider>();
+        services.AddSingleton<IBookMetadataProvider>(new RacingProvider(Provider));
+        services.AddSingleton<IBookMetadataProvider>(new RacingProvider(SecondProvider));
     });
 
+    private static Task<IReadOnlyList<CatalogWorkResolution>> ResolveConcurrentlyAsync(
+        FamilyLibrarianAppFactory factory, IEnumerable<string> externalIds) =>
+        ResolveConcurrentlyAsync(factory, externalIds.Select(externalId => (Provider, externalId)));
+
     private static async Task<IReadOnlyList<CatalogWorkResolution>> ResolveConcurrentlyAsync(
-        FamilyLibrarianAppFactory factory, IEnumerable<string> externalIds)
+        FamilyLibrarianAppFactory factory, IEnumerable<(string ProviderId, string ExternalId)> references)
     {
         using var start = new ManualResetEventSlim();
-        var tasks = externalIds.Select(externalId => Task.Run(async () =>
+        var tasks = references.Select(reference => Task.Run(async () =>
         {
             start.Wait();
             await using var scope = factory.Services.CreateAsyncScope();
-            return await scope.ServiceProvider.GetRequiredService<CatalogWorkResolver>().ResolveAsync("racer", externalId, CancellationToken.None);
+            return await scope.ServiceProvider.GetRequiredService<CatalogWorkResolver>()
+                .ResolveAsync(reference.ProviderId, reference.ExternalId, CancellationToken.None);
         })).ToArray();
         start.Set();
         return await Task.WhenAll(tasks);
@@ -88,7 +109,7 @@ public sealed class CatalogResolutionConcurrencyTests
         Assert.AreEqual(1, results.Count(result => result.WasCreated), "Exactly one caller created it.");
         await using var scope = factory.Services.CreateAsyncScope();
         var database = scope.ServiceProvider.GetRequiredService<AppDbContext>();
-        Assert.AreEqual(1, await database.ExternalReferences.CountAsync(reference => reference.ProviderId == "racer" && reference.ExternalId == "book-1"));
+        Assert.AreEqual(1, await database.ExternalReferences.CountAsync(reference => reference.ProviderId == Provider && reference.ExternalId == "book-1"));
     }
 
     [TestMethod]
@@ -112,11 +133,34 @@ public sealed class CatalogResolutionConcurrencyTests
     public async Task TheSameBookReachedByTwoSourcesAtOnceCollapsesToOneWorkByIsbn()
     {
         await using var factory = Factory();
+        await using (var setup = factory.Services.CreateAsyncScope())
+        {
+            var database = setup.ServiceProvider.GetRequiredService<AppDbContext>();
+            // The second provider is registered but switched off by the test host; enable it the way an administrator would.
+            var setting = new FamilyLibrarian.Domain.Providers.ProviderSetting(SecondProvider, DateTimeOffset.UtcNow);
+            setting.SetEnabled(true, null, DateTimeOffset.UtcNow);
+            database.Add(setting);
+            var reader = await database.Users.Where(user => user.Email == WebTestFixture.UserEmail).Select(user => user.Id).SingleAsync();
+            // A follower of the shared author, so a duplicate "added to the catalog" notice would be visible.
+            var author = new FamilyLibrarian.Domain.Catalog.Author("Shared Isbn Author", null, DateTimeOffset.UtcNow);
+            database.Authors.Add(author);
+            database.Follows.Add(new FamilyLibrarian.Domain.Following.Follow(
+                reader, FamilyLibrarian.Domain.Following.FollowSubjectType.Author, author.Id, DateTimeOffset.UtcNow));
+            await database.SaveChangesAsync();
+        }
 
-        // Two different provider ids for one ISBN: the second must attach to the first's work, not create a duplicate.
-        var results = await ResolveConcurrentlyAsync(factory, ["book-77", "book-77"]);
+        // Two genuinely different provider ids and external ids, one shared ISBN: the second must attach to the first's Work.
+        var results = await ResolveConcurrentlyAsync(factory, [(Provider, "shared-demo-1"), (SecondProvider, "shared-ol-9")]);
 
-        Assert.AreEqual(1, results.Select(result => result.Work.Id).Distinct().Count());
+        Assert.AreEqual(1, results.Select(result => result.Work.Id).Distinct().Count(), "One Work for the one ISBN.");
+        Assert.AreEqual(1, results.Count(result => result.WasCreated), "Exactly one creation.");
+        await using var scope = factory.Services.CreateAsyncScope();
+        var verify = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        Assert.AreEqual(2, await verify.ExternalReferences.CountAsync(reference =>
+            reference.ExternalId == "shared-demo-1" || reference.ExternalId == "shared-ol-9"), "Both references point at the one Work.");
+        Assert.AreEqual(1, await verify.NotificationEvents.CountAsync(item =>
+            item.Category == FamilyLibrarian.Domain.Notifications.NotificationCategories.AuthorNewWorkDetected),
+            "The creation notifies the follower once; the attach does not notify a second time.");
     }
 
     [TestMethod]
@@ -138,7 +182,7 @@ public sealed class CatalogResolutionConcurrencyTests
         var calls = clients.Select(client => Task.Run(async () =>
         {
             start.Wait();
-            using var response = await client.PostAsync("/api/v1/catalog/candidates/racer/book-300/resolve", null);
+            using var response = await client.PostAsync("/api/v1/catalog/candidates/demo/book-300/resolve", null);
             return (response.StatusCode, Work: response.IsSuccessStatusCode ? await response.Content.ReadFromJsonAsync<CatalogWorkResponse>() : null);
         })).ToArray();
         start.Set();

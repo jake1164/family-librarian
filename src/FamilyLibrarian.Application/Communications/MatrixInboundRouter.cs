@@ -27,7 +27,8 @@ public sealed class MatrixInboundRouter(
     ProviderInteractionLinkService? providerInteractions = null,
     IConversationTurnExecutor? conversation = null,
     ConversationOptions? conversationOptions = null,
-    IAcquisitionQuestionMatrixAnswers? acquisitionQuestions = null)
+    IAcquisitionQuestionMatrixAnswers? acquisitionQuestions = null,
+    ProviderInteractionAlertOptions? interactionOptions = null)
 {
     private static readonly string[] AffirmativeReplies = ["yes", "yep", "y"];
     private static readonly string[] NegativeReplies = ["no", "nope", "n"];
@@ -127,7 +128,15 @@ public sealed class MatrixInboundRouter(
                 return;
             }
 
-            var sent = await ReplyAsync(settings, accessToken, destination.RoomId!, MatrixReplyFormatter.ToText(result.Reply), cancellationToken);
+            // The turn may have taken as long as a catalog source did. The room link, the sender and the account are checked again
+            // now: a reply for a link that was removed or an account that was withdrawn in the meantime is neither sent nor marked
+            // delivered, so nothing reaches the room and a replay of the event is judged on the then-current state.
+            if (!await conversation.StillAuthorizedAsync(message, cancellationToken))
+            {
+                return;
+            }
+
+            var sent = await ReplyAsync(settings, accessToken, destination.RoomId!, MatrixReplyFormatter.ToText(result.Reply, interactionOptions?.PublicOrigin), cancellationToken);
             if (sent.Succeeded && result.EventKey is not null)
             {
                 await conversation.MarkDeliveredAsync(result.EventKey, cancellationToken);

@@ -37,8 +37,15 @@ public sealed record CatalogBookCandidateResponse(
     string? Language = null,
     string VersionKind = "Unspecified",
     string VersionLabel = "Version unknown",
-    string VersionDescription = "The source does not clearly identify the version.")
+    string VersionDescription = "The source does not clearly identify the version.",
+    CatalogBookNavigationResponse? Navigation = null)
 {
+    /// <summary>How much of <see cref="PublicationDate"/> the source stated (Year, Month or Day); null is a full date, so a year alone is never shown as an exact day.</summary>
+    public string? PublicationDatePrecision { get; init; }
+
+    /// <summary>What the date means (Original, EditionDerived or Unknown); null is unknown. Never presented as a verified original date.</summary>
+    public string? PublicationDateBasis { get; init; }
+
     // Populated when search grouped this candidate together with matching
     // records from other providers; empty for a single-provider detail fetch
     // that never went through that grouping.
@@ -70,4 +77,5 @@ public sealed record CatalogSeriesResponse(
     string Name,
     string? PositionLabel,
     bool IsPrimary,
-    Guid? Id = null);
+    Guid? Id = null,
+    string? PositionState = null);

@@ -51,7 +51,12 @@ public sealed class LiveUpdatesBrowserTests
         await using var context = await browser.NewContextAsync(new() { ViewportSize = new() { Width = 1280, Height = 900 } });
         var page = await context.NewPageAsync();
         await LoginAsync(page, client.BaseAddress!, FamilyLibrarianAppFactory.AdminEmail, FamilyLibrarianAppFactory.AdminPassword);
-        await page.GotoAsync(new Uri(client.BaseAddress!, "/admin/tasks").ToString());
+        // Initial loading includes several sequential API calls. Start the UI assertions after the final response has arrived.
+        var initialData = await page.RunAndWaitForResponseAsync(
+            async () => { await page.GotoAsync(new Uri(client.BaseAddress!, "/admin/tasks").ToString()); },
+            response => response.Request.Method == "GET" && new Uri(response.Url).AbsolutePath == "/api/v1/admin/requests/attention");
+        await initialData.FinishedAsync();
+        Assert.AreEqual(200, initialData.Status, "The initial dashboard data request must succeed before checking its rendered state.");
         var panel = page.Locator("#tasks-sources-now");
         var summary = page.GetByRole(AriaRole.Button, new() { Name = "Jump to Source status", Exact = true });
         await Assertions.Expect(summary).ToBeVisibleAsync();

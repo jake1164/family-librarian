@@ -25,7 +25,20 @@ public sealed class ConversationBoundaryTests
         typeof(CatalogWorkResolver),
         typeof(BookRequestService),
         typeof(ICandidateAvailabilityService),
-        typeof(SeriesPositionService)
+        typeof(SeriesPositionService),
+
+        // The shared, read-only catalog-answer facade and its bounded retained-context store. Both were reviewed as the same answer
+        // contract the browse pages read from; neither writes catalog, request, follow, notification or delivery state.
+        typeof(FamilyLibrarian.Application.Catalog.Answers.ICatalogAnswerService),
+        typeof(FamilyLibrarian.Application.Catalog.Answers.CatalogAnswerContextStore),
+
+        // Re-read at the async boundaries before provider work and before an action, so a disabled account cannot keep chatting.
+        typeof(FamilyLibrarian.Application.Accounts.IUserAccountStore),
+
+        // The answer contract's subject-kind enum, carried by one retained reference. A value, not a service: it names a series,
+        // an author, a book or a title and reaches nothing.
+        typeof(FamilyLibrarian.Application.Catalog.Answers.CatalogSubjectKind),
+        typeof(SeriesOrderingKind)
     ];
 
     /// <summary>
@@ -76,7 +89,8 @@ public sealed class ConversationBoundaryTests
         var names = typeof(IConversationTools).GetMethods().Select(method => method.Name).Order().ToArray();
 
         Assert.AreEqual(
-            "CheckLibraryAsync,CreateBookRequestAsync,FindSeriesBooksAsync,GetBookDetailsAsync,GetMyRequestsAsync,ResolveWorkAsync,SearchBooksAsync",
+            // CheckLibraryForChoiceAsync (CHAT-ANSWER-1) is the same read-only library check as CheckLibraryAsync, by catalog id.
+            "CheckLibraryAsync,CheckLibraryForChoiceAsync,CreateBookRequestAsync,FindSeriesBooksAsync,GetBookDetailsAsync,GetMyRequestsAsync,ResolveWorkAsync,SearchBooksAsync",
             string.Join(",", names),
             "A new conversation action needs an explicit design and security review.");
         Assert.IsFalse(names.Any(name =>

@@ -35,6 +35,12 @@ public sealed class ActiveMetadataProviderResolver(
         return IsUsable(provider.Id, settings) ? provider : null;
     }
 
+    public bool IsRegistered(string providerId) =>
+        providers.Any(candidate => string.Equals(candidate.Id, providerId, StringComparison.OrdinalIgnoreCase));
+
+    public string? RegisteredDisplayName(string providerId) =>
+        providers.FirstOrDefault(candidate => string.Equals(candidate.Id, providerId, StringComparison.OrdinalIgnoreCase))?.DisplayName;
+
     private async Task<Dictionary<string, ProviderSetting>> LoadSettingsAsync(
         CancellationToken cancellationToken)
     {

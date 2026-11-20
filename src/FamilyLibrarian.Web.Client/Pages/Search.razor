@@ -90,12 +90,46 @@
                     }
                     <MudStack Spacing="1" Class="flex-grow-1" Style="min-width: 0;">
                         <MudLink Typo="Typo.h6" Class="search-result-title" Href="@DetailsHref(result)">@result.Title</MudLink>
-                        <MudText Typo="Typo.body2" Color="Color.Secondary">@(result.Authors.Count > 1 ? "Contributors: " : string.Empty)@string.Join(", ", result.Authors)</MudText>
+                        <MudText Typo="Typo.body2" Color="Color.Secondary" Class="search-result-authors">
+                            @(result.Authors.Count > 1 ? "Contributors: " : string.Empty)
+                            @for (var i = 0; i < result.Authors.Count; i++)
+                            {
+                                var authorName = result.Authors[i];
+                                var authorLink = CatalogBrowseLinks.AuthorReference(result, i);
+                                @if (i > 0)
+                                {
+                                    <text>, </text>
+                                }
+                                @if (authorLink is not null)
+                                {
+                                    <MudLink Href="@CatalogBrowseLinks.ReturnHref(authorLink)" Class="search-result-author-link">@authorName</MudLink>
+                                }
+                                else
+                                {
+                                    <text>@authorName</text>
+                                }
+                            }
+                        </MudText>
                         <CandidateVersionSummary Candidate="@result" />
-                        @if (result.Series.FirstOrDefault(series => series.IsPrimary) is { } series)
+                        @if (PrimarySeriesIndex(result) is var seriesIndex and >= 0)
                         {
-                            <MudText Typo="Typo.caption" Color="Color.Secondary">
-                                @series.Name@(string.IsNullOrWhiteSpace(series.PositionLabel) ? string.Empty : $" · Book {series.PositionLabel}")
+                            var series = result.Series[seriesIndex];
+                            var seriesLink = CatalogBrowseLinks.SeriesReference(result, seriesIndex);
+                            <MudText Typo="Typo.caption" Color="Color.Secondary" Class="search-result-series">
+                                @if (seriesLink is not null)
+                                {
+                                    <MudLink Href="@CatalogBrowseLinks.ReturnHref(seriesLink)" Class="search-result-series-link">@series.Name</MudLink>
+                                }
+                                else
+                                {
+                                    <text>@series.Name</text>
+                                }@(string.IsNullOrWhiteSpace(series.PositionLabel) ? string.Empty : $" · Book {series.PositionLabel}")
+                            </MudText>
+                        }
+                        @if (NavigationUnavailable(result))
+                        {
+                            <MudText Typo="Typo.caption" Class="search-result-links-unavailable">
+                                Author and series pages are not available for this result right now.
                             </MudText>
                         }
                         @if (!string.IsNullOrWhiteSpace(result.Description))
@@ -452,6 +486,20 @@
         result.MatchKind is "Exact" or "Close";
 
     private void ShowOtherMatches() => showOtherMatches = true;
+
+    private static int PrimarySeriesIndex(CatalogBookCandidateResponse result)
+    {
+        for (var i = 0; i < result.Series.Count; i++)
+        {
+            if (result.Series[i].IsPrimary) return i;
+        }
+
+        return -1;
+    }
+
+    // The host says outright when it could not issue temporary navigation; without that statement nothing is claimed.
+    private static bool NavigationUnavailable(CatalogBookCandidateResponse result) =>
+        result.Navigation is { ContextId: null } && (result.Authors.Count > 0 || result.Series.Count > 0);
 
     private static string DetailsHref(CatalogBookCandidateResponse result) =>
         $"search/{Uri.EscapeDataString(result.ProviderId)}/{Uri.EscapeDataString(result.ExternalId)}";

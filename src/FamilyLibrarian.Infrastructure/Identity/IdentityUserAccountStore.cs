@@ -25,7 +25,11 @@ public sealed class IdentityUserAccountStore(UserManager<AppUser> userManager) :
 
     public async Task<UserAccount?> FindAsync(Guid userId, CancellationToken cancellationToken)
     {
+        // Read straight from the database and never from the context's identity map: callers decide who may act on this answer
+        // (chat, the Matrix link check), and a tracked entity would keep returning the status this scope first read after another
+        // scope disabled the account. The result is a plain value, so nothing here needs tracking.
         var user = await userManager.Users
+            .AsNoTracking()
             .SingleOrDefaultAsync(candidate => candidate.Id == userId, cancellationToken);
 
         return user is null

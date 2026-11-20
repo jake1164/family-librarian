@@ -5,6 +5,29 @@ All notable changes to Family Librarian are documented here. Newest release at t
 
 ---
 
+## [v1.0.0-alpha.7] — 2026-11-19
+
+Browse authors and series from search and book pages, and ask about reading order or release dates in web and Matrix chat.
+
+### Catalog and metadata
+
+- Browse saved books and provider results before saving them. Author and series pages show known books and positions, flag ambiguity, and keep browsing read-only.
+- Catalog resolution uses verified source references or validated shared ISBNs to match records. Distinct editions stay separate, and translations remain separate works.
+- Source observations and conflicting series-position claims are retained. Administrators can refresh saved works, and saved records remain available when a provider is disabled.
+- Read-only source lookups show which records and positions each provider could supply. Coverage varies by source, and Google Books series lookup remains unverified.
+
+### Web and Matrix chat
+
+- Ask for the latest published book, the next in reading order, an upcoming release, a numbered book, or an author's works. Follow-up questions can reuse the selected author, series, or book.
+- Answers distinguish future-dated records, announcements without a date, and records with no stated date. Date precision and source qualifications stay visible.
+- Ask for the edition titles of a selected Open Library work. Web chat links to saved catalog records, and Matrix can include a saved book or series link when the application's public origin is configured.
+
+### Upgrading
+
+- One additive database migration stores source observations and series-position claims for catalog metadata.
+
+---
+
 ## [v1.0.0-alpha.6] — 2026-11-12
 
 Family Librarian can now talk and think: a conversational assistant on the web and Matrix, optional AI help with searching and checking files, much stronger automatic book finding and validation, and an install that looks after its own disk and library without an administrator.

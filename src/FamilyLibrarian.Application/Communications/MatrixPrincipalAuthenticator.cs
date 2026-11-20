@@ -47,44 +47,58 @@ public sealed class MatrixPrincipalAuthenticator(
 {
     public async Task<MatrixAuthenticationResult> AuthenticateAsync(MatrixInboundMessage message, CancellationToken cancellationToken)
     {
+        var (outcome, account) = await ResolveAsync(message, cancellationToken);
+        if (outcome != MatrixAuthenticationOutcome.Authenticated || account is null) return Refused(outcome);
+
+        var principal = new OperationPrincipal(account.Id, account.DisplayName, account.IsAdmin, "matrix");
+        holder.Establish(principal);
+        return new MatrixAuthenticationResult(MatrixAuthenticationOutcome.Authenticated, principal);
+    }
+
+    /// <summary>
+    /// Whether the message's sender is still the verified Matrix account of an account that can still sign in, read now. It
+    /// establishes nothing: it is the check made again after a long turn, before the reply is sent into the room, so a link that
+    /// was removed or an account that was withdrawn while the answer was being prepared receives nothing.
+    /// </summary>
+    public async Task<bool> StillAuthorizedAsync(MatrixInboundMessage message, CancellationToken cancellationToken) =>
+        (await ResolveAsync(message, cancellationToken)).Outcome == MatrixAuthenticationOutcome.Authenticated;
+
+    private async Task<(MatrixAuthenticationOutcome Outcome, UserAccount? Account)> ResolveAsync(
+        MatrixInboundMessage message, CancellationToken cancellationToken)
+    {
         ArgumentNullException.ThrowIfNull(message);
 
         if (string.IsNullOrWhiteSpace(message.RoomId) || string.IsNullOrWhiteSpace(message.SenderUserId))
         {
-            return Refused(MatrixAuthenticationOutcome.UnknownRoom);
+            return (MatrixAuthenticationOutcome.UnknownRoom, null);
         }
 
         var link = await destinations.FindByRoomIdAsync(message.RoomId, cancellationToken);
         if (link is null)
         {
-            return Refused(MatrixAuthenticationOutcome.UnknownRoom);
+            return (MatrixAuthenticationOutcome.UnknownRoom, null);
         }
 
         if (!link.IsVerified || string.IsNullOrWhiteSpace(link.MatrixUserId))
         {
-            return Refused(MatrixAuthenticationOutcome.LinkNotVerified);
+            return (MatrixAuthenticationOutcome.LinkNotVerified, null);
         }
 
         // A room can hold more than the linked member; only the verified Matrix account speaks as the FL user.
         if (!string.Equals(link.MatrixUserId, message.SenderUserId, StringComparison.Ordinal))
         {
-            return Refused(MatrixAuthenticationOutcome.SenderMismatch);
+            return (MatrixAuthenticationOutcome.SenderMismatch, null);
         }
 
         var account = await accounts.FindAsync(link.UserId, cancellationToken);
         if (account is null)
         {
-            return Refused(MatrixAuthenticationOutcome.AccountMissing);
+            return (MatrixAuthenticationOutcome.AccountMissing, null);
         }
 
-        if (!UserStatuses.CanSignIn(account.Status))
-        {
-            return Refused(MatrixAuthenticationOutcome.AccountNotActive);
-        }
-
-        var principal = new OperationPrincipal(account.Id, account.DisplayName, account.IsAdmin, "matrix");
-        holder.Establish(principal);
-        return new MatrixAuthenticationResult(MatrixAuthenticationOutcome.Authenticated, principal);
+        return UserStatuses.CanSignIn(account.Status)
+            ? (MatrixAuthenticationOutcome.Authenticated, account)
+            : (MatrixAuthenticationOutcome.AccountNotActive, null);
     }
 
     private static MatrixAuthenticationResult Refused(MatrixAuthenticationOutcome outcome) => new(outcome, null);

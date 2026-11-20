@@ -9,6 +9,8 @@
   <ItemGroup>
     <Using Include="Microsoft.VisualStudio.TestTools.UnitTesting" />
     <ProjectReference Include="../../src/FamilyLibrarian.Web/FamilyLibrarian.Web.csproj" />
+    <!-- A second OS process for the cross-process catalog tests; built with the tests and run as dotnet <dll>. Nothing in the product depends on it. -->
+    <ProjectReference Include="../FamilyLibrarian.CatalogConcurrencyHost/FamilyLibrarian.CatalogConcurrencyHost.csproj" />
     <PackageReference Include="Microsoft.AspNetCore.Mvc.Testing" />
     <PackageReference Include="Microsoft.Playwright" />
     <PackageReference Include="Testcontainers.PostgreSql" />

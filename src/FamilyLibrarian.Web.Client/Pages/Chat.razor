@@ -36,7 +36,10 @@
                 }
                 else
                 {
-                    <ConversationReplyView Reply="entry.Reply" OnSend="SendAsync" />
+                    @* A button answers for the list its own reply showed. If a newer list has replaced it the host does nothing, so an
+                       old button can never act on a list the reader is no longer looking at. Typed text names no list. *@
+                    var repliedList = entry.Reply.ListId;
+                    <ConversationReplyView Reply="entry.Reply" OnSend="@(text => SendAsync(text, repliedList))" />
                     @if (entry.Elapsed is { } elapsed)
                     {
                         <MudText Typo="Typo.caption" Class="family-librarian-chat-elapsed">Answered in @FormatElapsed(elapsed)</MudText>
@@ -90,11 +93,11 @@
     {
         var text = draft.Trim();
         draft = string.Empty;
-        return text.Length == 0 ? Task.CompletedTask : SendAsync(text);
+        return text.Length == 0 ? Task.CompletedTask : SendAsync(text, null);
     }
 
     // A fresh id per message: a retry of the same message (not a repeat of the same words) is what the id protects.
-    private async Task SendAsync(string text)
+    private async Task SendAsync(string text, string? listId = null)
     {
         if (isSending) return;
         isSending = true;
@@ -102,7 +105,7 @@
         StartClock();
         try
         {
-            var reply = await Conversation.SendAsync(text, Guid.NewGuid().ToString("N"));
+            var reply = await Conversation.SendAsync(text, Guid.NewGuid().ToString("N"), listId);
             entries.Add(reply is null
                 ? new Entry(null, Fallback("Chat isn't available right now. Please sign in again or use search."), stopwatch?.Elapsed)
                 : new Entry(null, reply, stopwatch?.Elapsed));
@@ -161,5 +164,5 @@
 
     public void Dispose() => ticker?.Dispose();
 
-    private static ConversationReplyResponse Fallback(string text) => new("Unavailable", text, [], [], [], null, false);
+    private static ConversationReplyResponse Fallback(string text) => new("Unavailable", text, [], [], [], null, false, []);
 }

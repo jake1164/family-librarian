@@ -2,13 +2,16 @@ using System.Globalization;
 using System.Net.Http.Json;
 using System.Text.Json.Serialization;
 using FamilyLibrarian.Application.Catalog;
+using FamilyLibrarian.Application.Catalog.Discovery;
+using FamilyLibrarian.Domain.Catalog;
 using Microsoft.Extensions.Options;
 
 namespace FamilyLibrarian.Infrastructure.Metadata;
 
-public sealed class GoogleBooksBookMetadataProvider(
+public sealed partial class GoogleBooksBookMetadataProvider(
     HttpClient httpClient,
-    IOptions<GoogleBooksMetadataOptions> options) : IBookMetadataProvider
+    IOptions<GoogleBooksMetadataOptions> options,
+    TimeProvider? clock = null) : IBookMetadataProvider, IBookMetadataDiscoveryProvider
 {
     private const int MaximumDescriptionLength = 8_000;
 
@@ -24,26 +27,35 @@ public sealed class GoogleBooksBookMetadataProvider(
     {
         query.Validate();
 
+        var response = await httpClient.GetFromJsonAsync<GoogleBooksVolumesResponse>(
+            SearchUri(query),
+            cancellationToken);
+
+        return ToSearchPage(response, query.Page);
+    }
+
+    // One URI shape for the ordinary and the budgeted search, so the two can never ask Google Books different questions.
+    private string SearchUri(BookSearchQuery query)
+    {
         var providerQuery = IsbnNormalizer.TryNormalizeQuery(query.Text, out var isbn)
             ? $"isbn:{isbn}"
             : query.Text;
-        var requestUri =
+        return
             $"volumes?q={Uri.EscapeDataString(providerQuery)}" +
             $"&maxResults={_options.MaxResults.ToString(CultureInfo.InvariantCulture)}" +
             $"&startIndex={((query.Page - 1) * _options.MaxResults).ToString(CultureInfo.InvariantCulture)}" +
             "&printType=books&projection=full";
+    }
 
-        var response = await httpClient.GetFromJsonAsync<GoogleBooksVolumesResponse>(
-            requestUri,
-            cancellationToken);
-
+    private BookCandidateSearchPage ToSearchPage(GoogleBooksVolumesResponse? response, int page)
+    {
         var items = response?.Items ?? [];
         var candidates = items
             .Select(ToCandidate)
             .Where(candidate => candidate is not null)
             .Cast<BookCandidate>()
             .ToArray();
-        var offset = (query.Page - 1) * _options.MaxResults;
+        var offset = (page - 1) * _options.MaxResults;
         var hasMore = response?.TotalItems is { } totalItems
             ? totalItems > offset + items.Count
             : items.Count == _options.MaxResults;
@@ -81,7 +93,8 @@ public sealed class GoogleBooksBookMetadataProvider(
             .Select(author => author.Trim())
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .ToArray() ?? [];
-        var publicationDate = TryParseExactDate(volume.VolumeInfo?.PublishedDate);
+        var published = PublicationDateParser.Parse(volume.VolumeInfo?.PublishedDate, DateFormats);
+        var publicationDate = published?.Date;
         var isbn13 = GetIsbn13(volume.VolumeInfo?.IndustryIdentifiers);
         var subjects = volume.VolumeInfo?.Categories?
             .Where(category => !string.IsNullOrWhiteSpace(category))
@@ -98,13 +111,23 @@ public sealed class GoogleBooksBookMetadataProvider(
             GetDescription(volume.VolumeInfo?.Description),
             GetCoverUrl(volume.VolumeInfo?.ImageLinks),
             publicationDate,
-            [new BookEditionCandidate(title, isbn13, "Unknown format", publicationDate)],
+            [new BookEditionCandidate(title, isbn13, "Unknown format", publicationDate)
+            {
+                PublicationDatePrecision = PublicationDateParser.Stated(published)
+            }],
             [],
             volume.VolumeInfo?.Publisher?.Trim() is { Length: > 0 } publisher ? publisher : null,
             volume.VolumeInfo?.PageCount is > 0 ? volume.VolumeInfo.PageCount : null,
             subjects,
             SourceUrl: $"https://books.google.com/books?id={Uri.EscapeDataString(externalId!)}",
-            Language: LanguageCodeNormalizer.Normalize(volume.VolumeInfo?.Language));
+            Language: LanguageCodeNormalizer.Normalize(volume.VolumeInfo?.Language))
+        {
+            // Google's publishedDate describes this volume (an edition), so as a Work date it is only a labelled fallback.
+            PublicationDatePrecision = PublicationDateParser.Stated(published),
+            PublicationDateBasis = publicationDate is null ? null : DateBasis.EditionDerived,
+            // A Google volume is a specific publication (an edition); Google has no Work entity.
+            SourceKind = ExternalReferenceEntityType.Edition
+        };
     }
 
     private static string? GetTitle(GoogleBooksVolumeInfo? volumeInfo)
@@ -174,15 +197,7 @@ public sealed class GoogleBooksBookMetadataProvider(
         return builder.Uri.AbsoluteUri;
     }
 
-    private static DateOnly? TryParseExactDate(string? value) =>
-        DateOnly.TryParseExact(
-            value,
-            "yyyy-MM-dd",
-            CultureInfo.InvariantCulture,
-            DateTimeStyles.None,
-            out var date)
-                ? date
-                : null;
+    private static readonly string[] DateFormats = ["yyyy-MM-dd"];
 
     private static bool IsValidExternalId(string? externalId) =>
         !string.IsNullOrWhiteSpace(externalId) &&

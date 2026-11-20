@@ -2,6 +2,9 @@ using FamilyLibrarian.Application.Abstractions;
 using FamilyLibrarian.Application.Accounts;
 using FamilyLibrarian.Application.Acquisition;
 using FamilyLibrarian.Application.Catalog;
+using FamilyLibrarian.Application.Catalog.Answers;
+using FamilyLibrarian.Application.Catalog.Discovery;
+using FamilyLibrarian.Application.Catalog.Observation;
 using FamilyLibrarian.Application.Communications;
 using FamilyLibrarian.Application.Conversation;
 using FamilyLibrarian.Application.Delivery;
@@ -209,10 +212,32 @@ public static class DependencyInjection
                 });
 
         services.AddScoped<IClock, SystemClock>();
-        services.AddScoped<ICatalogRepository, CatalogRepository>();
+        services.AddScoped<CatalogRepository>();
+        services.AddScoped<ICatalogRepository>(provider => provider.GetRequiredService<CatalogRepository>());
+        services.AddScoped<ICatalogMutationRepository>(provider => provider.GetRequiredService<CatalogRepository>());
+        // Singleton: it holds no state and creates a fresh scope (context, connection, transaction) for every attempt.
+        services.AddSingleton<ICatalogWriteScope, PostgresCatalogWriteScope>();
+        services.AddSingleton<ICatalogResolutionDiagnostics, CatalogResolutionLog>();
         services.AddScoped<OrphanedWorkRetirement>();
         services.AddScoped<CatalogWorkResolver>();
+        services.AddScoped<CatalogObservationService>();
+        services.AddScoped<ICatalogEvidenceReader, CatalogEvidenceReader>();
+        services.AddScoped<CatalogEvidenceInspector>();
         services.AddScoped<ICatalogSearchService, CatalogSearchService>();
+        services.AddScoped<ICatalogBrowseRepository, CatalogBrowseRepository>();
+        services.AddScoped<CatalogBrowseService>();
+        // The transport-neutral discovery core: host-memory contexts, journeys and the per-user admission rule are singletons (so the
+        // web routes and the answer service draw on one allowance, never one each); the services are scoped because they read the
+        // active-provider settings and the scoped clock. No singleton here holds a scoped service.
+        services.AddSingleton<CatalogBrowseContextStore>();
+        services.AddSingleton<CatalogDiscoveryJourneys>();
+        services.AddSingleton<CatalogExpansionLimiter>();
+        services.AddScoped<CatalogDiscoveryService>();
+        // The shared catalog-answer foundation (read-only). Registered, not yet activated in chat.
+        services.AddSingleton<CatalogAnswerContextStore>();
+        services.AddSingleton(CatalogAnswerOptions.Default);
+        services.AddScoped<ISavedCatalogEvidenceRepository, SavedCatalogEvidenceRepository>();
+        services.AddScoped<ICatalogAnswerService, CatalogAnswerService>();
         services.AddScoped<IWorkFulfillmentOptionsService, WorkFulfillmentOptionsService>();
 
         services.AddScoped<RequestRepository>();
@@ -606,6 +631,9 @@ public static class DependencyInjection
             .ValidateOnStart();
 
         services.AddTransient<HardcoverAuthorizationHandler>();
+        // One instance for the process: Hardcover's RateLimit header describes the shared credential, so every request made
+        // with it (search, detail, language lookup, discovery) must feed the same state.
+        services.AddSingleton<HardcoverRateState>();
         services.AddTransient<HardcoverRateLimitHandler>();
 
         // Hardcover has no app-level key: the request-scoped admin's own

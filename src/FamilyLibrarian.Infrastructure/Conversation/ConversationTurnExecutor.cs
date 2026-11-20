@@ -43,6 +43,23 @@ public sealed partial class ConversationTurnExecutor(
         }
     }
 
+    public async Task<bool> StillAuthorizedAsync(MatrixInboundMessage message, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(message);
+        try
+        {
+            await using var scope = scopes.CreateAsyncScope();
+            return await scope.ServiceProvider.GetRequiredService<MatrixPrincipalAuthenticator>()
+                .StillAuthorizedAsync(message, cancellationToken);
+        }
+        catch (Exception exception) when (exception is not OperationCanceledException)
+        {
+            // When it cannot be confirmed it is not assumed: the reply is held back and a replay of the event offers it again.
+            LogTurnFailed(exception);
+            return false;
+        }
+    }
+
     public async Task MarkDeliveredAsync(ConversationEventKey key, CancellationToken cancellationToken)
     {
         try
