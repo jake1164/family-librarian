@@ -23,22 +23,44 @@ public static class ProviderSourceHealth
     public static readonly TimeSpan OperationalIssueLifetime = TimeSpan.FromHours(24);
 
     /// <param name="newestFirst">Recent attempts across providers, newest first.</param>
+    /// <param name="currentHealth">
+    /// The latest health test of each registered external provider, keyed by provider id. A blocked lookup is recorded when a
+    /// provider's health check says it cannot search or acquire; once a newer test shows both available, that record describes a
+    /// problem that is over, so it is not reported. Providers with no entry are judged on their attempts alone.
+    /// </param>
     public static IReadOnlyList<ProviderAttempt> CurrentIssues(
-        IReadOnlyList<ProviderAttempt> newestFirst, DateTimeOffset now) =>
+        IReadOnlyList<ProviderAttempt> newestFirst, DateTimeOffset now,
+        IReadOnlyDictionary<string, ProviderHealthSnapshot>? currentHealth = null) =>
         newestFirst
             .GroupBy(attempt => attempt.ProviderId, StringComparer.OrdinalIgnoreCase)
-            .Select(group => Evaluate(group.ToArray(), now))
+            .Select(group => Evaluate(group.ToArray(), now, FindHealth(currentHealth, group.Key)))
             .OfType<ProviderAttempt>()
             .OrderByDescending(attempt => attempt.AttemptedAtUtc)
             .ToArray();
 
-    private static ProviderAttempt? Evaluate(ProviderAttempt[] newestFirst, DateTimeOffset now)
+    private static ProviderHealthSnapshot? FindHealth(
+        IReadOnlyDictionary<string, ProviderHealthSnapshot>? currentHealth, string providerId)
+    {
+        if (currentHealth is null) return null;
+        if (currentHealth.TryGetValue(providerId, out var exact)) return exact;
+        foreach (var (id, snapshot) in currentHealth)
+        {
+            if (string.Equals(id, providerId, StringComparison.OrdinalIgnoreCase)) return snapshot;
+        }
+
+        return null;
+    }
+
+    private static ProviderAttempt? Evaluate(
+        ProviderAttempt[] newestFirst, DateTimeOffset now, ProviderHealthSnapshot? health)
     {
         var latest = newestFirst[0];
         switch (latest.IssueKind)
         {
             case ProviderAttemptIssueKind.Configuration:
-                return latest;
+                return latest.Outcome == ProviderAttemptOutcome.Blocked && health?.RecoveredSince(latest.AttemptedAtUtc) == true
+                    ? null
+                    : latest;
             case ProviderAttemptIssueKind.Operational:
                 var failures = newestFirst
                     .TakeWhile(attempt => attempt.IssueKind == ProviderAttemptIssueKind.Operational)
@@ -51,4 +73,23 @@ public static class ProviderSourceHealth
                 return null;
         }
     }
+}
+
+/// <summary>What the most recent health test of one external provider concluded.</summary>
+/// <param name="TestedAtUtc">When that test ran, or null if it never has.</param>
+/// <param name="Succeeded">Whether the provider was reachable and answered that test.</param>
+/// <param name="SearchStatus">The reported <c>operations.search</c> status, e.g. "Available".</param>
+/// <param name="AcquireStatus">The reported <c>operations.acquire</c> status, e.g. "Available".</param>
+public sealed record ProviderHealthSnapshot(
+    DateTimeOffset? TestedAtUtc, bool? Succeeded, string? SearchStatus, string? AcquireStatus)
+{
+    /// <summary>
+    /// True when a test newer than <paramref name="attemptedAtUtc"/> succeeded and reported both search and acquire
+    /// available. Anything weaker (degraded, unavailable, unknown, an older test) leaves the earlier problem standing.
+    /// </summary>
+    public bool RecoveredSince(DateTimeOffset attemptedAtUtc) =>
+        TestedAtUtc is { } testedAtUtc && testedAtUtc > attemptedAtUtc &&
+        Succeeded == true &&
+        string.Equals(SearchStatus, "Available", StringComparison.OrdinalIgnoreCase) &&
+        string.Equals(AcquireStatus, "Available", StringComparison.OrdinalIgnoreCase);
 }

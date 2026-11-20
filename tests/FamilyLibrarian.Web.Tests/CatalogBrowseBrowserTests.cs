@@ -205,7 +205,7 @@ public sealed class CatalogBrowseBrowserTests
             }
         });
         var factory = original.WithWebHostBuilder(builder => builder.UseStaticWebAssets());
-        factory.UseKestrel(0);
+        factory.UseKestrel(options => options.Listen(System.Net.IPAddress.Loopback, 0));
         using var client = factory.CreateClient();
         var baseUri = client.BaseAddress!;
         var playwright = await Playwright.CreateAsync();

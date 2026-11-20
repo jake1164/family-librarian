@@ -41,18 +41,23 @@ public sealed class BrowserRequestQueueE2ETests
         {
             Headless = true
         });
-        var page = await browser.NewPageAsync();
+        var adminPage = await browser.NewPageAsync();
 
-        await SignInAsync(page, settings.BaseUri, settings.AdminEmail, settings.AdminPassword);
-        await page.GotoAsync(new Uri(settings.BaseUri, "/admin/accounts").ToString());
-        await Assertions.Expect(page.GetByRole(AriaRole.Heading, new() { Name = "Family accounts" }))
+        await SignInAsync(adminPage, settings.BaseUri, settings.AdminEmail, settings.AdminPassword);
+        await adminPage.GotoAsync(new Uri(settings.BaseUri, "/admin/accounts").ToString());
+        await Assertions.Expect(adminPage.GetByRole(AriaRole.Heading, new() { Name = "Family accounts" }))
             .ToBeVisibleAsync();
 
-        await page.GetByLabel("Email address", new() { Exact = true }).FillAsync(requesterEmail);
-        await page.GetByRole(AriaRole.Button, new() { Name = "Create invite link", Exact = true }).ClickAsync();
-        var invitationUrl = await page.GetByLabel("Invitation link", new() { Exact = true }).InputValueAsync();
+        await adminPage.GetByLabel("Email address", new() { Exact = true }).FillAsync(requesterEmail);
+        await adminPage.GetByRole(AriaRole.Button, new() { Name = "Create invite link", Exact = true }).ClickAsync();
+        var invitationUrl = await adminPage.GetByLabel("Invitation link", new() { Exact = true }).InputValueAsync();
         Assert.IsFalse(string.IsNullOrWhiteSpace(invitationUrl));
 
+        // The invited member has their own cookies and client state, as on a
+        // separate device. Reusing the administrator's tab can attribute this
+        // request to the administrator instead.
+        await using var requesterContext = await browser.NewContextAsync();
+        var page = await requesterContext.NewPageAsync();
         await page.GotoAsync(invitationUrl);
         await Assertions.Expect(page.GetByRole(AriaRole.Heading, new() { Name = "Join the family library" }))
             .ToBeVisibleAsync();
@@ -74,8 +79,7 @@ public sealed class BrowserRequestQueueE2ETests
         await page.GetByRole(AriaRole.Button, new() { Name = "Request this book", Exact = true }).ClickAsync();
         await Assertions.Expect(page.GetByText("Your interest is saved.", new() { Exact = false })).ToBeVisibleAsync();
 
-        await SignOutAsync(page);
-        await SignInAsync(page, settings.BaseUri, settings.AdminEmail, settings.AdminPassword);
+        page = adminPage;
         await page.GotoAsync(new Uri(settings.BaseUri, "/admin/requests").ToString());
         await Assertions.Expect(page.GetByRole(AriaRole.Heading, new() { Name = "Request queue", Exact = true }))
             .ToBeVisibleAsync();
@@ -121,26 +125,12 @@ public sealed class BrowserRequestQueueE2ETests
         await page.GetByLabel("Password", new() { Exact = true }).FillAsync(password);
         await page.GetByRole(AriaRole.Button, new() { Name = "Sign in", Exact = true }).ClickAsync();
 
-        // "Account menu" alone is not proof this sign-in took effect: the layout
-        // shows it for *any* authenticated identity, so a still-valid prior
-        // session (e.g. the admin's, earlier in this same test) already
-        // satisfies it even if this sign-in silently no-ops. A successful sign-in
-        // does a forceLoad navigation to "/", so waiting for that first is what
-        // actually proves the new identity replaced the old one.
+        // Wait for the sign-in navigation, then verify the server's identity
+        // before this actor can create or review a request.
         await page.WaitForURLAsync(url => new Uri(url).AbsolutePath == "/", new() { Timeout = 15_000 });
         await Assertions.Expect(page.GetByLabel("Account menu", new() { Exact = true })).ToBeVisibleAsync();
-    }
-
-    private static async Task SignOutAsync(IPage page)
-    {
-        await page.GetByLabel("Account menu", new() { Exact = true }).ClickAsync();
-        // MudMenuItem renders as an unadorned <div>/<p> with no ARIA menuitem
-        // role, so the visible text is the only reliable locator.
-        await page.GetByText("Sign out", new() { Exact = true }).ClickAsync();
-        // The signed-out home page offers "Sign in" twice (the app bar and the
-        // anonymous hero CTA); the app bar link is the one that is always there.
-        await Assertions.Expect(page.GetByRole(AriaRole.Toolbar).GetByRole(AriaRole.Link, new() { Name = "Sign in", Exact = true }))
-            .ToBeVisibleAsync();
+        var actualEmail = await page.EvaluateAsync<string>("async () => (await (await fetch('/api/v1/me')).json()).email");
+        Assert.AreEqual(email, actualEmail, "The browser must be signed in as the intended actor.");
     }
 
     private static BrowserE2eSettings ReadSettings()

@@ -358,7 +358,13 @@ internal static class AdminRequestEndpoints
             displayNames[provider.ProviderId] = provider.DisplayName;
         }
 
-        var providerIssues = ProviderSourceHealth.CurrentIssues(recentAttempts, clock.UtcNow)
+        var providerHealth = registeredExternalProviders.ToDictionary(
+            provider => provider.ProviderId,
+            provider => new ProviderHealthSnapshot(
+                provider.LastTestedAtUtc, provider.LastTestSucceeded,
+                provider.CachedSearchOperationStatus, provider.CachedAcquireOperationStatus),
+            StringComparer.OrdinalIgnoreCase);
+        var providerIssues = ProviderSourceHealth.CurrentIssues(recentAttempts, clock.UtcNow, providerHealth)
             // Historic provider activity stays available on the request's
             // timeline, but only currently installed/registered providers can
             // be an active source-health issue.

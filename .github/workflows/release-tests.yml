@@ -30,6 +30,7 @@ jobs:
   browser:
     name: Browser regressions
     runs-on: ubuntu-latest
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@v7
 
@@ -69,14 +70,16 @@ jobs:
       # only for this fresh, isolated CI database and are not deployment
       # secrets.
       - name: Start browser E2E deployment
+        timeout-minutes: 10
         env:
           FL_DB_PASSWORD: ci-browser-e2e-database-only
           ADMIN_EMAIL: browser-e2e-admin@family-librarian.example
           ADMIN_PASSWORD: Browser-E2E-CI-Only-Password1!
           FL_E2E_FIXTURE_CERT_DIR: ${{ runner.temp }}/release-e2e-certs
-        run: docker compose -f compose.yaml -f compose.release-e2e.yaml --project-name family-librarian-browser-e2e up --build --wait
+        run: docker compose -f compose.yaml -f compose.release-e2e.yaml --project-name family-librarian-browser-e2e up --build --wait --wait-timeout 120
 
       - name: Test
+        timeout-minutes: 12
         env:
           FAMILY_LIBRARIAN_LIVE_BROWSER_TESTS: "1"
           FAMILY_LIBRARIAN_SETTINGS_BROWSER_TESTS: "1"
@@ -87,13 +90,43 @@ jobs:
           FAMILY_LIBRARIAN_E2E_BASE_URL: http://localhost:8080
           FAMILY_LIBRARIAN_E2E_ADMIN_EMAIL: browser-e2e-admin@family-librarian.example
           FAMILY_LIBRARIAN_E2E_ADMIN_PASSWORD: Browser-E2E-CI-Only-Password1!
-        run: dotnet test --project tests/FamilyLibrarian.Web.Tests/FamilyLibrarian.Web.Tests.csproj --no-build -- --filter "TestCategory=Release"
+        run: >-
+          dotnet test --project tests/FamilyLibrarian.Web.Tests/FamilyLibrarian.Web.Tests.csproj --no-build --
+          --filter "TestCategory=Release" --timeout 10m --report-trx
+          --results-directory "${{ runner.temp }}/release-test-results"
+          --diagnostic --diagnostic-output-directory "${{ runner.temp }}/release-test-results"
+          --output Detailed --show-stdout Failed --show-stderr Failed
+
+      # Collect before tearing down: a failed/timed-out test still needs its
+      # partial results and the deployment's logs for diagnosis.
+      - name: Collect deployment diagnostics
+        if: always()
+        timeout-minutes: 1
+        env:
+          FL_DB_PASSWORD: ci-browser-e2e-database-only
+          ADMIN_EMAIL: browser-e2e-admin@family-librarian.example
+          ADMIN_PASSWORD: Browser-E2E-CI-Only-Password1!
+          FL_E2E_FIXTURE_CERT_DIR: ${{ runner.temp }}/release-e2e-certs
+        run: |
+          mkdir -p "$RUNNER_TEMP/release-test-results"
+          docker compose -f compose.yaml -f compose.release-e2e.yaml --project-name family-librarian-browser-e2e ps --all > "$RUNNER_TEMP/release-test-results/compose-status.txt"
+          docker compose -f compose.yaml -f compose.release-e2e.yaml --project-name family-librarian-browser-e2e logs --no-color --timestamps > "$RUNNER_TEMP/release-test-results/compose.log" 2>&1
 
       - name: Stop browser E2E deployment
         if: always()
+        timeout-minutes: 1
         env:
           FL_DB_PASSWORD: ci-browser-e2e-database-only
           ADMIN_EMAIL: browser-e2e-admin@family-librarian.example
           ADMIN_PASSWORD: Browser-E2E-CI-Only-Password1!
           FL_E2E_FIXTURE_CERT_DIR: ${{ runner.temp }}/release-e2e-certs
         run: docker compose -f compose.yaml -f compose.release-e2e.yaml --project-name family-librarian-browser-e2e down --volumes --remove-orphans
+
+      - name: Upload test diagnostics
+        if: always()
+        timeout-minutes: 2
+        uses: actions/upload-artifact@v7
+        with:
+          name: release-browser-diagnostics
+          path: ${{ runner.temp }}/release-test-results/
+          retention-days: 7

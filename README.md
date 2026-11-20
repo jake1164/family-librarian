@@ -361,6 +361,13 @@ this test together with the local browser regressions. The local command remains
 opt-in because a developer machine may not have Chromium installed or a free
 Compose port.
 
+Release browser execution has a ten-minute test deadline, a twelve-minute step
+limit, and a twenty-five-minute job ceiling. The workflow uploads TRX results,
+test-runner diagnostics, and Compose logs as `release-browser-diagnostics` even
+when a test fails or times out; artifacts are retained for seven days. Completed
+checks are printed as they finish so a stalled run can be distinguished from a
+slow test.
+
 ```bash
 FAMILY_LIBRARIAN_E2E_BASE_URL=http://localhost:8080 \
 FAMILY_LIBRARIAN_E2E_ADMIN_EMAIL=admin@example.test \
