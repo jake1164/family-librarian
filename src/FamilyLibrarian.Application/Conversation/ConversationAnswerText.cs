@@ -439,7 +439,9 @@ internal static class ConversationAnswerText
     {
         "unnumbered" => "No place stated in this order:",
         "class-not-original" => "Collections, abridgements and other non-original records:",
-        "undated" => "Announced with no date stated:",
+        "undated" => "No publication date stated:",
+        "announced-undated" => "Announced by a source, with no date stated:",
+        "future-dated" => "Listed with a date still to come (not counted as published):",
         "other-roles" => "Credited in another role (editor, translator, illustrator):",
         "credit-unverified" => "Credited in a way that didn't confirm this author:",
         "role-unverified" => "Main-series place not verified:",

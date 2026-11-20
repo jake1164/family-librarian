@@ -103,6 +103,7 @@ public static class CatalogAnswerPolicy
         var editionDerived = new List<CatalogAnswerEntry>();
         var nonOriginalClass = new List<CatalogAnswerEntry>();
         var undated = new List<CatalogAnswerEntry>();
+        var announcedUndated = new List<CatalogAnswerEntry>();
         var future = new List<CatalogAnswerEntry>();
         var includesToday = new List<CatalogAnswerEntry>();
         var conflicts = new List<CatalogAnswerEntry>();
@@ -136,6 +137,10 @@ public static class CatalogAnswerPolicy
                 case CatalogDateTemporal.IncludesToday:
                     includesToday.Add(entry);
                     break;
+                case CatalogDateTemporal.KnownUndated:
+                    // Only a source's own forthcoming status makes a record "announced"; no stated date alone never does.
+                    announcedUndated.Add(entry);
+                    break;
                 default:
                     undated.Add(entry);
                     break;
@@ -146,10 +151,11 @@ public static class CatalogAnswerPolicy
         state.Group("edition-derived-dates", editionDerived);
         state.Group("future-dated", future);
         state.Group("undated", undated);
+        state.Group("announced-undated", announcedUndated);
         state.Group("interval-includes-today", includesToday);
         state.Group("status-date-conflict", conflicts);
         if (conflicts.Count > 0) state.Qualify(CatalogAnswerCodes.StatusDateConflict);
-        if (undated.Count > 0) state.Qualify(CatalogAnswerCodes.UndatedEntriesPresent);
+        if (undated.Count + announcedUndated.Count > 0) state.Qualify(CatalogAnswerCodes.UndatedEntriesPresent);
         if (includesToday.Count > 0) state.Qualify(CatalogAnswerCodes.IncludesTodayInterval);
         if (nonOriginalClass.Count > 0) state.Reason(CatalogAnswerCodes.ClassFilterApplied);
 

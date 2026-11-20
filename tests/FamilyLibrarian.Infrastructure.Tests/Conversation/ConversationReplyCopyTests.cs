@@ -109,6 +109,124 @@ public sealed class ConversationReplyCopyTests
         StringAssert.StartsWith(ConversationAnswerText.ForAnswer(past, ConversationAnswerText.WebMaxLength).Text, "What the sources say about its publication date:");
     }
 
+    // ---- A7-C1: "announced" only with evidence of an announcement; a future date is not a confirmed release ----------------
+
+    private static CatalogAnswerEntry LatestRecord(string id, string title, PublicationEvidence publication) => new()
+    {
+        Source = new SourceRef("fiction", id, ExternalReferenceEntityType.Work),
+        ProviderId = "fiction",
+        Title = title,
+        Publication = publication
+    };
+
+    private static readonly string[] LatestGroupOrder = ["future-dated", "undated", "announced-undated"];
+
+    private static readonly SourceRef LanternSeries = new("fiction", "s-lantern", ExternalReferenceEntityType.Series);
+
+    /// <summary>The production latest policy over one record of each kind, so the groups are the ones the policy really makes.</summary>
+    private static CatalogAnswer LatestOfFourKinds()
+    {
+        var selection = CatalogAnswerPolicy.Latest(
+            [
+                LatestRecord("w1", "Published Work",
+                    PublicationEvidence.Dated(new DateOnly(2020, 3, 5), DatePrecision.Day, DateBasis.Original, PublicationStatus.Published)),
+                LatestRecord("w2", "Unknown Date Work", PublicationEvidence.NotStated),
+                LatestRecord("w3", "Announced Work", PublicationEvidence.KnownUndated()),
+                LatestRecord("w4", "Future Dated Work",
+                    PublicationEvidence.Dated(new DateOnly(2028, 1, 1), DatePrecision.Year, DateBasis.Original, PublicationStatus.Unknown))
+            ],
+            Today,
+            new CatalogPolicyScope(true, false, false));
+        return new CatalogAnswer
+        {
+            Operation = CatalogAnswerOperation.LatestPublished,
+            Outcome = selection.Outcome,
+            Subject = CatalogSubjectRef.FromSource(CatalogSubjectKind.Series, "The Lantern Road", LanternSeries),
+            Entries = selection.Entries,
+            Groups = selection.Groups,
+            Qualifiers = selection.Qualifiers,
+            Reasons = selection.Reasons,
+            Today = Today
+        };
+    }
+
+    private static IReadOnlyList<string> Facts(ConversationAnswerCardGroup group) => group.Lines.Single().Facts;
+
+    [TestMethod]
+    public void LatestKeepsThePublishedWorkRankedAndSplitsTheOtherThreeKindsApart()
+    {
+        var answer = LatestOfFourKinds();
+
+        Assert.AreEqual("Published Work", answer.Entries.Single().Title, "Ranking is unchanged: only the dated, past Work is the latest.");
+        CollectionAssert.AreEqual(LatestGroupOrder, answer.Groups.Select(group => group.Code).ToArray());
+        Assert.AreEqual("Unknown Date Work", answer.Groups.Single(group => group.Code == "undated").Entries.Single().Title);
+        Assert.AreEqual("Announced Work", answer.Groups.Single(group => group.Code == "announced-undated").Entries.Single().Title);
+        Assert.IsTrue(answer.HasQualifier(CatalogAnswerCodes.UndatedEntriesPresent), "The undated qualification still applies.");
+    }
+
+    [TestMethod]
+    public void TheWebCardHeadsOnlyAnAnnouncedRecordAsAnnouncedAndNeverImpliesAConfirmedRelease()
+    {
+        foreach (var max in Transports)
+        {
+            var card = ConversationAnswerText.ForAnswer(LatestOfFourKinds(), max).Cards.Single();
+
+            Assert.AreEqual("1. Published Work", card.Lines.Single().Title);
+            CollectionAssert.Contains(card.Lines.Single().Facts.ToArray(), "2020-03-05, original publication");
+
+            Assert.AreEqual(3, card.Groups.Count);
+            var future = card.Groups[0];
+            var unknown = card.Groups[1];
+            var announced = card.Groups[2];
+
+            Assert.AreEqual("Listed with a date still to come (not counted as published):", future.Heading);
+            Assert.AreEqual("No publication date stated:", unknown.Heading);
+            Assert.AreEqual("Announced by a source, with no date stated:", announced.Heading);
+
+            StringAssert.Contains(future.Lines.Single().Title, "Future Dated Work");
+            CollectionAssert.Contains(Facts(future).ToArray(), "2028 (year only), original publication", "The date precision is kept.");
+            StringAssert.Contains(unknown.Lines.Single().Title, "Unknown Date Work");
+            CollectionAssert.Contains(Facts(unknown).ToArray(), "no date stated");
+            StringAssert.Contains(announced.Lines.Single().Title, "Announced Work");
+            CollectionAssert.Contains(Facts(announced).ToArray(), "announced, no date stated");
+
+            Assert.DoesNotContain("Announced", unknown.Heading);
+            Assert.DoesNotContain("Announced", future.Heading);
+            Assert.DoesNotContain("confirmed", future.Heading);
+            Assert.DoesNotContain("scheduled", future.Heading);
+            CollectionAssert.Contains(card.Notes.ToArray(), "Entries with no stated date are listed apart.", "The qualification is unchanged.");
+        }
+    }
+
+    [TestMethod]
+    public void MatrixTextPutsEachRecordUnderItsOwnHeadingInOrder()
+    {
+        foreach (var max in Transports)
+        {
+            var rendered = ConversationAnswerText.ForAnswer(LatestOfFourKinds(), max).Text;
+            var text = MatrixReplyFormatter.ToText(ConversationReply.Of(ConversationReplyKind.Answer, rendered));
+
+            var future = text.IndexOf("Listed with a date still to come (not counted as published):", StringComparison.Ordinal);
+            var futureBook = text.IndexOf("Future Dated Work", StringComparison.Ordinal);
+            var unknown = text.IndexOf("No publication date stated:", StringComparison.Ordinal);
+            var unknownBook = text.IndexOf("Unknown Date Work", StringComparison.Ordinal);
+            var announced = text.IndexOf("Announced by a source, with no date stated:", StringComparison.Ordinal);
+            var announcedBook = text.IndexOf("Announced Work", StringComparison.Ordinal);
+
+            Assert.IsTrue(future >= 0 && future < futureBook && futureBook < unknown, text);
+            Assert.IsTrue(unknown < unknownBook && unknownBook < announced, text);
+            Assert.IsTrue(announced < announcedBook, text);
+            StringAssert.Contains(text, "2020-03-05, original publication");
+            StringAssert.Contains(text, "2028 (year only), original publication");
+            StringAssert.Contains(text, "Entries with no stated date are listed apart.");
+            Assert.AreEqual(1, CountOf(text, "Announced by a source"), "Only the evidenced record is called announced under a heading.");
+            Assert.AreEqual(1, CountOf(text, "announced, no date stated"), "Only the evidenced record carries the announced fact.");
+        }
+    }
+
+    private static int CountOf(string haystack, string needle) =>
+        (haystack.Length - haystack.Replace(needle, string.Empty, StringComparison.Ordinal).Length) / needle.Length;
+
     private const string Origin = "https://fl.example.test";
     private static readonly Guid AuthorId = Guid.Parse("a1111111-1111-4111-8111-111111111111");
     private static readonly Guid WorkId = Guid.Parse("b2222222-2222-4222-8222-222222222222");

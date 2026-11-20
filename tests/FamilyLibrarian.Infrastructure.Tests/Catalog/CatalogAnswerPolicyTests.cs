@@ -130,6 +130,41 @@ public sealed class CatalogAnswerPolicyTests
     }
 
     [TestMethod]
+    public void LatestSeparatesAnAnnouncedUndatedRecordFromOneWithNoStatedDateAndKeepsTheQualification()
+    {
+        var entries = new[]
+        {
+            Entry("a", "Alder", new DateOnly(2001, 5, 1)),
+            Entry("u", "Unknown", null),
+            new CatalogAnswerEntry { Source = Work("k"), ProviderId = "fiction", Title = "Announced", Publication = PublicationEvidence.KnownUndated() }
+        };
+
+        var result = CatalogAnswerPolicy.Latest(entries, Today, Full);
+
+        Assert.AreEqual("Alder", result.Entries.Single().Title);
+        Assert.AreEqual("Unknown", result.Groups.Single(group => group.Code == "undated").Entries.Single().Title);
+        Assert.AreEqual("Announced", result.Groups.Single(group => group.Code == "announced-undated").Entries.Single().Title);
+        Assert.IsTrue(result.Qualifiers.Contains(CatalogAnswerCodes.UndatedEntriesPresent));
+    }
+
+    [TestMethod]
+    public void AnAnnouncedUndatedRecordAloneStillQualifiesLatestAndIsNeverRanked()
+    {
+        var entries = new[]
+        {
+            Entry("a", "Alder", new DateOnly(2001, 5, 1)),
+            new CatalogAnswerEntry { Source = Work("k"), ProviderId = "fiction", Title = "Announced", Publication = PublicationEvidence.KnownUndated() }
+        };
+
+        var result = CatalogAnswerPolicy.Latest(entries, Today, Full);
+
+        Assert.AreEqual(CatalogAnswerOutcome.Qualified, result.Outcome);
+        Assert.AreEqual("Alder", result.Entries.Single().Title);
+        Assert.IsFalse(result.Groups.Any(group => group.Code == "undated"));
+        Assert.IsTrue(result.Qualifiers.Contains(CatalogAnswerCodes.UndatedEntriesPresent));
+    }
+
+    [TestMethod]
     public void AFutureDatedEntryIsNotThePublishedLatest()
     {
         var entries = new[] { Entry("a", "Alder", new DateOnly(2001, 5, 1)), Entry("f", "Fir", new DateOnly(2027, 5, 11)) };
