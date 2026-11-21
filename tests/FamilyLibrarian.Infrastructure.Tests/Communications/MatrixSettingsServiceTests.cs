@@ -38,7 +38,7 @@ public sealed class MatrixSettingsServiceTests
         await context.Service.SendTestAsync(null, null, null, CancellationToken.None);
         await context.Service.SetEnabledAsync(true, CancellationToken.None);
 
-        await context.Service.SetSettingsAsync("https://matrix.other.example.test", "@bot:example.test", CancellationToken.None);
+        await context.Service.SetSettingsAsync("https://matrix.other.example.test", "@bot:example.test", null, CancellationToken.None);
 
         var enabled = await context.Service.SetEnabledAsync(true, CancellationToken.None);
         Assert.IsFalse(enabled.Succeeded);
@@ -50,7 +50,7 @@ public sealed class MatrixSettingsServiceTests
     {
         var context = new TestContext();
 
-        var result = await context.Service.SetSettingsAsync("not-a-url", "@bot:example.test", CancellationToken.None);
+        var result = await context.Service.SetSettingsAsync("not-a-url", "@bot:example.test", null, CancellationToken.None);
 
         Assert.IsFalse(result.Succeeded);
         StringAssert.Contains(result.Error, "homeserver URL");
@@ -80,6 +80,87 @@ public sealed class MatrixSettingsServiceTests
         Assert.AreEqual("freshly-typed-token", context.MatrixClient.LastAccessTokenUsed);
     }
 
+    [TestMethod]
+    public async Task SavingSettingsWithATokenStoresTheTokenInTheSameSave()
+    {
+        var context = new TestContext();
+
+        var result = await context.Service.SetSettingsAsync(
+            "https://matrix.example.test", "@bot:example.test", " typed-token ", CancellationToken.None);
+
+        Assert.IsTrue(result.Succeeded);
+        Assert.IsTrue(result.Status!.HasAccessToken);
+        Assert.AreEqual("typed-token", context.Store.Current!.ProtectedAccessToken);
+    }
+
+    [TestMethod]
+    public async Task SavingSettingsWithABlankTokenKeepsTheStoredToken()
+    {
+        var context = new TestContext();
+        await context.ConfigureAsync();
+
+        var result = await context.Service.SetSettingsAsync(
+            "https://matrix.example.test", "@bot:example.test", "  ", CancellationToken.None);
+
+        Assert.IsTrue(result.Succeeded);
+        Assert.AreEqual("super-secret-token", context.Store.Current!.ProtectedAccessToken);
+    }
+
+    [TestMethod]
+    public async Task AnInvalidSettingsSaveDoesNotStoreTheToken()
+    {
+        var context = new TestContext();
+
+        var result = await context.Service.SetSettingsAsync("not-a-url", "@bot:example.test", "typed-token", CancellationToken.None);
+
+        Assert.IsFalse(result.Succeeded);
+        Assert.IsNull(context.Store.Current);
+    }
+
+    [TestMethod]
+    public async Task TestingUnsavedValuesIsNotRecordedAgainstTheSavedSettings()
+    {
+        var context = new TestContext();
+        await context.ConfigureAsync();
+
+        var test = await context.Service.SendTestAsync(
+            "https://matrix.other.example.test", null, "freshly-typed-token", CancellationToken.None);
+
+        Assert.IsTrue(test.Succeeded);
+        Assert.IsTrue(test.Outcome!.Succeeded);
+        StringAssert.Contains(test.Outcome.Message, "not saved yet");
+        Assert.IsNull(context.Store.Current!.LastTestSucceeded);
+        var enabled = await context.Service.SetEnabledAsync(true, CancellationToken.None);
+        Assert.IsFalse(enabled.Succeeded);
+    }
+
+    [TestMethod]
+    public async Task TestingWithNothingSavedDoesNotCreateOrRecordSettings()
+    {
+        var context = new TestContext();
+
+        var test = await context.Service.SendTestAsync(
+            "https://matrix.example.test", "@bot:example.test", "typed-token", CancellationToken.None);
+
+        Assert.IsTrue(test.Succeeded);
+        StringAssert.Contains(test.Outcome!.Message, "not saved yet");
+        Assert.IsNull(context.Store.Current);
+    }
+
+    [TestMethod]
+    public async Task TestingTheSavedValuesExplicitlyIsRecorded()
+    {
+        var context = new TestContext();
+        await context.ConfigureAsync();
+
+        var test = await context.Service.SendTestAsync(
+            "https://matrix.example.test", "@bot:example.test", "super-secret-token", CancellationToken.None);
+
+        Assert.IsTrue(test.Succeeded);
+        Assert.IsTrue(context.Store.Current!.LastTestSucceeded);
+        Assert.IsFalse(test.Outcome!.Message.Contains("not saved yet"));
+    }
+
     private sealed class TestContext
     {
         public FakeMatrixSettingsStore Store { get; } = new();
@@ -94,14 +175,16 @@ public sealed class MatrixSettingsServiceTests
 
         public async Task ConfigureAsync()
         {
-            await Service.SetSettingsAsync("https://matrix.example.test", "@bot:example.test", CancellationToken.None);
-            await Service.SetAccessTokenAsync("super-secret-token", CancellationToken.None);
+            await Service.SetSettingsAsync(
+                "https://matrix.example.test", "@bot:example.test", "super-secret-token", CancellationToken.None);
         }
     }
 
     private sealed class FakeMatrixSettingsStore : IMatrixSettingsStore
     {
         private MatrixSettings? settings;
+
+        public MatrixSettings? Current => settings;
 
         public Task<MatrixSettings?> FindAsync(CancellationToken cancellationToken) => Task.FromResult(settings);
 

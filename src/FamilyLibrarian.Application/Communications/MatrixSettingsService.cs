@@ -40,8 +40,13 @@ public sealed class MatrixSettingsService(
         return MatrixCommandResult.Success(ToStatus(settings));
     }
 
+    /// <summary>
+    /// Saves the homeserver URL and bot user ID and, when <paramref name="accessToken"/> is
+    /// non-blank, replaces the stored access token in the same save. A null or blank token
+    /// leaves the stored token untouched, so the form's "leave blank to keep it" holds.
+    /// </summary>
     public async Task<MatrixCommandResult> SetSettingsAsync(
-        string? homeserverUrl, string? botUserId, CancellationToken cancellationToken)
+        string? homeserverUrl, string? botUserId, string? accessToken, CancellationToken cancellationToken)
     {
         if (!string.IsNullOrWhiteSpace(homeserverUrl))
         {
@@ -61,8 +66,20 @@ public sealed class MatrixSettingsService(
             return MatrixCommandResult.Invalid("The bot's Matrix user ID must look like @user:example.org.");
         }
 
+        var trimmedToken = accessToken?.Trim();
+        var replaceToken = !string.IsNullOrEmpty(trimmedToken);
+
         var settings = await store.GetOrCreateAsync(cancellationToken);
         settings.SetSettings(homeserverUrl, botUserId, currentUser.UserId, clock.UtcNow);
+        if (replaceToken)
+        {
+            settings.SetAccessToken(
+                protector.Protect(CommunicationSecretPurposes.MatrixAccessToken, trimmedToken!),
+                protector.FormatVersion,
+                currentUser.UserId,
+                clock.UtcNow);
+        }
+
         await store.SaveChangesAsync(cancellationToken);
         await audit.WriteAsync(
             AuditActions.CommunicationProviderSettingsChanged,
@@ -70,6 +87,15 @@ public sealed class MatrixSettingsService(
             ProviderId,
             new { Provider = ProviderId },
             cancellationToken);
+        if (replaceToken)
+        {
+            await audit.WriteAsync(
+                AuditActions.CommunicationProviderSecretSet,
+                AuditSubjectTypes.CommunicationProvider,
+                ProviderId,
+                new { Provider = ProviderId, Field = "access_token" },
+                cancellationToken);
+        }
 
         return MatrixCommandResult.Success(ToStatus(settings));
     }
@@ -164,6 +190,16 @@ public sealed class MatrixSettingsService(
 
         var outcome = await matrixClient.TestConnectionAsync(candidate, plaintextToken, cancellationToken);
 
+        // Enabling requires a successful test of the *saved* configuration, so a test of
+        // unsaved form values must not be recorded against the saved settings -- it would
+        // mark a configuration that was never saved as tested. Tell the administrator instead.
+        if (persisted is null || !MatchesSavedConfiguration(persisted, candidate, plaintextToken))
+        {
+            return MatrixTestResult.Success(
+                ToStatus(persisted),
+                outcome with { Message = $"{outcome.Message} These values are not saved yet -- click Save settings to keep them." });
+        }
+
         var settings = await store.GetOrCreateAsync(cancellationToken);
         settings.RecordTestResult(outcome.Succeeded, outcome.Message, currentUser.UserId, clock.UtcNow);
         await store.SaveChangesAsync(cancellationToken);
@@ -176,6 +212,16 @@ public sealed class MatrixSettingsService(
 
         return MatrixTestResult.Success(ToStatus(settings), outcome);
     }
+
+    private bool MatchesSavedConfiguration(MatrixSettings persisted, MatrixSettings candidate, string plaintextToken) =>
+        persisted.HasAccessToken
+        && string.Equals(persisted.HomeserverUrl, candidate.HomeserverUrl, StringComparison.Ordinal)
+        && string.Equals(persisted.BotUserId, candidate.BotUserId, StringComparison.Ordinal)
+        && string.Equals(
+            protector.Unprotect(
+                CommunicationSecretPurposes.MatrixAccessToken, persisted.ProtectedAccessToken!, persisted.AccessTokenFormatVersion),
+            plaintextToken,
+            StringComparison.Ordinal);
 
     private static MatrixStatus ToStatus(MatrixSettings? settings) => settings is null
         ? new MatrixStatus(false, null, null, false, null, null, null, null)

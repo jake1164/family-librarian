@@ -19,9 +19,6 @@ public sealed class MatrixSettingsApiClient(HttpClient httpClient, AntiforgeryTo
     public Task<MatrixSettingsResult> SetEnabledAsync(bool enabled, CancellationToken cancellationToken = default) =>
         SendAsync(HttpMethod.Put, $"{BasePath}/enabled", new SetMatrixEnabledRequest(enabled), cancellationToken);
 
-    public Task<MatrixSettingsResult> SetAccessTokenAsync(string accessToken, CancellationToken cancellationToken = default) =>
-        SendAsync(HttpMethod.Put, $"{BasePath}/access-token", new SetMatrixAccessTokenRequest(accessToken), cancellationToken);
-
     public Task<MatrixSettingsResult> ClearAccessTokenAsync(CancellationToken cancellationToken = default) =>
         SendAsync<object>(HttpMethod.Delete, $"{BasePath}/access-token", null, cancellationToken);
 
