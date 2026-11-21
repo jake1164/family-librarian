@@ -690,6 +690,15 @@ public static class DependencyInjection
             .Validate(options => Uri.TryCreate(options.EbookRdfBaseUrl, UriKind.Absolute, out var uri) &&
                 uri.Scheme == Uri.UriSchemeHttps,
                 $"{GutenbergCatalogOptions.SectionName}:EbookRdfBaseUrl must be an HTTPS URL.")
+            .Validate(options => options.ArchiveUrls.All(IsHttpsUrl),
+                $"{GutenbergCatalogOptions.SectionName}:FallbackArchiveUrls must all be HTTPS URLs.")
+            .Validate(options => options.RecentUpdatesFeedUrls.All(IsHttpsUrl),
+                $"{GutenbergCatalogOptions.SectionName}:FallbackRecentUpdatesFeedUrls must all be HTTPS URLs.")
+            .Validate(options => options.EbookRdfBaseUrls.All(IsHttpsUrl),
+                $"{GutenbergCatalogOptions.SectionName}:FallbackEbookRdfBaseUrls must all be HTTPS URLs.")
+            .Validate(options => options.SourceResponseTimeout >= TimeSpan.FromSeconds(5) &&
+                options.SourceResponseTimeout <= TimeSpan.FromMinutes(10),
+                $"{GutenbergCatalogOptions.SectionName}:SourceResponseTimeout must be between five seconds and ten minutes.")
             .Validate(options => options.SyncHourEastern is >= 0 and <= 23,
                 $"{GutenbergCatalogOptions.SectionName}:SyncHourEastern must be between 0 and 23.")
             .Validate(options => options.BatchSize is >= 100 and <= 5_000,
@@ -837,4 +846,7 @@ public static class DependencyInjection
 
         return services;
     }
+
+    private static bool IsHttpsUrl(string value) =>
+        Uri.TryCreate(value, UriKind.Absolute, out var uri) && uri.Scheme == Uri.UriSchemeHttps;
 }

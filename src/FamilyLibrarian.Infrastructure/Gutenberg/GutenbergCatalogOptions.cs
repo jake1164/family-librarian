@@ -10,11 +10,47 @@ public sealed class GutenbergCatalogOptions
 
     public const string DefaultEbookRdfBaseUrl = "https://www.gutenberg.org/cache/epub/";
 
+    // The public website is occasionally unavailable for days. The rsync-style
+    // content mirror publishes the same /cache/epub/feeds and /cache/epub/{id}
+    // paths, so it is the default fallback for every catalogue request.
+    public const string DefaultFallbackArchiveUrl = "https://gutenberg.pglaf.org/cache/epub/feeds/rdf-files.tar.bz2";
+
+    public const string DefaultFallbackRecentUpdatesFeedUrl = "https://gutenberg.pglaf.org/cache/epub/feeds/today.rss";
+
+    public const string DefaultFallbackEbookRdfBaseUrl = "https://gutenberg.pglaf.org/cache/epub/";
+
     public string ArchiveUrl { get; set; } = DefaultArchiveUrl;
 
     public string RecentUpdatesFeedUrl { get; set; } = DefaultRecentUpdatesFeedUrl;
 
     public string EbookRdfBaseUrl { get; set; } = DefaultEbookRdfBaseUrl;
+
+    // Null means "use the built-in fallback"; an explicitly configured list
+    // (including an empty one) replaces it. Nullable rather than pre-filled
+    // because configuration binding appends to a non-empty default list, which
+    // would make the built-in fallback impossible to remove.
+    public List<string>? FallbackArchiveUrls { get; set; }
+
+    public List<string>? FallbackRecentUpdatesFeedUrls { get; set; }
+
+    public List<string>? FallbackEbookRdfBaseUrls { get; set; }
+
+    /// <summary>
+    /// How long one source may take to start responding before the next source
+    /// is tried. It does not limit the body download.
+    /// </summary>
+    public TimeSpan SourceResponseTimeout { get; set; } = TimeSpan.FromSeconds(60);
+
+    public IReadOnlyList<string> ArchiveUrls => Combine(ArchiveUrl, FallbackArchiveUrls, DefaultFallbackArchiveUrl);
+
+    public IReadOnlyList<string> RecentUpdatesFeedUrls =>
+        Combine(RecentUpdatesFeedUrl, FallbackRecentUpdatesFeedUrls, DefaultFallbackRecentUpdatesFeedUrl);
+
+    public IReadOnlyList<string> EbookRdfBaseUrls =>
+        Combine(EbookRdfBaseUrl, FallbackEbookRdfBaseUrls, DefaultFallbackEbookRdfBaseUrl);
+
+    private static string[] Combine(string primary, List<string>? fallbacks, string defaultFallback) =>
+        [primary, .. (fallbacks ?? [defaultFallback])];
 
     public int SyncHourEastern { get; set; } = 13;
 
