@@ -74,13 +74,18 @@ internal sealed partial class GutenbergCatalogSynchronizer(
             var updates = await DownloadRecentUpdatesAsync(cancellationToken);
             var generationId = state.ActiveGenerationId!.Value;
             var books = new List<GutenbergCatalogBookEntity>(updates.Count);
+            // Start each record at the source that last answered, so a source
+            // that is down is probed once rather than once per updated book.
+            var rdfSourceIndex = 0;
             foreach (var gutenbergId in updates)
             {
-                using var response = await httpClient.GetAsync(
-                    CreateRdfUri(gutenbergId),
+                var rdfSource = await GetFromSourcesAsync(
+                    CreateRdfUris(gutenbergId),
                     HttpCompletionOption.ResponseHeadersRead,
+                    rdfSourceIndex,
                     cancellationToken);
-                response.EnsureSuccessStatusCode();
+                rdfSourceIndex = rdfSource.SourceIndex;
+                using var response = rdfSource.Response;
                 await using var rdf = await response.Content.ReadAsStreamAsync(cancellationToken);
                 var book = ParseBook(rdf, generationId);
                 if (book is null || book.GutenbergId != gutenbergId)
@@ -169,11 +174,12 @@ internal sealed partial class GutenbergCatalogSynchronizer(
         var parseErrorCount = 0;
         try
         {
-            using var response = await httpClient.GetAsync(
-                options.Value.ArchiveUrl,
+            var archiveSource = await GetFromSourcesAsync(
+                options.Value.ArchiveUrls.Select(url => new Uri(url, UriKind.Absolute)).ToArray(),
                 HttpCompletionOption.ResponseHeadersRead,
+                0,
                 cancellationToken);
-            response.EnsureSuccessStatusCode();
+            using var response = archiveSource.Response;
             state.LastArchiveSizeBytes = response.Content.Headers.ContentLength;
             state.LastSourceModifiedUtc = response.Content.Headers.LastModified;
             state.LastProgressUtc = timeProvider.GetUtcNow();
@@ -330,8 +336,12 @@ internal sealed partial class GutenbergCatalogSynchronizer(
 
     private async Task<IReadOnlyList<int>> DownloadRecentUpdatesAsync(CancellationToken cancellationToken)
     {
-        using var response = await httpClient.GetAsync(options.Value.RecentUpdatesFeedUrl, cancellationToken);
-        response.EnsureSuccessStatusCode();
+        var feedSource = await GetFromSourcesAsync(
+            options.Value.RecentUpdatesFeedUrls.Select(url => new Uri(url, UriKind.Absolute)).ToArray(),
+            HttpCompletionOption.ResponseContentRead,
+            0,
+            cancellationToken);
+        using var response = feedSource.Response;
         await using var stream = await response.Content.ReadAsStreamAsync(cancellationToken);
         using var reader = XmlReader.Create(stream, new XmlReaderSettings
         {
@@ -350,9 +360,32 @@ internal sealed partial class GutenbergCatalogSynchronizer(
             .ToArray();
     }
 
-    private Uri CreateRdfUri(int gutenbergId) => new(
-        new Uri(options.Value.EbookRdfBaseUrl, UriKind.Absolute),
-        $"{gutenbergId}/pg{gutenbergId}.rdf");
+    private async Task<GutenbergCatalogSourceResponse> GetFromSourcesAsync(
+        IReadOnlyList<Uri> sources,
+        HttpCompletionOption completionOption,
+        int startIndex,
+        CancellationToken cancellationToken)
+    {
+        var result = await GutenbergCatalogSourceFetcher.GetAsync(
+            httpClient,
+            sources,
+            options.Value.SourceResponseTimeout,
+            completionOption,
+            startIndex,
+            cancellationToken);
+        // Only the switch is logged; later requests that start at the working
+        // source would otherwise warn once per updated book.
+        if (result.SourceIndex != startIndex)
+        {
+            LogFallbackSourceUsed(result.Source.Host, result.Source.AbsolutePath);
+        }
+
+        return result;
+    }
+
+    private Uri[] CreateRdfUris(int gutenbergId) => options.Value.EbookRdfBaseUrls
+        .Select(baseUrl => new Uri(new Uri(baseUrl, UriKind.Absolute), $"{gutenbergId}/pg{gutenbergId}.rdf"))
+        .ToArray();
 
     private static int? TryGetGutenbergIdFromLink(string? link)
     {
@@ -640,6 +673,9 @@ internal sealed partial class GutenbergCatalogSynchronizer(
 
     [LoggerMessage(EventId = 906, Level = LogLevel.Warning, Message = "gutenberg.catalog.incremental.failed")]
     private partial void LogIncrementalSyncFailed(Exception exception);
+
+    [LoggerMessage(EventId = 907, Level = LogLevel.Warning, Message = "gutenberg.catalog.source.fallback: the primary source was unavailable; served by {SourceHost} ({SourcePath}).")]
+    private partial void LogFallbackSourceUsed(string sourceHost, string sourcePath);
 
     [LoggerMessage(EventId = 904, Level = LogLevel.Warning, Message = "gutenberg.catalog.import.retrying: attempt {Attempt} of {MaximumAttempts}.")]
     private partial void LogImportRetrying(int attempt, int maximumAttempts, Exception exception);
