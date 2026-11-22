@@ -124,11 +124,6 @@ public static class AuditActions
     public const string ProviderInteractionClaimed = "provider_interaction.claimed";
     public const string ProviderInteractionTakenOver = "provider_interaction.taken_over";
 
-
-    public const string ProviderCatalogAdded = "provider_catalog.added";
-    public const string ProviderCatalogRemoved = "provider_catalog.removed";
-    public const string ProviderCatalogRefreshed = "provider_catalog.refreshed";
-
     public const string SettingsBackupImported = "settings_backup.imported";
 
     public const string DeliveryAttemptSubmitted = "delivery_attempt.submitted";
@@ -156,7 +151,6 @@ public static class AuditSubjectTypes
     public const string AcquisitionPolicy = "acquisition_policy";
     public const string Oidc = "oidc";
     public const string ExternalProvider = "external_provider";
-    public const string ProviderCatalog = "provider_catalog";
     public const string SettingsBackup = "settings_backup";
     public const string DeliveryAttempt = "delivery_attempt";
     public const string DeliveryTarget = "delivery_target";

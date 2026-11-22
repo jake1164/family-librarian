@@ -345,7 +345,6 @@ app.MapPolicyEndpoints();
 app.MapSystemReadinessEndpoints();
 app.MapOidcSettingsEndpoints();
 app.MapExternalProviderEndpoints();
-app.MapProviderCatalogEndpoints();
 app.MapSettingsBackupEndpoints();
 app.MapInteractionLinkEndpoints();
 

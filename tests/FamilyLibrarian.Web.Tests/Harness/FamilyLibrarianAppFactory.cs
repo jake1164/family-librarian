@@ -162,12 +162,6 @@ internal sealed class FamilyLibrarianAppFactory(
             // acquisition path swaps this via configureTestServices.
             services.RemoveAll<IExternalProviderClient>();
             services.AddSingleton<IExternalProviderClient, AlwaysEmptyExternalProviderClient>();
-
-            // Same posture for repository catalogs: no ordinary test depends on
-            // a reachable catalog URL. A test that specifically exercises a
-            // catalog fetch swaps this via configureTestServices.
-            services.RemoveAll<IProviderCatalogFetcher>();
-            services.AddSingleton<IProviderCatalogFetcher, AlwaysFailsProviderCatalogFetcher>();
         });
 
         if (configureTestServices is not null)

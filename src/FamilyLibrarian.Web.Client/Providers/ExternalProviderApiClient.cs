@@ -4,11 +4,10 @@ using FamilyLibrarian.Web.Client.Authentication;
 
 namespace FamilyLibrarian.Web.Client.Providers;
 
-/// <summary>Typed client for the External Providers admin panel: registered providers and repository catalogs.</summary>
+/// <summary>Typed client for the External Providers admin panel: registered providers.</summary>
 public sealed class ExternalProviderApiClient(HttpClient httpClient, AntiforgeryTokenProvider antiforgery)
 {
     private const string ProvidersPath = "api/v1/admin/external-providers";
-    private const string CatalogsPath = "api/v1/admin/provider-catalogs";
 
     // --- External providers -------------------------------------------------
 
@@ -68,52 +67,6 @@ public sealed class ExternalProviderApiClient(HttpClient httpClient, Antiforgery
     public async Task<bool> RemoveProviderAsync(Guid id, CancellationToken cancellationToken = default)
     {
         using var request = new HttpRequestMessage(HttpMethod.Delete, $"{ProvidersPath}/{id}");
-        await antiforgery.AttachAsync(request, cancellationToken);
-        using var response = await httpClient.SendAsync(request, cancellationToken);
-        return response.IsSuccessStatusCode;
-    }
-
-    // --- Provider catalogs -----------------------------------------------------
-
-    public async Task<IReadOnlyList<ProviderCatalogResponse>> GetCatalogsAsync(CancellationToken cancellationToken = default)
-    {
-        var response = await httpClient.GetFromJsonAsync<ProviderCatalogResponse[]>($"{CatalogsPath}/", cancellationToken);
-        return response ?? [];
-    }
-
-    public async Task<bool> AddCatalogAsync(string url, string? displayName, CancellationToken cancellationToken = default)
-    {
-        using var request = new HttpRequestMessage(HttpMethod.Post, $"{CatalogsPath}/")
-        {
-            Content = JsonContent.Create(new AddProviderCatalogRequest(url, displayName))
-        };
-        await antiforgery.AttachAsync(request, cancellationToken);
-        using var response = await httpClient.SendAsync(request, cancellationToken);
-        return response.IsSuccessStatusCode;
-    }
-
-    public async Task<bool> SetCatalogEnabledAsync(Guid id, bool enabled, CancellationToken cancellationToken = default)
-    {
-        using var request = new HttpRequestMessage(HttpMethod.Put, $"{CatalogsPath}/{id}/enabled")
-        {
-            Content = JsonContent.Create(new SetProviderCatalogEnabledRequest(enabled))
-        };
-        await antiforgery.AttachAsync(request, cancellationToken);
-        using var response = await httpClient.SendAsync(request, cancellationToken);
-        return response.IsSuccessStatusCode;
-    }
-
-    public async Task<bool> RefreshCatalogAsync(Guid id, CancellationToken cancellationToken = default)
-    {
-        using var request = new HttpRequestMessage(HttpMethod.Post, $"{CatalogsPath}/{id}/refresh");
-        await antiforgery.AttachAsync(request, cancellationToken);
-        using var response = await httpClient.SendAsync(request, cancellationToken);
-        return response.IsSuccessStatusCode;
-    }
-
-    public async Task<bool> RemoveCatalogAsync(Guid id, CancellationToken cancellationToken = default)
-    {
-        using var request = new HttpRequestMessage(HttpMethod.Delete, $"{CatalogsPath}/{id}");
         await antiforgery.AttachAsync(request, cancellationToken);
         using var response = await httpClient.SendAsync(request, cancellationToken);
         return response.IsSuccessStatusCode;

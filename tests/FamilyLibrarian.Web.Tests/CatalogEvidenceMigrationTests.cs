@@ -43,6 +43,12 @@ public sealed class CatalogEvidenceMigrationTests
 
     private static readonly string[] AddedTables =["catalog.source_observations", "catalog.metadata_claims"];
 
+    /// <summary>
+    /// Tables that a migration newer than this one drops. Reversing this migration also reverses those, which recreates them
+    /// empty, so they exist on one side of the reversal and are outside what this test compares.
+    /// </summary>
+    private static readonly string[] TablesDroppedByLaterMigrations = ["providers.provider_catalogs"];
+
     [TestMethod]
     public async Task EveryPreExistingValueSurvivesTheMigrationItsReversalAndItsReapplication()
     {
@@ -53,7 +59,6 @@ public sealed class CatalogEvidenceMigrationTests
         var migrations = database.Database.GetMigrations().ToList();
         var index = migrations.FindIndex(name => name.EndsWith(MigrationSuffix, StringComparison.Ordinal));
         Assert.IsTrue(index > 0, "The evidence migration is part of the model.");
-        Assert.AreEqual(migrations.Count - 1, index, "No newer migration may sit above the one this test reverses.");
 
         var before = await DumpAsync(connection);
         var lookupBefore = await LookupAsync(connection, ids);
@@ -244,9 +249,10 @@ public sealed class CatalogEvidenceMigrationTests
         var tables = new List<string>();
         await using (var list = new NpgsqlCommand(
             "SELECT quote_ident(schemaname) || '.' || quote_ident(tablename) FROM pg_catalog.pg_tables WHERE schemaname NOT IN ('pg_catalog','information_schema') " +
-            "AND tablename <> '__EFMigrationsHistory' ORDER BY 1", data))
-        await using (var reader = await list.ExecuteReaderAsync())
+            "AND tablename <> '__EFMigrationsHistory' AND schemaname || '.' || tablename <> ALL (@later) ORDER BY 1", data))
         {
+            list.Parameters.AddWithValue("later", TablesDroppedByLaterMigrations);
+            await using var reader = await list.ExecuteReaderAsync();
             while (await reader.ReadAsync())
             {
                 tables.Add(reader.GetString(0));

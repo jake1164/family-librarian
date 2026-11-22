@@ -885,13 +885,11 @@ destination-library path. Trusted bundled .NET providers may use in-process
 dependency isolation where appropriate, but that is not a security sandbox and
 must not be offered for arbitrary community code.
 
-Provider repositories are catalogs, not a requirement to run a marketplace or a
-binary registry. A repository may initially be a static signed JSON document
-listing provider identity, protocol version, capabilities, source/license,
-publisher/trust metadata, and an immutable OCI image digest. Multiple catalogs
-may be configured, but installation is an explicit administrator deployment
-step. Family Librarian must not mount or control the Docker socket merely to
-install or update external providers.
+Family Librarian has no provider catalog, marketplace, or binary registry.
+Installing a provider is an explicit administrator deployment step followed by
+registering its base URL. Family Librarian must not mount or control the Docker
+socket merely to install or update external providers, and the host does not
+fetch provider listings from administrator-supplied URLs.
 
 ---
 

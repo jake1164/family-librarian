@@ -159,8 +159,6 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options)
     public DbSet<ExternalProvider> ExternalProviders => Set<ExternalProvider>();
 
 
-    public DbSet<ProviderCatalog> ProviderCatalogs => Set<ProviderCatalog>();
-
     internal DbSet<GutenbergCatalogBookEntity> GutenbergCatalogBooks => Set<GutenbergCatalogBookEntity>();
 
     internal DbSet<GutenbergCatalogPersonEntity> GutenbergCatalogPeople => Set<GutenbergCatalogPersonEntity>();
@@ -1115,24 +1113,6 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options)
             entity.Property(provider => provider.Version).HasColumnName("xmin").IsRowVersion();
 
             entity.HasIndex(provider => provider.ProviderId).IsUnique();
-        });
-
-        builder.Entity<ProviderCatalog>(entity =>
-        {
-            entity.ToTable("provider_catalogs", "providers");
-            entity.HasKey(catalog => catalog.Id);
-            entity.Property(catalog => catalog.Id).HasColumnName("id").ValueGeneratedNever();
-            entity.Property(catalog => catalog.Url).HasColumnName("url").HasMaxLength(1_024).IsRequired();
-            entity.Property(catalog => catalog.DisplayName).HasColumnName("display_name").HasMaxLength(256).IsRequired();
-            entity.Property(catalog => catalog.IsEnabled).HasColumnName("is_enabled");
-            entity.Property(catalog => catalog.CachedEntriesJson).HasColumnName("cached_entries_json").HasColumnType("jsonb");
-            entity.Property(catalog => catalog.LastFetchedAtUtc).HasColumnName("last_fetched_at_utc").HasColumnType("timestamp with time zone");
-            entity.Property(catalog => catalog.LastFetchSucceeded).HasColumnName("last_fetch_succeeded");
-            entity.Property(catalog => catalog.LastFetchMessage).HasColumnName("last_fetch_message").HasMaxLength(512);
-            entity.Property(catalog => catalog.UpdatedByUserId).HasColumnName("updated_by_user_id");
-            entity.Property(catalog => catalog.CreatedAtUtc).HasColumnName("created_at_utc").HasColumnType("timestamp with time zone");
-            entity.Property(catalog => catalog.UpdatedAtUtc).HasColumnName("updated_at_utc").HasColumnType("timestamp with time zone");
-            entity.Property(catalog => catalog.Version).HasColumnName("xmin").IsRowVersion();
         });
     }
 

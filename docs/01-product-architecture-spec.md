@@ -788,9 +788,9 @@ download.
 External providers use a versioned, language-neutral protocol and are isolated
 from the core database, unrelated credentials, destination-library storage, and
 Docker socket. Every artifact returns to Family Librarian-controlled staging
-before the security pipeline publishes it to an enabled destination. Provider
-repositories are future catalogs of provenance and immutable OCI image
-identities, not an initial marketplace or automatic container-management system.
+before the security pipeline publishes it to an enabled destination. There is no
+provider catalog, marketplace, or automatic container-management system: an
+administrator deploys a provider and registers its base URL.
 
 ---
 
