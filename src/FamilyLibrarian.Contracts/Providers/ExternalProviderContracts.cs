@@ -60,29 +60,3 @@ public sealed record SetExternalProviderAutomaticAttemptLimitRequest(int Limit);
 public sealed record SetExternalProviderConfidenceLevelRequest(string Level, string? Ebook, string? Audiobook);
 
 public sealed record SetExternalProviderApiKeyRequest(string ApiKey);
-
-public sealed record ProviderCatalogEntryResponse(
-    string Id,
-    string Name,
-    string? ProtocolVersion,
-    IReadOnlyList<string> Capabilities,
-    string? License,
-    string? Publisher,
-    string? TrustLabel,
-    string? OciImageDigest,
-    string? HomepageUrl,
-    string? Description);
-
-public sealed record ProviderCatalogResponse(
-    Guid Id,
-    string Url,
-    string DisplayName,
-    bool IsEnabled,
-    IReadOnlyList<ProviderCatalogEntryResponse> Entries,
-    DateTimeOffset? LastFetchedAtUtc,
-    bool? LastFetchSucceeded,
-    string? LastFetchMessage);
-
-public sealed record AddProviderCatalogRequest(string Url, string? DisplayName);
-
-public sealed record SetProviderCatalogEnabledRequest(bool Enabled);

@@ -831,10 +831,6 @@ public static class DependencyInjection
 
         services.AddScoped<SettingsBackupService>();
 
-        services.AddScoped<IProviderCatalogStore, ProviderCatalogStore>();
-        services.AddScoped<IProviderCatalogFetcher, ProviderCatalogFetcher>();
-        services.AddScoped<ProviderCatalogService>();
-
         return services;
     }
 }

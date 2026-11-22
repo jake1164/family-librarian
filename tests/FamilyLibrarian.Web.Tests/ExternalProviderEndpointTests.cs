@@ -1,11 +1,7 @@
 using System.Net;
 using System.Net.Http.Json;
-using FamilyLibrarian.Application.Providers;
 using FamilyLibrarian.Contracts.Providers;
 using FamilyLibrarian.Web.Tests.Harness;
-using Microsoft.AspNetCore.Mvc.Testing;
-using Microsoft.Extensions.DependencyInjection;
-using Microsoft.Extensions.DependencyInjection.Extensions;
 
 namespace FamilyLibrarian.Web.Tests;
 
@@ -14,7 +10,6 @@ namespace FamilyLibrarian.Web.Tests;
 public sealed class ExternalProviderEndpointTests
 {
     private const string SecretValue = "do-not-leak-8675309-api-key";
-    private static readonly string[] ExpectedCatalogEntryCapabilities = ["search", "acquire"];
 
     private static WebTestFixture? _fixture;
 
@@ -183,76 +178,5 @@ public sealed class ExternalProviderEndpointTests
             $"/api/v1/admin/external-providers/{created.Id}/recheck-schedule",
             new SetExternalProviderRecheckScheduleRequest("Manual"));
         Assert.AreEqual(HttpStatusCode.OK, manual.StatusCode, "Manual stays available as a choice.");
-    }
-
-    [TestMethod]
-    public async Task AFetchedCatalogsEntriesRoundTripThroughTheApi()
-    {
-        var fixture = WebTestFixture.Require(_fixture);
-        const string catalogUrl = "http://catalog.test/providers.json";
-        const string entriesJson = """
-            [
-                {
-                    "id": "sample-provider",
-                    "name": "Sample Provider",
-                    "protocolVersion": "1.0",
-                    "capabilities": ["search", "acquire"],
-                    "license": "MIT",
-                    "publisher": "Family Librarian",
-                    "trustLabel": "official",
-                    "homepageUrl": "https://example.test"
-                }
-            ]
-            """;
-
-        await using var factory = new FamilyLibrarianAppFactory(
-            fixture.ConnectionString,
-            services =>
-            {
-                services.RemoveAll<IProviderCatalogFetcher>();
-                services.AddSingleton<IProviderCatalogFetcher>(new FakeProviderCatalogFetcher(catalogUrl, entriesJson));
-            });
-
-        using var admin = factory.CreateClient(new WebApplicationFactoryClientOptions { AllowAutoRedirect = false });
-        var signIn = await admin.PostAsJsonAsync(
-            "/api/auth/login",
-            new FamilyLibrarian.Contracts.Authentication.LoginRequest
-            {
-                Email = FamilyLibrarianAppFactory.AdminEmail,
-                Password = FamilyLibrarianAppFactory.AdminPassword
-            });
-        Assert.AreEqual(HttpStatusCode.NoContent, signIn.StatusCode);
-        var token = await WebTestFixture.GetAntiforgeryTokenAsync(admin);
-        admin.DefaultRequestHeaders.Add(AntiforgeryTokenEndpoint.HeaderName, token);
-
-        var add = await admin.PostAsJsonAsync(
-            "/api/v1/admin/provider-catalogs/", new AddProviderCatalogRequest(catalogUrl, "Test Catalog"));
-        Assert.AreEqual(HttpStatusCode.OK, add.StatusCode);
-
-        var catalogs = await admin.GetFromJsonAsync<ProviderCatalogResponse[]>("/api/v1/admin/provider-catalogs/");
-        Assert.IsNotNull(catalogs);
-        var catalog = catalogs.SingleOrDefault(c => c.Url == catalogUrl);
-        Assert.IsNotNull(catalog);
-        Assert.IsTrue(catalog.LastFetchSucceeded);
-        Assert.AreEqual(1, catalog.Entries.Count);
-
-        var entry = catalog.Entries[0];
-        Assert.AreEqual("sample-provider", entry.Id);
-        Assert.AreEqual("Sample Provider", entry.Name);
-        Assert.AreEqual("1.0", entry.ProtocolVersion);
-        CollectionAssert.AreEqual(ExpectedCatalogEntryCapabilities, entry.Capabilities.ToArray());
-        Assert.AreEqual("MIT", entry.License);
-        Assert.AreEqual("Family Librarian", entry.Publisher);
-        Assert.AreEqual("official", entry.TrustLabel);
-        Assert.AreEqual("https://example.test", entry.HomepageUrl);
-    }
-
-    /// <summary>Succeeds only for the one configured URL, mirroring the real fetcher's shape without any network access.</summary>
-    private sealed class FakeProviderCatalogFetcher(string expectedUrl, string entriesJson) : IProviderCatalogFetcher
-    {
-        public Task<ProviderCatalogFetchOutcome> FetchAsync(string url, CancellationToken cancellationToken) =>
-            Task.FromResult(string.Equals(url, expectedUrl, StringComparison.Ordinal)
-                ? ProviderCatalogFetchOutcome.Success(entriesJson)
-                : ProviderCatalogFetchOutcome.Failure("Unexpected catalog URL in test."));
     }
 }

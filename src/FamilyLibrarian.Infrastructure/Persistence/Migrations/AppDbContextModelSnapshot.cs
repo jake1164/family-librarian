@@ -3977,68 +3977,6 @@ namespace FamilyLibrarian.Infrastructure.Persistence.Migrations
                     b.ToTable("external_providers", "providers");
                 });
 
-            modelBuilder.Entity("FamilyLibrarian.Domain.Providers.ProviderCatalog", b =>
-                {
-                    b.Property<Guid>("Id")
-                        .HasColumnType("uuid")
-                        .HasColumnName("id");
-
-                    b.Property<string>("CachedEntriesJson")
-                        .HasColumnType("jsonb")
-                        .HasColumnName("cached_entries_json");
-
-                    b.Property<DateTimeOffset>("CreatedAtUtc")
-                        .HasColumnType("timestamp with time zone")
-                        .HasColumnName("created_at_utc");
-
-                    b.Property<string>("DisplayName")
-                        .IsRequired()
-                        .HasMaxLength(256)
-                        .HasColumnType("character varying(256)")
-                        .HasColumnName("display_name");
-
-                    b.Property<bool>("IsEnabled")
-                        .HasColumnType("boolean")
-                        .HasColumnName("is_enabled");
-
-                    b.Property<string>("LastFetchMessage")
-                        .HasMaxLength(512)
-                        .HasColumnType("character varying(512)")
-                        .HasColumnName("last_fetch_message");
-
-                    b.Property<bool?>("LastFetchSucceeded")
-                        .HasColumnType("boolean")
-                        .HasColumnName("last_fetch_succeeded");
-
-                    b.Property<DateTimeOffset?>("LastFetchedAtUtc")
-                        .HasColumnType("timestamp with time zone")
-                        .HasColumnName("last_fetched_at_utc");
-
-                    b.Property<DateTimeOffset>("UpdatedAtUtc")
-                        .HasColumnType("timestamp with time zone")
-                        .HasColumnName("updated_at_utc");
-
-                    b.Property<Guid?>("UpdatedByUserId")
-                        .HasColumnType("uuid")
-                        .HasColumnName("updated_by_user_id");
-
-                    b.Property<string>("Url")
-                        .IsRequired()
-                        .HasMaxLength(1024)
-                        .HasColumnType("character varying(1024)")
-                        .HasColumnName("url");
-
-                    b.Property<uint>("Version")
-                        .IsConcurrencyToken()
-                        .ValueGeneratedOnAddOrUpdate()
-                        .HasColumnType("xid")
-                        .HasColumnName("xmin");
-
-                    b.HasKey("Id");
-
-                    b.ToTable("provider_catalogs", "providers");
-                });
-
             modelBuilder.Entity("FamilyLibrarian.Domain.Providers.ProviderSetting", b =>
                 {
                     b.Property<string>("ProviderId")

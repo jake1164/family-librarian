@@ -1102,7 +1102,8 @@ underlying work actually stopped. Never used to fetch a partial file.
 ## A.7 What v1 intentionally didn't cover
 
 - Automated discovery/catalog install (`manifestUrl`-based one-click
-  install) — prototyped, on hold.
+  install) — prototyped, then removed. Providers are deployed by the
+  administrator and registered by base URL; there is no provider catalog.
 - Capability-based call gating and protocol-version negotiation — both
   fields existed on the manifest but were informational only. (Resolved in
   protocol version 2, above.)
