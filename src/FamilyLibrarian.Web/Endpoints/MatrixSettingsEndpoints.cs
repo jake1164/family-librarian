@@ -25,7 +25,7 @@ internal static class MatrixSettingsEndpoints
 
     private static async Task<IResult> SetSettingsAsync(
         SetMatrixSettingsRequest request, MatrixSettingsService service, CancellationToken cancellationToken) =>
-        ToResult(await service.SetSettingsAsync(request.HomeserverUrl, request.BotUserId, cancellationToken));
+        ToResult(await service.SetSettingsAsync(request.HomeserverUrl, request.BotUserId, request.AccessToken, cancellationToken));
 
     private static async Task<IResult> SetEnabledAsync(
         SetMatrixEnabledRequest request, MatrixSettingsService service, CancellationToken cancellationToken) =>

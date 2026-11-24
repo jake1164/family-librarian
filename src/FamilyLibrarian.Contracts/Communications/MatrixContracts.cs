@@ -10,7 +10,11 @@ public sealed record MatrixSettingsResponse(
     bool? LastTestSucceeded,
     string? LastTestMessage);
 
-public sealed record SetMatrixSettingsRequest(string? HomeserverUrl, string? BotUserId);
+/// <summary>
+/// Saves the Matrix settings. A non-blank <paramref name="AccessToken"/> replaces the stored
+/// token in the same save; null or blank leaves the stored token unchanged.
+/// </summary>
+public sealed record SetMatrixSettingsRequest(string? HomeserverUrl, string? BotUserId, string? AccessToken = null);
 
 public sealed record SetMatrixEnabledRequest(bool Enabled);
 

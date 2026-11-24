@@ -148,13 +148,13 @@ else
             <MudText Typo="Typo.body2">
                 @(matrix.HasAccessToken
                     ? $"A token is stored (saved {matrix.AccessTokenSetAtUtc?.ToLocalTime().ToString("g")}). Leave this blank to keep it."
-                    : "No access token is stored.")
+                    : "No access token is stored. Enter one below, then click Save settings.")
             </MudText>
             <MudStack Row="true" Spacing="2" AlignItems="AlignItems.Center">
-                <MudTextField Immediate="true" T="string" Label="Replace access token" @bind-Value="accessTokenDraft"
-                              InputType="InputType.Password" autocomplete="new-password" Disabled="@matrixBusy" Class="flex-grow-1" />
-                <MudButton Variant="Variant.Filled" Disabled="@(matrixBusy || string.IsNullOrWhiteSpace(accessTokenDraft))"
-                           OnClick="SaveMatrixAccessTokenAsync">Save token</MudButton>
+                <MudTextField Immediate="true" T="string" Label="@(matrix.HasAccessToken ? "Replace access token" : "Access token")"
+                              @bind-Value="accessTokenDraft" InputType="InputType.Password" autocomplete="new-password"
+                              Disabled="@matrixBusy" Class="flex-grow-1"
+                              HelperText="@(string.IsNullOrWhiteSpace(accessTokenDraft) ? null : "Not saved yet -- click Save settings.")" />
                 @if (matrix.HasAccessToken)
                 {
                     <MudButton Variant="Variant.Outlined" Color="Color.Error" Disabled="@matrixBusy"
@@ -347,7 +347,12 @@ else
         matrixBusy = true;
         try
         {
-            var result = await MatrixApi.SetSettingsAsync(new SetMatrixSettingsRequest(homeserverUrl, botUserId));
+            var result = await MatrixApi.SetSettingsAsync(
+                new SetMatrixSettingsRequest(homeserverUrl, botUserId, accessTokenDraft));
+            if (result.Succeeded)
+            {
+                accessTokenDraft = null;
+            }
             ApplyMatrixResult(result, "Matrix settings saved.", applyFields: true);
         }
         finally
@@ -362,24 +367,6 @@ else
         try
         {
             ApplyMatrixResult(await MatrixApi.SetEnabledAsync(enabled), enabled ? "Matrix enabled." : "Matrix disabled.");
-        }
-        finally
-        {
-            matrixBusy = false;
-        }
-    }
-
-    private async Task SaveMatrixAccessTokenAsync()
-    {
-        matrixBusy = true;
-        try
-        {
-            var result = await MatrixApi.SetAccessTokenAsync(accessTokenDraft!);
-            if (result.Succeeded)
-            {
-                accessTokenDraft = null;
-            }
-            ApplyMatrixResult(result, "Matrix access token saved.");
         }
         finally
         {
