@@ -43,9 +43,15 @@ public sealed class ModelCatalogTests
     {
         public int Calls { get; private set; }
 
+        public Uri? LastEndpoint { get; private set; }
+
+        public string? LastKey { get; private set; }
+
         public Task<ModelListResult> ListModelsAsync(Uri endpoint, string? apiKey, TimeSpan timeout, CancellationToken cancellationToken)
         {
             Calls++;
+            LastEndpoint = endpoint;
+            LastKey = apiKey;
             return Task.FromResult(result);
         }
     }
@@ -168,5 +174,89 @@ public sealed class ModelCatalogTests
         StringAssert.Contains(failed.Problem, "could not be reached");
         StringAssert.Contains(failed.Problem, "still type");
         Assert.IsFalse(failed.Problem!.Contains("sk-secret", StringComparison.Ordinal), "A provider's detail text is not passed to the page.");
+    }
+
+    private static ModelCatalogService Probe(FakeCatalog catalog, ModelTestConnectionInfo saved, bool admin = true) =>
+        new(new FakeConnections(saved), catalog, new FakeUser(Guid.NewGuid()), new FakeAdmin(admin));
+
+    private static readonly ModelTestConnectionInfo SavedConnection = new(new Uri("http://saved.example.test:4000/v1"), "sk-saved", false, null);
+
+    [TestMethod]
+    public async Task ATypedEndpointAndKeyAreTestedBeforeAnythingIsSaved()
+    {
+        var catalog = new FakeCatalog(new ModelListResult(true, ModelFailureKind.None, null, OnlyA));
+        var none = new ModelTestConnectionInfo(null, null, false, "Set the endpoint first.");
+
+        var result = await Probe(catalog, none).ProbeAsync("http://litellm:4000", " sk-typed ", CancellationToken.None);
+
+        Assert.IsTrue(result.Reached);
+        Assert.AreEqual("typed", result.KeySource);
+        Assert.AreEqual("sk-typed", catalog.LastKey);
+        Assert.AreEqual("http://litellm:4000/", catalog.LastEndpoint!.ToString());
+    }
+
+    [TestMethod]
+    public async Task TheSavedKeyIsUsedOnlyWhenTheEndpointIsTheSavedOne()
+    {
+        var catalog = new FakeCatalog(new ModelListResult(true, ModelFailureKind.None, null, OnlyA));
+
+        var same = await Probe(catalog, SavedConnection).ProbeAsync("http://saved.example.test:4000", null, CancellationToken.None);
+        Assert.AreEqual("saved", same.KeySource);
+        Assert.AreEqual("sk-saved", catalog.LastKey);
+
+        var changed = await Probe(catalog, SavedConnection).ProbeAsync("http://elsewhere.example.test", null, CancellationToken.None);
+        Assert.AreEqual("none", changed.KeySource);
+        Assert.IsNull(catalog.LastKey, "The saved secret must never be sent to an endpoint the administrator has only typed.");
+    }
+
+    [TestMethod]
+    public async Task EmptyFieldsFallBackToTheSavedConnection()
+    {
+        var catalog = new FakeCatalog(new ModelListResult(true, ModelFailureKind.None, null, OnlyA));
+
+        var result = await Probe(catalog, SavedConnection).ProbeAsync("  ", "", CancellationToken.None);
+
+        Assert.IsTrue(result.Reached);
+        Assert.AreEqual("saved", result.KeySource);
+        Assert.AreEqual("http://saved.example.test:4000", result.EndpointTested);
+    }
+
+    [TestMethod]
+    public async Task InvalidInputIsRefusedWithoutCallingTheEndpoint()
+    {
+        var catalog = new FakeCatalog(new ModelListResult(true, ModelFailureKind.None, null, OnlyA));
+
+        var scheme = await Probe(catalog, SavedConnection).ProbeAsync("ftp://x.example.test", null, CancellationToken.None);
+        var credentials = await Probe(catalog, SavedConnection).ProbeAsync("http://user:pw@x.example.test", null, CancellationToken.None);
+        var key = await Probe(catalog, SavedConnection).ProbeAsync(null, "bad\nkey", CancellationToken.None);
+
+        Assert.IsFalse(scheme.Reached);
+        Assert.IsFalse(credentials.Reached);
+        Assert.IsFalse(key.Reached);
+        Assert.AreEqual(0, catalog.Calls);
+    }
+
+    [TestMethod]
+    public async Task OnlyAnAdministratorCanProbeAndNothingIsCalledOtherwise()
+    {
+        var catalog = new FakeCatalog(new ModelListResult(true, ModelFailureKind.None, null, OnlyA));
+
+        var result = await Probe(catalog, SavedConnection, admin: false).ProbeAsync("http://x.example.test", "sk-x", CancellationToken.None);
+
+        Assert.IsTrue(result.Forbidden);
+        Assert.AreEqual(0, catalog.Calls);
+    }
+
+    [TestMethod]
+    public async Task ARefusedProbeNamesWhichKeyWasTriedAndNeverEchoesIt()
+    {
+        var catalog = new FakeCatalog(ModelListResult.Failed(ModelFailureKind.Unauthorized, "HTTP 403"));
+
+        var typed = await Probe(catalog, SavedConnection).ProbeAsync("http://litellm:4000", "sk-typed", CancellationToken.None);
+        var changedNoKey = await Probe(catalog, SavedConnection).ProbeAsync("http://litellm:4000", null, CancellationToken.None);
+
+        StringAssert.Contains(typed.Problem, "typed key");
+        Assert.DoesNotContain("sk-typed", typed.Problem!);
+        StringAssert.Contains(changedNoKey.Problem, "type the key");
     }
 }
