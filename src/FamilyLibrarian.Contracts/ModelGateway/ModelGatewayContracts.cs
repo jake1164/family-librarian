@@ -102,3 +102,13 @@ public sealed record SetModelGatewayApiKeyRequest(string ApiKey);
 
 /// <summary>The models the endpoint says it serves. <paramref name="Problem"/> is set (and the list empty) when it could not be read; a name can always be typed.</summary>
 public sealed record ModelListResponse(IReadOnlyList<string> Models, string? Problem);
+
+/// <summary>
+/// Values to try without saving them. An empty <paramref name="Endpoint"/> means the saved endpoint; an empty <paramref name="ApiKey"/>
+/// means the saved key, which the host only uses when the endpoint is the saved one.
+/// </summary>
+public sealed record ProbeModelConnectionRequest(string? Endpoint, string? ApiKey);
+
+/// <summary>What a probe reached. <paramref name="KeySource"/> is "typed", "saved" or "none"; the key itself is never returned.</summary>
+public sealed record ProbeModelConnectionResponse(
+    bool Reached, IReadOnlyList<string> Models, string? Problem, string? EndpointTested, string KeySource);

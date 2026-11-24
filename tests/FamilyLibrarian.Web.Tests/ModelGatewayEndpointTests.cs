@@ -75,6 +75,8 @@ public sealed class ModelGatewayEndpointTests
         Assert.AreEqual(HttpStatusCode.Forbidden, (await member.GetAsync($"{BasePath}/")).StatusCode);
         Assert.AreEqual(HttpStatusCode.Forbidden, (await member.GetAsync($"{BasePath}/models")).StatusCode);
         Assert.AreEqual(HttpStatusCode.Unauthorized, (await anonymous.GetAsync($"{BasePath}/models")).StatusCode);
+        Assert.AreEqual(HttpStatusCode.Forbidden, (await member.PostAsJsonAsync($"{BasePath}/models/probe", new ProbeModelConnectionRequest("http://x.example.test", "sk-member"))).StatusCode);
+        Assert.AreEqual(HttpStatusCode.Unauthorized, (await anonymous.PostAsJsonAsync($"{BasePath}/models/probe", new ProbeModelConnectionRequest("http://x.example.test", "sk-anon"))).StatusCode);
         Assert.AreEqual(HttpStatusCode.Forbidden, (await member.PutAsJsonAsync($"{BasePath}/", new SaveModelGatewaySettingsRequest(null, false, []))).StatusCode);
         Assert.AreEqual(HttpStatusCode.Forbidden, (await member.PutAsJsonAsync($"{BasePath}/enabled", new SetModelGatewayEnabledRequest(true))).StatusCode);
         Assert.AreEqual(HttpStatusCode.Forbidden, (await member.PutAsJsonAsync($"{BasePath}/api-key", new SetModelGatewayApiKeyRequest("sk-member"))).StatusCode);
@@ -92,6 +94,25 @@ public sealed class ModelGatewayEndpointTests
 
         Assert.IsEmpty(list!.Models);
         StringAssert.Contains(list.Problem, "endpoint");
+    }
+
+    [TestMethod]
+    public async Task ProbingATypedEndpointNeverSavesIt()
+    {
+        await using var factory = Factory();
+        using var admin = await SignedInAsync(factory, FamilyLibrarianAppFactory.AdminEmail, FamilyLibrarianAppFactory.AdminPassword);
+        using var cleared = await admin.PutAsJsonAsync($"{BasePath}/", new SaveModelGatewaySettingsRequest("", false, []));
+        Assert.IsTrue(cleared.IsSuccessStatusCode, await cleared.Content.ReadAsStringAsync());
+
+        using var invalid = await admin.PostAsJsonAsync($"{BasePath}/models/probe", new ProbeModelConnectionRequest("ftp://x.example.test", "sk-typed"));
+        var answer = await invalid.Content.ReadFromJsonAsync<ProbeModelConnectionResponse>();
+
+        Assert.IsTrue(invalid.IsSuccessStatusCode);
+        Assert.IsFalse(answer!.Reached);
+        StringAssert.Contains(answer.Problem, "http");
+        var settings = await admin.GetFromJsonAsync<ModelGatewaySettingsResponse>($"{BasePath}/");
+        Assert.IsTrue(string.IsNullOrEmpty(settings!.EndpointUrl));
+        Assert.IsFalse(settings.HasApiKey);
     }
 
     [TestMethod]

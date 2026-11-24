@@ -30,6 +30,14 @@ public sealed class ModelGatewayApiClient(HttpClient httpClient, AntiforgeryToke
         await httpClient.GetFromJsonAsync<ModelListResponse>($"{BasePath}/models", cancellationToken)
         ?? new ModelListResponse([], "The host returned no model list.");
 
+    public async Task<ProbeModelConnectionResponse> ProbeConnectionAsync(string? endpoint, string? apiKey, CancellationToken cancellationToken = default)
+    {
+        using var response = await httpClient.PostAsJsonAsync($"{BasePath}/models/probe", new ProbeModelConnectionRequest(endpoint, apiKey), cancellationToken);
+        response.EnsureSuccessStatusCode();
+        return await response.Content.ReadFromJsonAsync<ProbeModelConnectionResponse>(cancellationToken)
+            ?? new ProbeModelConnectionResponse(false, [], "The host returned no answer.", null, "none");
+    }
+
     public async Task<ModelCallFailuresResponse> GetFailuresAsync(string? role, int page, int days, DateTimeOffset? until,
         string? category = null, CancellationToken cancellationToken = default) =>
         await httpClient.GetFromJsonAsync<ModelCallFailuresResponse>(

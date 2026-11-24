@@ -100,28 +100,33 @@
                             <MudDivider />
                             <MudText Typo="Typo.h6">Models on this endpoint</MudText>
                             <MudStack Row="true" Spacing="2" AlignItems="AlignItems.Center" Wrap="Wrap.Wrap">
-                                <MudButton Variant="Variant.Outlined" Disabled="@(busy || modelsLoading || string.IsNullOrWhiteSpace(settings.EndpointUrl))" OnClick="LoadModelsAsync">
-                                    Refresh model list
+                                <MudButton Variant="Variant.Outlined" Disabled="@(busy || modelsLoading || (string.IsNullOrWhiteSpace(form.Endpoint) && string.IsNullOrWhiteSpace(settings.EndpointUrl)))" OnClick="LoadModelsAsync">
+                                    Test connection
                                 </MudButton>
                                 @if (modelsLoading)
                                 {
-                                    <MudProgressCircular Indeterminate="true" Size="Size.Small" Color="Color.Primary" aria-label="Reading the model list" />
+                                    <MudProgressCircular Indeterminate="true" Size="Size.Small" Color="Color.Primary" aria-label="Testing the connection" />
                                 }
                                 else if (modelsProblem is not null)
                                 {
-                                    <MudText Typo="Typo.body2">@modelsProblem</MudText>
+                                    <MudText Typo="Typo.body2" Color="Color.Error" role="alert">@modelsProblem</MudText>
                                 }
                                 else if (models.Count > 0)
                                 {
                                     <MudText Typo="Typo.body2" role="status">
-                                        @models.Count model@(models.Count == 1 ? "" : "s") available to choose from on the Roles and Test models tabs
+                                        Reached @modelsTested using @modelsKeySource: @models.Count model@(models.Count == 1 ? "" : "s") available
                                         (read at @modelsReadAt?.ToLocalTime().ToString("HH:mm:ss")).
+                                        @if (modelsUsedUnsavedValues)
+                                        {
+                                            <strong> These values are not saved yet. Use Save settings to keep them.</strong>
+                                        }
                                     </MudText>
                                 }
                             </MudStack>
                             <MudText Typo="Typo.caption">
-                                The list is read from the saved endpoint and key. It is only a convenience for picking a name: a model that is not
-                                listed can still be typed.
+                                The test uses the endpoint and key shown above, saved or not. Leave the key box empty to use the saved key
+                                (only sent to the saved endpoint). The list is a convenience for picking a name: a model that is not listed can
+                                still be typed.
                             </MudText>
 
                             <MudDivider />
@@ -298,6 +303,9 @@
     private string? modelsProblem;
     private bool modelsLoading;
     private DateTimeOffset? modelsReadAt;
+    private string? modelsTested;
+    private string modelsKeySource = "no key";
+    private bool modelsUsedUnsavedValues;
     private string apiKey = string.Empty;
     private bool busy;
     private string? message;
@@ -352,20 +360,30 @@
         }
     }
 
+    /// <summary>Tries what is on screen (endpoint field, and the typed key if any) so a new setup can be proven before Save settings.</summary>
     private async Task LoadModelsAsync()
     {
+        if (string.IsNullOrWhiteSpace(form.Endpoint) && string.IsNullOrWhiteSpace(settings?.EndpointUrl))
+        {
+            return;
+        }
+
         modelsLoading = true;
         try
         {
-            var result = await Api.GetModelsAsync();
+            var result = await Api.ProbeConnectionAsync(form.Endpoint, apiKey);
             models = result.Models;
             modelsProblem = result.Problem;
+            modelsTested = result.EndpointTested;
+            modelsKeySource = result.KeySource switch { "typed" => "the typed key", "saved" => "the saved key", _ => "no key" };
+            modelsUsedUnsavedValues = !string.IsNullOrEmpty(apiKey) ||
+                !string.Equals(result.EndpointTested?.TrimEnd('/'), settings?.EndpointUrl?.TrimEnd('/'), StringComparison.OrdinalIgnoreCase);
             modelsReadAt = DateTimeOffset.UtcNow;
         }
         catch (HttpRequestException)
         {
             models = [];
-            modelsProblem = "The model list could not be loaded. You can still type a model name.";
+            modelsProblem = "The connection could not be tested. You can still type a model name.";
         }
         finally
         {

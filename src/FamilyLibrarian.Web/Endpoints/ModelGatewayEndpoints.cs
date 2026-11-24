@@ -26,6 +26,7 @@ internal static class ModelGatewayEndpoints
         group.MapGet("/usage/effectiveness", EffectivenessAsync);
         group.MapGet("/failures", FailuresAsync);
         group.MapGet("/models", ListModelsAsync);
+        group.MapPost("/models/probe", ProbeModelsAsync);
         group.MapPut("/", SaveAsync);
         group.MapPut("/enabled", SetEnabledAsync);
         group.MapPut("/api-key", SetApiKeyAsync);
@@ -292,6 +293,15 @@ internal static class ModelGatewayEndpoints
         return result.Forbidden
             ? Results.StatusCode(StatusCodes.Status403Forbidden)
             : Results.Ok(new ModelListResponse(result.Models, result.Problem));
+    }
+
+    private static async Task<IResult> ProbeModelsAsync(
+        ProbeModelConnectionRequest request, ModelCatalogService catalog, CancellationToken cancellationToken)
+    {
+        var result = await catalog.ProbeAsync(request.Endpoint, request.ApiKey, cancellationToken);
+        return result.Forbidden
+            ? Results.StatusCode(StatusCodes.Status403Forbidden)
+            : Results.Ok(new ProbeModelConnectionResponse(result.Reached, result.Models, result.Problem, result.EndpointTested, result.KeySource));
     }
 
     private static async Task<IResult> SetEnabledAsync(
