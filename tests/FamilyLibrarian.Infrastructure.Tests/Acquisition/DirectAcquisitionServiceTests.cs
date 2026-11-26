@@ -697,6 +697,9 @@ public sealed class DirectAcquisitionServiceTests
 
     private sealed class FakeProviderAcquisitionJobStore : IProviderAcquisitionJobStore
     {
+        public Task<bool> ReloadAsync(ProviderAcquisitionJob job, CancellationToken cancellationToken) =>
+            Task.FromResult(Jobs.Contains(job));
+
         public async Task<IReadOnlyList<ProviderAcquisitionJob>> ListActiveForFormatAsync(
             Guid requestFormatId, CancellationToken cancellationToken)
         {

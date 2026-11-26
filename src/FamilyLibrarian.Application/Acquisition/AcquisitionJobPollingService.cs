@@ -110,6 +110,14 @@ public sealed class AcquisitionJobPollingService(
 
         if (job.ProviderJobId is null)
         {
+            using var submissionReservation = await ProviderAcquisitionSubmissionLock.AcquireAsync(job.Id, cancellationToken);
+            // The due-work query may have loaded this row while its initial
+            // submit was still saving. Re-read both state and concurrency token
+            // before deciding whether a recovery POST is still needed.
+            if (!await jobs.ReloadAsync(job, cancellationToken) || job.ProviderJobId is not null ||
+                job.NextPollAtUtc is not { } nextPoll || nextPoll > clock.UtcNow)
+                return;
+
             var request = await requests.FindRequestForAdminAsync(job.RequestId, cancellationToken);
             var format = request?.Formats.FirstOrDefault(candidate => candidate.Id == job.RequestFormatId);
             if (format is null)

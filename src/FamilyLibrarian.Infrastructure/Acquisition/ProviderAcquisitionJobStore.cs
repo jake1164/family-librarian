@@ -7,6 +7,13 @@ namespace FamilyLibrarian.Infrastructure.Acquisition;
 
 public sealed class ProviderAcquisitionJobStore(AppDbContext database) : IProviderAcquisitionJobStore
 {
+    public async Task<bool> ReloadAsync(ProviderAcquisitionJob job, CancellationToken cancellationToken)
+    {
+        var entry = database.Entry(job);
+        await entry.ReloadAsync(cancellationToken);
+        return entry.State != EntityState.Detached;
+    }
+
     public Task<ProviderAcquisitionJob?> FindAsync(Guid id, CancellationToken cancellationToken) =>
         database.ProviderAcquisitionJobs
             .Include(job => job.Outputs)

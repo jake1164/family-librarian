@@ -1,5 +1,6 @@
 using System.Net;
 using System.Net.Http.Json;
+using System.Reflection;
 using FamilyLibrarian.Application.Acquisition;
 using FamilyLibrarian.Application.Providers;
 using FamilyLibrarian.Contracts.Acquisition;
@@ -9,6 +10,7 @@ using FamilyLibrarian.Contracts.Requests;
 using FamilyLibrarian.Domain.Acquisition;
 using FamilyLibrarian.Domain.Requests;
 using FamilyLibrarian.Infrastructure.Persistence;
+using FamilyLibrarian.Infrastructure.Acquisition;
 using FamilyLibrarian.Web.Tests.Harness;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.EntityFrameworkCore;
@@ -42,6 +44,141 @@ public sealed class ExternalProviderAcquisitionEndpointTests
         if (_fixture is not null)
         {
             await _fixture.DisposeAsync();
+        }
+    }
+
+    [TestMethod]
+    [DataRow("accepted")]
+    [DataRow("lost-response")]
+    [DataRow("changed")]
+    [DataRow("overlap")]
+    public async Task RecoveryRechecksAJobLoadedBeforeTheInitialSubmissionFinished(string initialOutcome)
+    {
+        await using var fixture = WebTestFixture.Require(await WebTestFixture.CreateAsync());
+        var submitted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var finishSubmission = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var dueLoaded = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var returnDueJobs = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var submissions = new List<(Guid RequestId, string Key)>();
+        var providerClient = new FakeExternalProviderClient
+        {
+            Submit = async (body, key, token) =>
+            {
+                submissions.Add((body.RequestId, key));
+                Assert.IsTrue(submissions.Count == 1 || finishSubmission.Task.IsCompleted,
+                    "Recovery must wait while the original provider submission is in flight.");
+                if (submissions.Count == 1)
+                {
+                    submitted.SetResult();
+                    await finishSubmission.Task.WaitAsync(token);
+                    if (initialOutcome == "lost-response") throw new HttpRequestException("Response lost after acceptance.");
+                    if (initialOutcome == "changed") return ExternalProviderAcquireSubmission.CandidateChanged;
+                }
+                return ExternalProviderAcquireSubmission.Accepted(
+                    "same-provider-job", ProviderAcquisitionJobLifecycleState.Running, null, 0);
+            }
+        };
+        await using var factory = new FamilyLibrarianAppFactory(fixture.ConnectionString, services =>
+        {
+            services.RemoveAll<IExternalProviderClient>();
+            services.AddSingleton<IExternalProviderClient>(providerClient);
+            services.RemoveAll<IProviderAcquisitionJobStore>();
+            services.AddScoped<ProviderAcquisitionJobStore>();
+            services.AddScoped<IProviderAcquisitionJobStore>(scope =>
+            {
+                var store = DispatchProxy.Create<IProviderAcquisitionJobStore, DueQueryStore>();
+                var observer = (DueQueryStore)(object)store;
+                observer.Inner = scope.GetRequiredService<ProviderAcquisitionJobStore>();
+                observer.Loaded = dueLoaded;
+                observer.Continue = returnDueJobs;
+                return store;
+            });
+        });
+        using var admin = factory.CreateClient();
+        await SignInAsync(admin, FamilyLibrarianAppFactory.AdminEmail, FamilyLibrarianAppFactory.AdminPassword);
+        admin.DefaultRequestHeaders.Add(AntiforgeryTokenEndpoint.HeaderName, await WebTestFixture.GetAntiforgeryTokenAsync(admin));
+        var provider = await admin.PostAsJsonAsync("/api/v1/admin/external-providers/",
+            new CreateExternalProviderRequest("fake-external", "Test source", "http://fake-external.test"));
+        var registered = await provider.Content.ReadFromJsonAsync<ExternalProviderResponse>();
+        Assert.IsNotNull(registered);
+        (await admin.PutAsJsonAsync($"/api/v1/admin/external-providers/{registered.Id}/enabled",
+            new SetExternalProviderEnabledRequest(true))).EnsureSuccessStatusCode();
+        var resolve = await admin.PostAsync("/api/v1/catalog/candidates/demo/the-hobbit/resolve", null);
+        var work = await resolve.Content.ReadFromJsonAsync<CatalogWorkResponse>();
+        Assert.IsNotNull(work);
+        var created = await admin.PostAsJsonAsync("/api/v1/requests/",
+            new CreateBookRequestRequest(work.Id, ["Ebook"], null, false, false));
+        var request = await created.Content.ReadFromJsonAsync<BookRequestResponse>();
+        Assert.IsNotNull(request);
+        var formatId = request.Formats.Single().FormatId;
+        await using var submitScope = factory.Services.CreateAsyncScope();
+        await using var pollScope = factory.Services.CreateAsyncScope();
+        var acquisition = submitScope.ServiceProvider.GetRequiredService<DirectAcquisitionService>().AcquireAsync(
+            request.Id, formatId, "fake-external", "fake-hobbit-1", CancellationToken.None, confirmLowConfidenceMatch: true);
+        Task<int>? polling = null;
+        try
+        {
+            await submitted.Task.WaitAsync(TimeSpan.FromSeconds(15));
+            polling = pollScope.ServiceProvider.GetRequiredService<AcquisitionJobPollingService>().ProcessDueAsync(CancellationToken.None);
+            await dueLoaded.Task.WaitAsync(TimeSpan.FromSeconds(15));
+            if (initialOutcome == "overlap")
+            {
+                returnDueJobs.SetResult();
+                await Task.Delay(100);
+            }
+            // The poller has loaded the pending row and its old concurrency token.
+            finishSubmission.SetResult();
+            await acquisition;
+            returnDueJobs.TrySetResult();
+            Assert.AreEqual(1, await polling.WaitAsync(TimeSpan.FromSeconds(15)));
+            Assert.HasCount(1, submissions, "A stale due-work snapshot must not replay an already handled submission.");
+        }
+        finally
+        {
+            finishSubmission.TrySetResult();
+            returnDueJobs.TrySetResult();
+            await acquisition;
+            if (polling is not null) await polling;
+        }
+
+        await using var verifyScope = factory.Services.CreateAsyncScope();
+        var database = verifyScope.ServiceProvider.GetRequiredService<AppDbContext>();
+        var job = await database.ProviderAcquisitionJobs.SingleAsync();
+        if (initialOutcome == "lost-response")
+        {
+            Assert.IsNull(job.ProviderJobId);
+            Assert.IsTrue(job.NextPollAtUtc > DateTimeOffset.UtcNow, "Honor the initial worker's retry delay.");
+            job.Reschedule(DateTimeOffset.UtcNow.AddSeconds(-1), DateTimeOffset.UtcNow);
+            await database.SaveChangesAsync();
+            // A fresh scope stands in for a worker after restart. Recovery remains due and uses the same identity.
+            await using var recoveryScope = factory.Services.CreateAsyncScope();
+            await recoveryScope.ServiceProvider.GetRequiredService<AcquisitionJobPollingService>().ProcessDueAsync(CancellationToken.None);
+            Assert.HasCount(2, submissions);
+            Assert.AreEqual(submissions[0], submissions[1]);
+            await database.Entry(job).ReloadAsync();
+        }
+        Assert.AreEqual(initialOutcome == "changed" ? null : "same-provider-job", job.ProviderJobId);
+        Assert.AreEqual(initialOutcome == "changed" ? ProviderAcquisitionJobLifecycleState.Failed : ProviderAcquisitionJobLifecycleState.Running,
+            job.LifecycleState);
+    }
+
+    public class DueQueryStore : DispatchProxy
+    {
+        public IProviderAcquisitionJobStore Inner { get; set; } = null!;
+        public TaskCompletionSource Loaded { get; set; } = null!;
+        public TaskCompletionSource Continue { get; set; } = null!;
+
+        protected override object? Invoke(MethodInfo? targetMethod, object?[]? args) =>
+            targetMethod?.Name == nameof(IProviderAcquisitionJobStore.ListDueForPollAsync)
+                ? ObserveDueAsync((DateTimeOffset)args![0]!, (int)args[1]!, (CancellationToken)args[2]!)
+                : targetMethod!.Invoke(Inner, args);
+
+        private async Task<IReadOnlyList<ProviderAcquisitionJob>> ObserveDueAsync(DateTimeOffset asOfUtc, int count, CancellationToken token)
+        {
+            var due = await Inner.ListDueForPollAsync(asOfUtc, count, token);
+            Loaded.TrySetResult();
+            await Continue.Task.WaitAsync(token);
+            return due;
         }
     }
 
@@ -416,6 +553,7 @@ public sealed class ExternalProviderAcquisitionEndpointTests
         public int SubmitCount => submitCount;
         public ProviderAcquisitionJobLifecycleState? SubmissionState { get; init; }
         public ExternalProviderJobStatus? Status { get; set; }
+        public Func<ExternalAcquireRequest, string, CancellationToken, Task<ExternalProviderAcquireSubmission>>? Submit { get; init; }
         public Task<ExternalProviderManifest> GetManifestAsync(
             string baseUrl, string? apiKey, CancellationToken cancellationToken) =>
             Task.FromResult(new ExternalProviderManifest(
@@ -449,6 +587,7 @@ public sealed class ExternalProviderAcquisitionEndpointTests
             CancellationToken cancellationToken)
         {
             Interlocked.Increment(ref submitCount);
+            if (Submit is not null) return Submit(request, idempotencyKey, cancellationToken);
             return Task.FromResult(ExternalProviderAcquireSubmission.Accepted(
                 "fake-job-1", SubmissionState ?? Status?.State ?? ProviderAcquisitionJobLifecycleState.Completed,
                 phase: null, pollAfterSeconds: 0));

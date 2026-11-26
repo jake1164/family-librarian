@@ -450,6 +450,9 @@ public sealed class DirectAcquisitionService(
         if (isAutomaticAcquisition && partSet is null && peerSizeEvidence is { } peers)
             job.SetPeerSizeEvidence(peers.MedianSizeBytes, peers.Count);
 
+        // Recovery can see the row as soon as it is saved. Hold its submission
+        // reservation through the provider response and final save as well.
+        using var submissionReservation = await ProviderAcquisitionSubmissionLock.AcquireAsync(job.Id, cancellationToken);
         providerAcquisitionJobs.Add(job);
         await providerAcquisitionJobs.SaveChangesAsync(cancellationToken);
 

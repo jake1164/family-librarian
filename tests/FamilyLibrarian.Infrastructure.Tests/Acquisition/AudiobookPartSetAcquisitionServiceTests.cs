@@ -160,6 +160,9 @@ public sealed class AudiobookPartSetAcquisitionServiceTests
 
     private sealed class FakeJobStore : IProviderAcquisitionJobStore
     {
+        public Task<bool> ReloadAsync(ProviderAcquisitionJob job, CancellationToken cancellationToken) =>
+            Task.FromResult(Jobs.Contains(job));
+
         public List<ProviderAcquisitionJob> Jobs { get; } = [];
 
         public Task<ProviderAcquisitionJob?> FindAsync(Guid id, CancellationToken cancellationToken) =>

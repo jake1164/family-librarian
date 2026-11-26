@@ -6,6 +6,9 @@ public interface IProviderAcquisitionJobStore
 {
     Task<ProviderAcquisitionJob?> FindAsync(Guid id, CancellationToken cancellationToken);
 
+    /// <summary>Refreshes a tracked job after waiting for its submission reservation; false if it was deleted.</summary>
+    Task<bool> ReloadAsync(ProviderAcquisitionJob job, CancellationToken cancellationToken);
+
     /// <summary>
     /// Idempotency-key replay lookup (protocol v2 §8): a retried submit for
     /// the same provider using the same key must resolve to the same job
