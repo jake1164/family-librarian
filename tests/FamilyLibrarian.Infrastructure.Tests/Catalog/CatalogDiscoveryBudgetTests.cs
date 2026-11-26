@@ -5,7 +5,7 @@ using FamilyLibrarian.Application.Catalog;
 using FamilyLibrarian.Application.Catalog.Discovery;
 using FamilyLibrarian.Domain.Catalog;
 
-namespace FamilyLibrarian.Web.Tests;
+namespace FamilyLibrarian.Infrastructure.Tests.Catalog;
 
 /// <summary>
 /// The byte budget of a lookup window is the size of its <em>final</em> canonical snapshot: the retained items, the subjects issued

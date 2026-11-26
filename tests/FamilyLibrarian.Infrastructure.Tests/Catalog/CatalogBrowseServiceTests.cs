@@ -4,11 +4,11 @@ using System.Globalization;
 using FamilyLibrarian.Application.Abstractions;
 using FamilyLibrarian.Application.Catalog;
 
-namespace FamilyLibrarian.Web.Tests;
+namespace FamilyLibrarian.Infrastructure.Tests.Catalog;
 
 /// <summary>
 /// Matching, ordering, grouping, paging and qualification rules, independent of storage. The saved-catalog projections
-/// themselves are proven against real PostgreSQL in <see cref="CatalogBrowseEndpointTests"/>.
+/// themselves are proven against real PostgreSQL in the Web project's CatalogBrowseEndpointTests.
 /// </summary>
 [TestClass]
 public sealed class CatalogBrowseServiceTests

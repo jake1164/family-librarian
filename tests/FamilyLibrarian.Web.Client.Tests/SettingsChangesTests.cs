@@ -1,6 +1,6 @@
 using FamilyLibrarian.Web.Client.Settings;
 
-namespace FamilyLibrarian.Web.Tests;
+namespace FamilyLibrarian.Web.Client.Tests;
 
 [TestClass]
 public sealed class SettingsChangesTests

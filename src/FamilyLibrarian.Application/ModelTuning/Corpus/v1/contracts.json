@@ -24,7 +24,7 @@
     "src/FamilyLibrarian.Application/Providers/ExternalReleaseNameEvidence.cs": "bded2ee91704695c38a0e6049f7709eb5ecd9e309c8fea479d7dc1dd66ea25b8",
     "src/FamilyLibrarian.Application/SemanticAssessment/ArtifactDecision.cs": "fbfbf987323afe3b5509d35635e2b2af159f2b16f9cb617ad50fe20d8072e165",
     "src/FamilyLibrarian.Application/SemanticAssessment/ArtifactDecisionEvidence.cs": "506a31499f37fbc350c5647e653664682388155ef5dce5d017fe3da6e0877461",
-    "src/FamilyLibrarian.Application/SemanticAssessment/ArtifactDecisionService.cs": "dad2c09faf0080e1452682a8e0dd6dedd41b3aabe45eea02aaf9e45d094729dc",
+    "src/FamilyLibrarian.Application/SemanticAssessment/ArtifactDecisionService.cs": "c7f195b58eddda02ba8bf9bc41268812d0217e977a3633fe2018e63bfb7c2635",
     "src/FamilyLibrarian.Application/SemanticAssessment/ArtifactExcerptEvidence.cs": "600191a4542930fb73049a4456b2753ad165882559ba9e70bef4c0c801e756a9",
     "src/FamilyLibrarian.Application/SemanticAssessment/ArtifactReleaseEvidence.cs": "7f69eed956fbcb60c7b77ad3372112f534074c542df03dbc191863bc3a130ca4",
     "src/FamilyLibrarian.Application/SemanticAssessment/ArtifactSemanticAnalysis.cs": "c9b146d07c90896791cf69af85b8f12b72e2e8dca953ac098d85e0ad0984f117",

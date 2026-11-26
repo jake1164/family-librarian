@@ -54,7 +54,21 @@ jobs:
       # Testcontainers.PostgreSql needs a Docker daemon, which is
       # preinstalled and running on GitHub-hosted ubuntu-latest runners.
       - name: Test
-        run: dotnet test --solution FamilyLibrarian.slnx --no-build -- --filter "TestCategory!=Release"
+        timeout-minutes: 12
+        env:
+          FAMILY_LIBRARIAN_REQUIRE_POSTGRES_TESTS: "1"
+        run: >-
+          dotnet test --solution FamilyLibrarian.slnx --no-build --
+          --filter "TestCategory!=Release&TestCategory!=Live&TestCategory!=LiveLab"
+          --timeout 10m --report-trx --results-directory "${{ runner.temp }}/test-results"
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: regression-test-results
+          path: ${{ runner.temp }}/test-results/
+          retention-days: 7
 
   # docs/01 §13.1 requires "dependency and container image scanning in the
   # build pipeline". This job covers NuGet packages; container-scan below

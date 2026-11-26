@@ -25,6 +25,7 @@ namespace FamilyLibrarian.Infrastructure.Tests.SemanticAssessment;
 /// Output records outcome, latency and token counts, never prompts or replies.
 /// </summary>
 [TestClass]
+[TestCategory("Live")]
 public sealed class LiveSemanticShadowTests
 {
     private static readonly DateTimeOffset Now = new(2026, 10, 12, 12, 0, 0, TimeSpan.Zero);

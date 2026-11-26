@@ -1,6 +1,6 @@
 using FamilyLibrarian.Web.Client.Catalog;
 
-namespace FamilyLibrarian.Web.Tests;
+namespace FamilyLibrarian.Web.Client.Tests;
 
 [TestClass]
 public sealed class CatalogDescriptionMarkupTests

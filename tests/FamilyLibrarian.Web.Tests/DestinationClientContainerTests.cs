@@ -21,6 +21,7 @@ namespace FamilyLibrarian.Web.Tests;
 /// because it publishes no stable tags, so a failure here after a CWA upgrade is the early warning this test exists to give.
 /// </summary>
 [TestClass]
+[TestCategory("Live")]
 public sealed class DestinationClientContainerTests
 {
     private const string AbsImage = "advplyr/audiobookshelf:2.36.0";

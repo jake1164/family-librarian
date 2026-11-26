@@ -1,7 +1,7 @@
 using FamilyLibrarian.Contracts.ModelGateway;
 using FamilyLibrarian.Web.Client.ModelGateway;
 
-namespace FamilyLibrarian.Web.Tests;
+namespace FamilyLibrarian.Web.Client.Tests;
 
 [TestClass]
 public sealed class ModelGatewayFormTests

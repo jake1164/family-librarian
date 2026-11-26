@@ -8,7 +8,7 @@ using Microsoft.JSInterop;
 using MudBlazor.Services;
 using System.Text.RegularExpressions;
 
-namespace FamilyLibrarian.Web.Tests;
+namespace FamilyLibrarian.Web.Client.Tests;
 
 [TestClass]
 public sealed class AiUsageSummaryRenderTests

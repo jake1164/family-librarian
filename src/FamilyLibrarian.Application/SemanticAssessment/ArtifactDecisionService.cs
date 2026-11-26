@@ -14,7 +14,8 @@ namespace FamilyLibrarian.Application.SemanticAssessment;
 public sealed class ArtifactDecisionService(
     IModelRoleResolver roles, IModelExecutionPolicy policy, ISemanticFindingStore store, IClock clock,
     IArtifactEvidenceStore? recordedEvidence = null, IModelGatewaySettingsStore? settings = null,
-    IArtifactExcerptExtractor? excerpts = null, IModelWorkflowObserver? workflow = null, IDecisionCaptureSink? capture = null)
+    IArtifactExcerptExtractor? excerpts = null, IModelWorkflowObserver? workflow = null, IDecisionCaptureSink? capture = null,
+    TimeProvider? timeProvider = null)
 {
     internal const int MaxOutputTokens = 400;
     public async Task<Guid?> GetReleaseAsync(MediaAsset asset, AssetIdentityVerificationResult result,
@@ -35,8 +36,9 @@ public sealed class ArtifactDecisionService(
             if (asset.IdentityHoldCode == EvidenceReasonCodes.IdentityHold.CollectionMissingRequestedWork &&
                 (!details || expected?.AcceptedAsCollectionContaining != true)) return null;
             var input = ArtifactReleaseEvidence.Render(asset, rows, expected, details);
-            using var limit = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-            limit.CancelAfter(TimeSpan.FromSeconds(Math.Min(resolution.Limits.TimeoutSeconds, 45)));
+            using var deadline = new CancellationTokenSource(
+                TimeSpan.FromSeconds(Math.Min(resolution.Limits.TimeoutSeconds, 45)), timeProvider ?? TimeProvider.System);
+            using var limit = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, deadline.Token);
             ModelExecution<ArtifactDecision> execution;
             try
             {
@@ -84,8 +86,9 @@ public sealed class ArtifactDecisionService(
         {
             var resolution = await roles.ResolveAsync(ModelRole.ArtifactValidationDecision, cancellationToken);
             if (!resolution.IsAvailable) return null;
-            using var limit = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-            limit.CancelAfter(TimeSpan.FromSeconds(Math.Min(resolution.Limits.TimeoutSeconds, 45)));
+            using var deadline = new CancellationTokenSource(
+                TimeSpan.FromSeconds(Math.Min(resolution.Limits.TimeoutSeconds, 45)), timeProvider ?? TimeProvider.System);
+            using var limit = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, deadline.Token);
             IReadOnlyList<ArtifactEvidence> prior = [];
             if (recordedEvidence is not null &&
                 (await recordedEvidence.ListLatestAsync([asset.Id], limit.Token)).TryGetValue(asset.Id, out var rows))

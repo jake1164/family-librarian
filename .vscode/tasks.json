@@ -24,11 +24,69 @@
     },
     {
       "label": "test",
-      "detail": "Run the MSTest / Microsoft Testing Platform suite",
+      "detail": "Fast deterministic tests (Domain, Infrastructure and client; no PostgreSQL)",
       "command": "dotnet",
       "type": "process",
-      "args": ["test", "--solution", "${workspaceFolder}/FamilyLibrarian.slnx"],
-      "group": { "kind": "test", "isDefault": true },
+      "args": [
+        "test",
+        "--solution",
+        "${workspaceFolder}/tests/FastTests.slnx",
+        "--",
+        "--filter",
+        "TestCategory!=Live&TestCategory!=LiveLab",
+        "--timeout",
+        "2m"
+      ],
+      "group": {
+        "kind": "test",
+        "isDefault": true
+      },
+      "problemMatcher": "$msCompile"
+    },
+    {
+      "label": "test: full regression",
+      "detail": "All deterministic tests, including PostgreSQL, migrations and concurrency",
+      "command": "dotnet",
+      "type": "process",
+      "args": [
+        "test",
+        "--solution",
+        "${workspaceFolder}/FamilyLibrarian.slnx",
+        "--",
+        "--filter",
+        "TestCategory!=Release&TestCategory!=Live&TestCategory!=LiveLab",
+        "--timeout",
+        "10m"
+      ],
+      "options": {
+        "env": {
+          "FAMILY_LIBRARIAN_REQUIRE_POSTGRES_TESTS": "1"
+        }
+      },
+      "group": "test",
+      "problemMatcher": "$msCompile"
+    },
+    {
+      "label": "test: Web class",
+      "detail": "Run one Web test class or a matching class-name fragment against PostgreSQL",
+      "command": "dotnet",
+      "type": "process",
+      "args": [
+        "test",
+        "--project",
+        "${workspaceFolder}/tests/FamilyLibrarian.Web.Tests/FamilyLibrarian.Web.Tests.csproj",
+        "--",
+        "--filter",
+        "FullyQualifiedName~${input:testClass}&TestCategory!=Release&TestCategory!=Live&TestCategory!=LiveLab",
+        "--timeout",
+        "5m"
+      ],
+      "options": {
+        "env": {
+          "FAMILY_LIBRARIAN_REQUIRE_POSTGRES_TESTS": "1"
+        }
+      },
+      "group": "test",
       "problemMatcher": "$msCompile"
     },
     {
@@ -285,6 +343,14 @@
       "dependsOrder": "sequence",
       "dependsOn": ["dev: check .env", "compose: force refresh debug base"],
       "problemMatcher": []
+    }
+  ],
+  "inputs": [
+    {
+      "id": "testClass",
+      "type": "promptString",
+      "description": "Web test class name (or matching fragment)",
+      "default": "RequestWorkflowEndpointTests"
     }
   ]
 }

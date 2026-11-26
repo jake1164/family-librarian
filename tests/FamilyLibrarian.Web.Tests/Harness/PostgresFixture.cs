@@ -77,6 +77,10 @@ internal static class PostgresFixture
             {
                 await container.DisposeAsync();
             }
+            if (Environment.GetEnvironmentVariable("FAMILY_LIBRARIAN_REQUIRE_POSTGRES_TESTS") == "1")
+            {
+                throw new InvalidOperationException("Required PostgreSQL test infrastructure is unavailable.", exception);
+            }
             return;
         }
 
