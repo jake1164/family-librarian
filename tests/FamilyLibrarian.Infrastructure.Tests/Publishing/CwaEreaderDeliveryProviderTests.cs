@@ -27,6 +27,8 @@ public sealed class CwaEreaderDeliveryProviderTests
         Assert.AreEqual(EbookDeliveryStatus.NotConfigured, deliver.Status);
         var test = await context.Provider.TestAsync(CancellationToken.None);
         Assert.IsFalse(test.Succeeded);
+        // Any signed-in user can see this, so it must not ask them to configure anything.
+        Assert.AreEqual(DeliveryTargetService.DeliveryUnavailableMessage, test.Message);
     }
 
     [TestMethod]

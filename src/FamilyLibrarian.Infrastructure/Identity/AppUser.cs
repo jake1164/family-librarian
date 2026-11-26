@@ -34,7 +34,7 @@ public sealed class AppUser : IdentityUser<Guid>
 
     /// <summary>
     /// This account's own tolerance for computer-generated audiobook
-    /// narration (self-service, at <c>/settings/audiobook-narration</c>).
+    /// narration (self-service, at <c>/settings/formats</c>).
     /// </summary>
     /// <remarks>
     /// Defaults to <see cref="AudiobookNarrationPreference.PreferHuman"/> for
@@ -44,11 +44,13 @@ public sealed class AppUser : IdentityUser<Guid>
     /// </remarks>
     public AudiobookNarrationPreference AudiobookNarrationPreference { get; set; } = AudiobookNarrationPreference.PreferHuman;
 
+    /// <summary>The formats this account's request forms start with (self-service, at <c>/settings/formats</c>).</summary>
+    public DefaultRequestFormat DefaultRequestFormat { get; set; } = DefaultRequestFormat.Ebook;
+
     /// <summary>
     /// This account's own "do not disturb" window (HUMAN-ACQ-1 D9). All three quiet-hours
-    /// fields are null together, meaning no quiet hours are set. Enforced only by the
-    /// Matrix verification alert in this slice -- see <c>NOTIFY-QUIET-1</c> for extending
-    /// it to every outbound notification.
+    /// fields are null together, meaning no quiet hours are set. Email and Matrix
+    /// notifications wait until the window ends.
     /// </summary>
     public string? QuietHoursTimeZoneId { get; set; }
 

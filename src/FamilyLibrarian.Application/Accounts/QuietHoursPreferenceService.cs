@@ -1,4 +1,5 @@
 using FamilyLibrarian.Application.Abstractions;
+using FamilyLibrarian.Application.Communications;
 using FamilyLibrarian.Application.Integrations;
 using FamilyLibrarian.Domain.Accounts;
 using FamilyLibrarian.Domain.Audit;
@@ -8,14 +9,26 @@ namespace FamilyLibrarian.Application.Accounts;
 /// <summary>
 /// A household member's own quiet-hours window (HUMAN-ACQ-1 D9) -- self-service,
 /// mirroring <see cref="AudiobookNarrationPreferenceService"/>'s shape exactly.
-/// A general per-user setting shown to every account, even though only admins
-/// receive the one alert that enforces it today.
+/// It holds every email and Matrix notification, including administrator
+/// verification alerts, until the window ends.
 /// </summary>
 public sealed class QuietHoursPreferenceService(
     IUserAccountStore accounts,
     ICurrentUser currentUser,
-    IAuditWriter audit)
+    IAuditWriter audit,
+    IEnumerable<IOutboundCommunicationProvider> providers)
 {
+    /// <summary>Whether any way of sending a notification is switched on, so quiet hours would have something to hold.</summary>
+    public async Task<bool> IsMessagingAvailableAsync(CancellationToken cancellationToken)
+    {
+        foreach (var provider in providers)
+        {
+            if (await provider.IsEnabledAsync(cancellationToken)) return true;
+        }
+
+        return false;
+    }
+
     public async Task<QuietHours?> GetAsync(CancellationToken cancellationToken)
     {
         if (currentUser.UserId is not { } userId)

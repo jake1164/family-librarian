@@ -21,11 +21,15 @@ public sealed class MatrixIdentityLinkService(
     IClock clock,
     IAuditWriter audit)
 {
+    /// <summary>Shown to any signed-in user, so it names who can fix it rather than which settings are missing.</summary>
+    public const string UnavailableMessage =
+        "Matrix chat isn't available yet. An administrator needs to set it up.";
+
     public async Task<MatrixLinkStatus?> GetStatusAsync(CancellationToken cancellationToken)
     {
         if (currentUser.UserId is not { } userId) return null;
         var destination = await destinationStore.FindByUserIdAsync(userId, cancellationToken);
-        return ToStatus(destination);
+        return ToStatus(destination, IsAvailable(await settingsStore.FindAsync(cancellationToken)));
     }
 
     public async Task<MatrixLinkResult> RequestLinkAsync(string matrixUserId, CancellationToken cancellationToken)
@@ -42,16 +46,17 @@ public sealed class MatrixIdentityLinkService(
         }
 
         var settings = await settingsStore.FindAsync(cancellationToken);
-        if (settings is not { IsEnabled: true, HasAccessToken: true, HomeserverUrl: not null })
+        if (!IsAvailable(settings))
         {
-            return MatrixLinkResult.Invalid("Matrix is not configured by an administrator yet.");
+            return MatrixLinkResult.Invalid(UnavailableMessage);
         }
 
         var accessToken = protector.Unprotect(
-            CommunicationSecretPurposes.MatrixAccessToken, settings.ProtectedAccessToken!, settings.AccessTokenFormatVersion);
+            CommunicationSecretPurposes.MatrixAccessToken, settings!.ProtectedAccessToken!, settings.AccessTokenFormatVersion);
         if (accessToken is null)
         {
-            return MatrixLinkResult.Invalid("The stored Matrix bot credential could not be decrypted.");
+            return MatrixLinkResult.Invalid(
+                "The stored Matrix bot credential could not be decrypted. Ask an administrator to re-enter it.");
         }
 
         var room = await matrixClient.GetOrCreateDirectRoomAsync(settings, accessToken, trimmed, cancellationToken);
@@ -78,7 +83,7 @@ public sealed class MatrixIdentityLinkService(
             AuditActions.MatrixIdentityLinkRequested, AuditSubjectTypes.MatrixIdentityLink, userId.ToString(),
             new { UserId = userId }, cancellationToken);
 
-        return MatrixLinkResult.Success(ToStatus(destination)!);
+        return MatrixLinkResult.Success(ToStatus(destination, isAvailable: true));
     }
 
     public async Task<MatrixLinkResult> UnlinkAsync(CancellationToken cancellationToken)
@@ -88,10 +93,12 @@ public sealed class MatrixIdentityLinkService(
             return MatrixLinkResult.Unauthenticated();
         }
 
+        // Unlinking stays possible while Matrix is unavailable.
+        var isAvailable = IsAvailable(await settingsStore.FindAsync(cancellationToken));
         var destination = await destinationStore.FindByUserIdAsync(userId, cancellationToken);
         if (destination is null)
         {
-            return MatrixLinkResult.Success(new MatrixLinkStatus(false, null, false));
+            return MatrixLinkResult.Success(ToStatus(destination, isAvailable));
         }
 
         destination.Unlink(clock.UtcNow);
@@ -100,13 +107,17 @@ public sealed class MatrixIdentityLinkService(
             AuditActions.MatrixIdentityLinkRemoved, AuditSubjectTypes.MatrixIdentityLink, userId.ToString(),
             new { UserId = userId }, cancellationToken);
 
-        return MatrixLinkResult.Success(ToStatus(destination)!);
+        return MatrixLinkResult.Success(ToStatus(destination, isAvailable));
     }
 
-    private static MatrixLinkStatus? ToStatus(Domain.Communications.UserMatrixDestination? destination) =>
+    private static bool IsAvailable(Domain.Communications.MatrixSettings? settings) =>
+        settings is { IsEnabled: true, HasAccessToken: true, HomeserverUrl: not null };
+
+    private static MatrixLinkStatus ToStatus(Domain.Communications.UserMatrixDestination? destination, bool isAvailable) =>
         destination is null
-            ? new MatrixLinkStatus(false, null, false)
-            : new MatrixLinkStatus(destination.IsVerified, destination.MatrixUserId, destination.VerificationRequestedAtUtc is not null && !destination.IsVerified);
+            ? new MatrixLinkStatus(false, null, false, isAvailable)
+            : new MatrixLinkStatus(destination.IsVerified, destination.MatrixUserId,
+                destination.VerificationRequestedAtUtc is not null && !destination.IsVerified, isAvailable);
 
     private static bool IsValidMatrixId(string value) =>
         value.StartsWith('@') && value.Contains(':') && value.IndexOf(':') > 1 && value.IndexOf(':') < value.Length - 1;
@@ -115,7 +126,7 @@ public sealed class MatrixIdentityLinkService(
         Random.Shared.Next(0, 1_000_000).ToString("D6", System.Globalization.CultureInfo.InvariantCulture);
 }
 
-public sealed record MatrixLinkStatus(bool IsVerified, string? MatrixUserId, bool AwaitingVerification);
+public sealed record MatrixLinkStatus(bool IsVerified, string? MatrixUserId, bool AwaitingVerification, bool IsAvailable);
 
 public sealed record MatrixLinkResult(bool Succeeded, MatrixLinkStatus? Status, string? Error)
 {

@@ -111,9 +111,41 @@ public sealed class OutboundCommunicationDispatcherTests
         Assert.IsTrue(store.All.All(communication => communication.Deliveries.Single().Succeeded == false));
     }
 
+    [TestMethod]
+    public async Task ARecipientInQuietHoursIsHeldUntilTheWindowEndsWithoutDelayingAnyoneElse()
+    {
+        var store = new FakeOutboundCommunicationStore();
+        var asleep = NewCommunication();
+        var awake = NewCommunication();
+        store.Enqueue(asleep);
+        store.Enqueue(awake);
+        var provider = new FakeOutboundCommunicationProvider("smtp", enabled: true, SendResult.Success());
+        var quietHours = new FakeQuietHoursLookup { QuietUserIds = { asleep.RecipientUserId } };
+        var dispatcher = new OutboundCommunicationDispatcher(store, [provider], quietHours, new FixedClock());
+
+        Assert.AreEqual(1, await dispatcher.DispatchPendingAsync(CancellationToken.None));
+        Assert.IsNull(asleep.ProcessedAtUtc);
+        Assert.AreEqual(0, asleep.Deliveries.Count);
+        Assert.IsNotNull(awake.ProcessedAtUtc);
+
+        quietHours.QuietUserIds.Clear();
+
+        Assert.AreEqual(1, await dispatcher.DispatchPendingAsync(CancellationToken.None));
+        Assert.IsNotNull(asleep.ProcessedAtUtc);
+        Assert.AreEqual(2, provider.SendCallCount);
+    }
+
     private static OutboundCommunicationDispatcher Create(
         FakeOutboundCommunicationStore store, params IOutboundCommunicationProvider[] providers) =>
-        new(store, providers, new FixedClock());
+        new(store, providers, new FakeQuietHoursLookup(), new FixedClock());
+
+    private sealed class FakeQuietHoursLookup : IUserQuietHoursLookup
+    {
+        public HashSet<Guid> QuietUserIds { get; } = [];
+
+        public Task<IReadOnlyCollection<Guid>> ListQuietUserIdsAsync(DateTimeOffset utc, CancellationToken cancellationToken) =>
+            Task.FromResult<IReadOnlyCollection<Guid>>(QuietUserIds.ToArray());
+    }
 
     private static OutboundCommunication NewCommunication() =>
         new(Guid.NewGuid(), OutboundCommunicationTypes.RequestStatusChanged, "Body", "Subject", null, null, null, Now);
@@ -138,9 +170,10 @@ public sealed class OutboundCommunicationDispatcherTests
         }
 
         public Task<IReadOnlyList<OutboundCommunication>> GetUnprocessedBatchAsync(
-            int maxCount, CancellationToken cancellationToken) =>
+            int maxCount, IReadOnlyCollection<Guid> heldRecipientUserIds, CancellationToken cancellationToken) =>
             Task.FromResult<IReadOnlyList<OutboundCommunication>>(
-                All.Where(communication => communication.ProcessedAtUtc is null).Take(maxCount).ToList());
+                All.Where(communication => communication.ProcessedAtUtc is null &&
+                    !heldRecipientUserIds.Contains(communication.RecipientUserId)).Take(maxCount).ToList());
 
         public Task<OutboundCommunication?> FindMostRecentByTypeAsync(
             Guid recipientUserId, string communicationType, CancellationToken cancellationToken) =>

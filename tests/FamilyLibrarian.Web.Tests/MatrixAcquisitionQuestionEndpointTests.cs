@@ -38,7 +38,11 @@ public sealed class MatrixAcquisitionQuestionEndpointTests
     public Task AReplyToAnEarlierQuestionCannotAuthorizeAReopenedQuestion() =>
         ExerciseAsync("2", "$question", "$question", true, false, reopen: true);
 
-    private static async Task ExerciseAsync(string body, string? storedEvent, string? replyEvent, bool answers, bool take, bool nonparticipant = false, bool reopen = false)
+    [TestMethod]
+    public Task AKeywordCannotAnswerAQuestionStillHeldForQuietHours() =>
+        ExerciseAsync("take", null, null, false, false, held: true);
+
+    private static async Task ExerciseAsync(string body, string? storedEvent, string? replyEvent, bool answers, bool take, bool nonparticipant = false, bool reopen = false, bool held = false)
     {
         await using var fixture = WebTestFixture.Require(await WebTestFixture.CreateAsync());
         var matrix = new QuestionMatrixClient();
@@ -52,12 +56,36 @@ public sealed class MatrixAcquisitionQuestionEndpointTests
         var request = await harness.RequestHobbitAsync();
         var collection = WaitingRecheckClient.Collection("collection");
         harness.Client.Script = _ => [collection with { Work = collection.Work with { Title = "The Hobbit / Another Novel" } }];
+        if (held)
+        {
+            await using var scope = harness.Factory.Services.CreateAsyncScope();
+            var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            var minute = (int)DateTimeOffset.UtcNow.TimeOfDay.TotalMinutes;
+            foreach (var user in await db.Users.ToListAsync())
+            {
+                user.QuietHoursTimeZoneId = "UTC";
+                user.QuietHoursStartMinute = (minute + 1440 - 60) % 1440;
+                user.QuietHoursEndMinute = (minute + 60) % 1440;
+            }
+            await db.SaveChangesAsync();
+        }
         await harness.RecheckAsync();
         await using (var scope = harness.Factory.Services.CreateAsyncScope())
         {
             var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
             var ask = await db.OutboundCommunications.SingleAsync(c => c.CommunicationType == "request.acquisition_question");
             ask.RecordMatrixEventId(storedEvent);
+            if (held)
+            {
+                // The real dispatcher, repository and quiet-hours lookup must all leave it queued.
+                await scope.ServiceProvider.GetRequiredService<OutboundCommunicationDispatcher>()
+                    .DispatchPendingAsync(CancellationToken.None);
+                Assert.IsNull(ask.ProcessedAtUtc);
+            }
+            else
+            {
+                ask.MarkProcessed(DateTimeOffset.UtcNow);
+            }
             var settings = new MatrixSettings(DateTimeOffset.UtcNow);
             settings.SetSettings("https://matrix.example.test", "@bot:example.test", null, DateTimeOffset.UtcNow);
             var protector = scope.ServiceProvider.GetRequiredService<ICredentialProtector>();
@@ -66,7 +94,11 @@ public sealed class MatrixAcquisitionQuestionEndpointTests
             db.MatrixSettings.Add(settings);
             var linkedUser = nonparticipant ? (await db.Users.SingleAsync(u => u.Email == WebTestFixture.UserEmail)).Id : ask.RecipientUserId;
             if (nonparticipant)
-                db.OutboundCommunications.Add(new(linkedUser, "request.acquisition_question", "choice", null, "BookRequest", request.Id, null, DateTimeOffset.UtcNow));
+            {
+                var copy = new OutboundCommunication(linkedUser, "request.acquisition_question", "choice", null, "BookRequest", request.Id, null, DateTimeOffset.UtcNow);
+                copy.MarkProcessed(DateTimeOffset.UtcNow);
+                db.OutboundCommunications.Add(copy);
+            }
             var destination = new UserMatrixDestination(linkedUser, DateTimeOffset.UtcNow);
             destination.RequestVerification("@reader:example.test", "!reader:example.test", "123456", DateTimeOffset.UtcNow);
             destination.Verify(DateTimeOffset.UtcNow);
@@ -76,7 +108,7 @@ public sealed class MatrixAcquisitionQuestionEndpointTests
         await using (var scope = harness.Factory.Services.CreateAsyncScope())
             await scope.ServiceProvider.GetRequiredService<MatrixInboundRouter>().HandleMessageAsync(
                 new("!reader:example.test", "@reader:example.test", body, replyEvent, "$incoming"), CancellationToken.None);
-        Assert.AreEqual(answers || nonparticipant ? 0 : 1, conversation.Calls);
+        Assert.AreEqual(answers || nonparticipant || held ? 0 : 1, conversation.Calls);
         Assert.AreEqual(answers && take ? 1 : 0, harness.Client.SubmittedCandidates.Count);
         var state = await harness.ReadAsync(db => db.BookRequests.SingleAsync(r => r.Id == request.Id));
         Assert.AreEqual(answers ? null : AcquisitionQuestionKind.CollectionContaining, state.QuestionKind);

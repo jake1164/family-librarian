@@ -10,7 +10,8 @@ public sealed class OutboundCommunicationRepository(AppDbContext database) : IOu
     {
         var query = database.OutboundCommunications.AsNoTracking().Where(c => c.RecipientUserId == userId &&
             c.CommunicationType == OutboundCommunicationTypes.AcquisitionQuestionAsked && c.RelatedEntityType == "BookRequest");
-        query = eventId is not null ? query.Where(c => c.MatrixEventId == eventId) : query.Where(c =>
+        // A bare keyword can only answer a question that has been sent, not one still held for quiet hours.
+        query = eventId is not null ? query.Where(c => c.MatrixEventId == eventId) : query.Where(c => c.ProcessedAtUtc != null &&
             database.BookRequests.Any(r => r.Id == c.RelatedEntityId && r.QuestionKind != null && c.CreatedAtUtc >= r.QuestionAskedAtUtc));
         return query.OrderByDescending(c => c.CreatedAtUtc).FirstOrDefaultAsync(cancellationToken);
     }
@@ -22,10 +23,11 @@ public sealed class OutboundCommunicationRepository(AppDbContext database) : IOu
     }
 
     public async Task<IReadOnlyList<OutboundCommunication>> GetUnprocessedBatchAsync(
-        int maxCount, CancellationToken cancellationToken) =>
+        int maxCount, IReadOnlyCollection<Guid> heldRecipientUserIds, CancellationToken cancellationToken) =>
         await database.OutboundCommunications
             .Include(communication => communication.Deliveries)
-            .Where(communication => communication.ProcessedAtUtc == null)
+            .Where(communication => communication.ProcessedAtUtc == null &&
+                !heldRecipientUserIds.Contains(communication.RecipientUserId))
             .OrderBy(communication => communication.CreatedAtUtc)
             .Take(maxCount)
             .ToListAsync(cancellationToken);
@@ -33,7 +35,7 @@ public sealed class OutboundCommunicationRepository(AppDbContext database) : IOu
     public Task<OutboundCommunication?> FindMostRecentByTypeAsync(
         Guid recipientUserId, string communicationType, CancellationToken cancellationToken) =>
         database.OutboundCommunications
-            .Where(communication =>
+            .Where(communication => communication.ProcessedAtUtc != null &&
                 communication.RecipientUserId == recipientUserId && communication.CommunicationType == communicationType)
             .OrderByDescending(communication => communication.CreatedAtUtc)
             .FirstOrDefaultAsync(cancellationToken);

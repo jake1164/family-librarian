@@ -49,6 +49,15 @@ public sealed class CatalogEvidenceMigrationTests
     /// </summary>
     private static readonly string[] TablesDroppedByLaterMigrations = ["providers.provider_catalogs"];
 
+    /// <summary>
+    /// Columns that a migration newer than this one adds. Reversing this migration removes them too; reapplying restores
+    /// their defaults, so they are left out of the reversed comparison only.
+    /// </summary>
+    private static readonly Dictionary<string, string[]> ColumnsAddedByLaterMigrations = new()
+    {
+        ["identity.users"] = ["default_request_format"]
+    };
+
     [TestMethod]
     public async Task EveryPreExistingValueSurvivesTheMigrationItsReversalAndItsReapplication()
     {
@@ -288,7 +297,9 @@ public sealed class CatalogEvidenceMigrationTests
                 continue;
             }
 
-            if (!AddedColumns.TryGetValue(table, out var columns))
+            string[] columns =
+                [.. AddedColumns.GetValueOrDefault(table, []), .. ColumnsAddedByLaterMigrations.GetValueOrDefault(table, [])];
+            if (columns.Length == 0)
             {
                 stripped[table] = rows;
                 continue;

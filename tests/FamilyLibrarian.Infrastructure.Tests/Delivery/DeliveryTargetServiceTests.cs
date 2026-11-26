@@ -190,6 +190,47 @@ public sealed class DeliveryTargetServiceTests
     }
 
     [TestMethod]
+    public async Task AddingAKindleIsRefusedWhileTheDeliveryServiceIsNotSetUp()
+    {
+        var repository = new InMemoryDeliveryTargetRepository();
+        var service = Create(repository, Owner, providers: [UnavailableProvider()]);
+
+        var result = await service.SetMyKindleAddressAsync("reader@kindle.com", null, true, CancellationToken.None);
+
+        Assert.AreEqual(SetKindleTargetOutcome.Invalid, result.Outcome);
+        Assert.AreEqual(DeliveryTargetService.DeliveryUnavailableMessage, result.Error);
+        Assert.AreEqual(0, repository.Rows.Count);
+    }
+
+    [TestMethod]
+    public async Task AnExistingKindleStaysEditableAfterTheDeliveryServiceIsRemoved()
+    {
+        var repository = new InMemoryDeliveryTargetRepository();
+        var created = await Create(repository, Owner)
+            .SetMyKindleAddressAsync("old@kindle.com", null, true, CancellationToken.None);
+        var service = Create(repository, Owner, providers: [UnavailableProvider()]);
+
+        var updated = await service.SetMyKindleAddressAsync(
+            "new@kindle.com", created.Target!.Version, true, CancellationToken.None);
+        var disabled = await service.SetMyKindleEnabledAsync(false, updated.Target!.Version, CancellationToken.None);
+
+        Assert.AreEqual(SetKindleTargetOutcome.Success, updated.Outcome);
+        Assert.AreEqual(SetKindleTargetOutcome.Success, disabled.Outcome);
+    }
+
+    [TestMethod]
+    public async Task DeliveryAvailabilityFollowsTheCwaProvider()
+    {
+        var repository = new InMemoryDeliveryTargetRepository();
+
+        Assert.IsTrue(await Create(repository, Owner).IsKindleDeliveryAvailableAsync(CancellationToken.None));
+        Assert.IsFalse(await Create(repository, Owner, providers: [UnavailableProvider()])
+            .IsKindleDeliveryAvailableAsync(CancellationToken.None));
+        Assert.IsFalse(await Create(repository, Owner, providers: [])
+            .IsKindleDeliveryAvailableAsync(CancellationToken.None));
+    }
+
+    [TestMethod]
     public async Task AdminCanSetTheAddressForAUserWhoHasNoneYet()
     {
         var repository = new InMemoryDeliveryTargetRepository();
@@ -264,13 +305,18 @@ public sealed class DeliveryTargetServiceTests
 
     private static DeliveryTargetService Create(
         IDeliveryTargetRepository repository, Guid? userId, IEnumerable<IEbookDeliveryProvider>? providers = null) =>
-        new(repository, providers ?? [], new StubCurrentUser(userId), new NoOpAuditWriter(), new FixedClock());
+        new(repository, providers ?? [new StubEbookDeliveryProvider("cwa", new ConnectionTestOutcome(true, "Signed in."))],
+            new StubCurrentUser(userId), new NoOpAuditWriter(), new FixedClock());
 
-    private sealed class StubEbookDeliveryProvider(string id, ConnectionTestOutcome testOutcome) : IEbookDeliveryProvider
+    private static StubEbookDeliveryProvider UnavailableProvider() =>
+        new("cwa", new ConnectionTestOutcome(false, "Unavailable."), canDeliver: false);
+
+    private sealed class StubEbookDeliveryProvider(string id, ConnectionTestOutcome testOutcome, bool canDeliver = true)
+        : IEbookDeliveryProvider
     {
         public string Id => id;
 
-        public Task<bool> CanDeliverAsync(CancellationToken cancellationToken) => Task.FromResult(true);
+        public Task<bool> CanDeliverAsync(CancellationToken cancellationToken) => Task.FromResult(canDeliver);
 
         public Task<EbookDeliveryOutcome> DeliverAsync(
             string providerBookId, string bookFormat, bool convert, string recipientEmail,

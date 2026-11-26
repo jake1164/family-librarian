@@ -7,6 +7,7 @@
 @inject CatalogApiClient Catalog
 @inject RequestsApiClient Requests
 @inject DeliveryTargetApiClient DeliveryTargets
+@inject FamilyLibrarian.Web.Client.Accounts.DefaultRequestFormatApiClient DefaultFormats
 @inject FollowApiClient Follows
 
 <PageTitle>@(work?.Title ?? "Book") · Family Librarian</PageTitle>
@@ -217,7 +218,7 @@
                                     {
                                         <MudCheckBox @bind-Value="sendToKindle" Label="Send to my Kindle when ready" Disabled="@isSubmitting" />
                                     }
-                                    else
+                                    else if (kindleAvailable)
                                     {
                                         <MudText Typo="Typo.caption">
                                             Kindle delivery is not configured.
@@ -329,6 +330,8 @@
 
     private bool wantsEbook = true;
     private bool wantsAudiobook;
+    private string? defaultFormat;
+    private bool kindleAvailable;
     private DeliveryTargetResponse? kindleTarget;
     private bool sendToKindle;
     private Guid? sentAttemptId;
@@ -372,6 +375,13 @@
             requestFormats = null;
         }
 
+        // The user's default applies on first load only: a refresh would undo their own ticking.
+        if (firstLoad)
+        {
+            (wantsEbook, wantsAudiobook) = RequestFormatDefaults.Choose(defaultFormat, requestFormats);
+            return;
+        }
+
         // Never leave a format ticked that the form no longer offers or allows.
         if (requestFormats?.Ebook is { IsReady: false })
         {
@@ -381,21 +391,31 @@
         {
             wantsAudiobook = false;
         }
-        // Ebook is the default; on first load fall back to audiobook when it isn't
-        // an option. Not on refresh, which would undo the user's own unticking.
-        if (firstLoad && !wantsEbook && !wantsAudiobook && requestFormats?.Audiobook is { IsReady: true })
+    }
+
+    private async Task LoadDefaultFormatAsync()
+    {
+        try
         {
-            wantsAudiobook = true;
+            defaultFormat = await DefaultFormats.GetAsync();
+        }
+        catch (HttpRequestException)
+        {
+            // Informational only -- the form falls back to ebook.
         }
     }
 
     protected override async Task OnInitializedAsync()
     {
+        // Needed before the formats arrive, so the default is applied in one step.
+        await LoadDefaultFormatAsync();
         var formatsLoad = LoadRequestFormatsAsync();
 
         try
         {
-            kindleTarget = await DeliveryTargets.GetMyKindleTargetAsync();
+            // With no delivery service, leave the target unset so nothing offers a send.
+            kindleAvailable = await DeliveryTargets.IsKindleDeliveryAvailableAsync();
+            kindleTarget = kindleAvailable ? await DeliveryTargets.GetMyKindleTargetAsync() : null;
             sendToKindle = kindleTarget is { IsEnabled: true, SendByDefault: true };
         }
         catch (HttpRequestException)

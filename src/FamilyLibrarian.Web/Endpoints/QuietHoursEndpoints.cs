@@ -19,7 +19,8 @@ internal static class QuietHoursEndpoints
     private static async Task<IResult> GetAsync(QuietHoursPreferenceService service, CancellationToken cancellationToken)
     {
         var current = await service.GetAsync(cancellationToken);
-        return Results.Ok(new QuietHoursResponse(current?.TimeZoneId, current?.StartMinute, current?.EndMinute));
+        return Results.Ok(new QuietHoursResponse(current?.TimeZoneId, current?.StartMinute, current?.EndMinute,
+            await service.IsMessagingAvailableAsync(cancellationToken)));
     }
 
     private static async Task<IResult> SetAsync(
@@ -27,7 +28,8 @@ internal static class QuietHoursEndpoints
     {
         var result = await service.SetAsync(request.TimeZoneId, request.StartMinute, request.EndMinute, cancellationToken);
         return result.Succeeded
-            ? Results.Ok(new QuietHoursResponse(request.TimeZoneId, request.StartMinute, request.EndMinute))
+            ? Results.Ok(new QuietHoursResponse(request.TimeZoneId, request.StartMinute, request.EndMinute,
+                await service.IsMessagingAvailableAsync(cancellationToken)))
             : Results.ValidationProblem(new Dictionary<string, string[]> { ["quietHours"] = [result.Error!] });
     }
 }

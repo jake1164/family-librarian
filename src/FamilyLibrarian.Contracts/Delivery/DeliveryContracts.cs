@@ -9,6 +9,9 @@ public sealed record DeliveryTargetResponse(
     bool SendByDefault,
     uint Version);
 
+/// <summary>Whether an administrator has set up the shared delivery service. Deliberately carries no configuration detail.</summary>
+public sealed record KindleDeliveryAvailabilityResponse(bool IsAvailable);
+
 public sealed record SetKindleAddressRequest(string Address, uint? ExpectedVersion, bool SendByDefault);
 
 public sealed record SetKindleEnabledRequest(bool Enabled, uint ExpectedVersion);

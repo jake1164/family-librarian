@@ -68,6 +68,7 @@ builder.Services.AddScoped<FeedbackApiClient>();
 builder.Services.AddScoped<FollowApiClient>();
 builder.Services.AddScoped<DeliveryTargetApiClient>();
 builder.Services.AddScoped<AudiobookNarrationPreferenceApiClient>();
+builder.Services.AddScoped<DefaultRequestFormatApiClient>();
 builder.Services.AddScoped<QuietHoursApiClient>();
 builder.Services.AddScoped<MediaAssetsApiClient>();
 builder.Services.AddScoped<CwaSettingsApiClient>();

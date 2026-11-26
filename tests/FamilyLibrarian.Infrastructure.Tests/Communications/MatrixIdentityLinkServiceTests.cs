@@ -31,7 +31,33 @@ public sealed class MatrixIdentityLinkServiceTests
         var result = await context.Service.RequestLinkAsync("@friend:example.test", CancellationToken.None);
 
         Assert.IsFalse(result.Succeeded);
-        StringAssert.Contains(result.Error, "not configured");
+        Assert.AreEqual(MatrixIdentityLinkService.UnavailableMessage, result.Error);
+    }
+
+    [TestMethod]
+    public async Task StatusReportsWhetherMatrixIsAvailable()
+    {
+        var context = new TestContext();
+
+        Assert.IsFalse((await context.Service.GetStatusAsync(CancellationToken.None))!.IsAvailable);
+        context.ConfigureMatrix();
+        Assert.IsTrue((await context.Service.GetStatusAsync(CancellationToken.None))!.IsAvailable);
+    }
+
+    [TestMethod]
+    public async Task AnExistingLinkCanBeRemovedAfterMatrixIsTurnedOff()
+    {
+        var context = new TestContext();
+        context.ConfigureMatrix();
+        await context.Service.RequestLinkAsync("@friend:example.test", CancellationToken.None);
+        var settings = await context.SettingsStore.GetOrCreateAsync(CancellationToken.None);
+        settings.SetEnabled(false, actorUserId: null, Now);
+
+        var result = await context.Service.UnlinkAsync(CancellationToken.None);
+
+        Assert.IsTrue(result.Succeeded);
+        Assert.IsFalse(result.Status!.IsAvailable);
+        Assert.IsNull(result.Status.MatrixUserId);
     }
 
     [TestMethod]

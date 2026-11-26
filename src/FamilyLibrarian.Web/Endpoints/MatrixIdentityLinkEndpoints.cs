@@ -39,5 +39,5 @@ internal static class MatrixIdentityLinkEndpoints
         Results.ValidationProblem(new Dictionary<string, string[]> { ["matrixUserId"] = [message] });
 
     private static MatrixLinkStatusResponse ToResponse(MatrixLinkStatus status) =>
-        new(status.IsVerified, status.MatrixUserId, status.AwaitingVerification);
+        new(status.IsVerified, status.MatrixUserId, status.AwaitingVerification, status.IsAvailable);
 }

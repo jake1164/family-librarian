@@ -1,0 +1,200 @@
+@page "/settings/quiet-hours"
+@attribute [Authorize]
+@using FamilyLibrarian.Web.Client.Accounts
+@implements IAsyncDisposable
+@inject QuietHoursApiClient QuietHoursApi
+@inject IJSRuntime JS
+@inject ISnackbar Snackbar
+
+<PageTitle>Quiet hours · Family Librarian</PageTitle>
+<SettingsDraftGuard IsDirty="@(draft.HasChanges("quiet", QuietHoursFields))" />
+
+<MudText Typo="Typo.h4" GutterBottom="true">Quiet hours</MudText>
+<MudText Typo="Typo.body1" Class="mb-6">
+    During these hours Family Librarian holds your email and Matrix notifications and sends
+    them when the window ends. Books are still found and delivered, including to your Kindle,
+    and notifications inside the app still appear. Replies to something you just did, such as
+    a Matrix link code or a chat answer, are sent right away.
+</MudText>
+
+@if (isLoading)
+{
+    <MudProgressCircular Indeterminate="true" aria-label="Loading quiet hours" />
+}
+else if (loadFailed)
+{
+    <MudAlert Severity="Severity.Error">We could not load your quiet hours.</MudAlert>
+}
+else
+{
+    @if (!isAvailable)
+    {
+        <MudAlert Severity="Severity.Info" Class="mb-4">
+            Email and Matrix notifications aren't available yet. An administrator needs to set one up.
+            <AuthorizeView Roles="Admin">
+                <MudLink Href="settings/communications">Set it up in Communications settings</MudLink>
+            </AuthorizeView>
+        </MudAlert>
+    }
+
+    <MudPaper Class="pa-4" Outlined="true">
+        <MudStack Spacing="3">
+            <MudSwitch T="bool" Value="enabled" ValueChanged="OnEnabledChangedAsync" Disabled="@(busy || !CanEdit)"
+                       Color="Color.Primary" Label="Hold notifications during a daily window" />
+
+            @if (enabled)
+            {
+                <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="2" Wrap="Wrap.Wrap">
+                    <MudTextField Immediate="true" T="string" @bind-Value="timeZoneId" Label="Time zone" Disabled="@(busy || !CanEdit)"
+                                  Placeholder="@("America/New_York")" Style="min-width:16rem;" />
+                    <MudButton Variant="Variant.Text" Disabled="@(busy || !CanEdit)" OnClick="UseBrowserTimeZoneAsync">
+                        Use my browser's time zone
+                    </MudButton>
+                </MudStack>
+
+                <MudStack Row="true" Spacing="4" Wrap="Wrap.Wrap">
+                    <MudTimePicker Label="Start" @bind-Time="startTime" Disabled="@(busy || !CanEdit)" />
+                    <MudTimePicker Label="End" @bind-Time="endTime" Disabled="@(busy || !CanEdit)" />
+                </MudStack>
+
+                <MudText Typo="Typo.caption">
+                    A window that ends before it starts (e.g. 22:00-07:00) crosses midnight.
+                </MudText>
+            }
+
+            @if (!string.IsNullOrWhiteSpace(errorMessage))
+            {
+                <MudAlert Severity="Severity.Error">@errorMessage</MudAlert>
+            }
+
+            <div>
+                <MudButton Variant="Variant.Filled" Color="Color.Primary" Disabled="@(busy || !CanEdit)" OnClick="SaveAsync">
+                    Save quiet hours
+                </MudButton>
+            </div>
+        </MudStack>
+    </MudPaper>
+}
+
+@code {
+    private readonly SettingsSnapshot draft = new();
+    private object QuietHoursFields => new { enabled, timeZoneId, startTime, endTime };
+    private bool isLoading = true;
+    private bool loadFailed;
+    private bool busy;
+    private bool isAvailable;
+    private bool hasSavedWindow;
+    // A window saved earlier can still be turned off while nothing can send.
+    private bool CanEdit => isAvailable || hasSavedWindow;
+    private bool enabled;
+    private string timeZoneId = string.Empty;
+    private TimeSpan? startTime;
+    private TimeSpan? endTime;
+    private string? errorMessage;
+    private IJSObjectReference? timezoneInterop;
+
+    protected override async Task OnInitializedAsync()
+    {
+        try
+        {
+            var quietHours = await QuietHoursApi.GetAsync();
+            isAvailable = quietHours?.IsAvailable ?? false;
+            if (quietHours is { TimeZoneId: not null, StartMinute: { } start, EndMinute: { } end })
+            {
+                enabled = hasSavedWindow = true;
+                timeZoneId = quietHours.TimeZoneId;
+                startTime = TimeSpan.FromMinutes(start);
+                endTime = TimeSpan.FromMinutes(end);
+            }
+        }
+        catch (HttpRequestException)
+        {
+            loadFailed = true;
+        }
+        finally
+        {
+            isLoading = false;
+            if (!loadFailed) draft.Accept("quiet", QuietHoursFields);
+        }
+    }
+
+    private async Task OnEnabledChangedAsync(bool value)
+    {
+        enabled = value;
+        if (value && string.IsNullOrWhiteSpace(timeZoneId))
+        {
+            await UseBrowserTimeZoneAsync();
+        }
+    }
+
+    private async Task UseBrowserTimeZoneAsync()
+    {
+        try
+        {
+            timezoneInterop ??= await JS.InvokeAsync<IJSObjectReference>("import", "./js/timezone-interop.js");
+            timeZoneId = await timezoneInterop.InvokeAsync<string>("getBrowserTimeZone");
+        }
+        catch (JSException)
+        {
+            // The field stays editable either way; this is only a convenience default.
+        }
+    }
+
+    private async Task SaveAsync()
+    {
+        busy = true;
+        errorMessage = null;
+
+        try
+        {
+            QuietHoursResult result;
+            if (!enabled)
+            {
+                result = await QuietHoursApi.SetAsync(null, null, null);
+            }
+            else if (startTime is { } start && endTime is { } end && !string.IsNullOrWhiteSpace(timeZoneId))
+            {
+                result = await QuietHoursApi.SetAsync(timeZoneId, (int)start.TotalMinutes, (int)end.TotalMinutes);
+            }
+            else
+            {
+                errorMessage = "Enter a time zone and both a start and end time.";
+                return;
+            }
+
+            if (result.Succeeded)
+            {
+                hasSavedWindow = enabled;
+                Snackbar.Add("Quiet hours saved.", Severity.Success);
+                draft.Accept("quiet", QuietHoursFields);
+            }
+            else
+            {
+                errorMessage = result.Error;
+            }
+        }
+        catch (HttpRequestException)
+        {
+            errorMessage = "That could not be saved. Please try again.";
+        }
+        finally
+        {
+            busy = false;
+        }
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        if (timezoneInterop is not null)
+        {
+            try
+            {
+                await timezoneInterop.DisposeAsync();
+            }
+            catch (JSDisconnectedException)
+            {
+                // The circuit is already gone -- nothing left to clean up.
+            }
+        }
+    }
+}

@@ -29,6 +29,7 @@ public static class AuditActions
     public const string AccountAdminRevoked = "account.admin_revoked";
     public const string AccountPasswordReset = "account.password_reset";
     public const string AccountAudiobookNarrationPreferenceChanged = "account.audiobook_narration_preference_changed";
+    public const string AccountDefaultRequestFormatChanged = "account.default_request_format_changed";
     public const string AccountQuietHoursChanged = "account.quiet_hours_changed";
 
     public const string BookRequestStatusChanged = "book_request.status_changed";

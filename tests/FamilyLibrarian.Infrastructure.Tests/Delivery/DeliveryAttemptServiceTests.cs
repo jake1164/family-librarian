@@ -994,7 +994,7 @@ public sealed class DeliveryAttemptServiceTests
         }
 
         public Task<IReadOnlyList<OutboundCommunication>> GetUnprocessedBatchAsync(
-            int maxCount, CancellationToken cancellationToken) =>
+            int maxCount, IReadOnlyCollection<Guid> heldRecipientUserIds, CancellationToken cancellationToken) =>
             Task.FromResult<IReadOnlyList<OutboundCommunication>>(
                 All.Where(communication => communication.ProcessedAtUtc is null).Take(maxCount).ToList());
 

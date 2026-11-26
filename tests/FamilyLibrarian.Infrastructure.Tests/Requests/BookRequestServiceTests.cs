@@ -762,7 +762,7 @@ public sealed class BookRequestServiceTests
             Task.CompletedTask;
 
         public Task<IReadOnlyList<OutboundCommunication>> GetUnprocessedBatchAsync(
-            int maxCount, CancellationToken cancellationToken) =>
+            int maxCount, IReadOnlyCollection<Guid> heldRecipientUserIds, CancellationToken cancellationToken) =>
             Task.FromResult<IReadOnlyList<OutboundCommunication>>([]);
 
         public Task<OutboundCommunication?> FindMostRecentByTypeAsync(

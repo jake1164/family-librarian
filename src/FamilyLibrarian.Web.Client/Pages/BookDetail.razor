@@ -9,6 +9,7 @@
 @inject CatalogSearchState SearchState
 @inject RequestsApiClient Requests
 @inject DeliveryTargetApiClient DeliveryTargets
+@inject FamilyLibrarian.Web.Client.Accounts.DefaultRequestFormatApiClient DefaultFormats
 @inject FollowApiClient Follows
 @inject CatalogBrowseApiClient Browse
 
@@ -399,7 +400,7 @@
                                     {
                                         <MudCheckBox @bind-Value="sendToKindle" Label="Send to my Kindle when ready" Disabled="@isSubmitting" />
                                     }
-                                    else
+                                    else if (kindleAvailable)
                                     {
                                         <MudText Typo="Typo.caption">
                                             Kindle delivery is not configured.
@@ -549,6 +550,8 @@
 
     private bool wantsEbook = true;
     private bool wantsAudiobook;
+    private string? defaultFormat;
+    private bool kindleAvailable;
     private DeliveryTargetResponse? kindleTarget;
     private bool sendToKindle;
     private string? note;
@@ -583,11 +586,19 @@
     private bool IsEbookReady => !string.IsNullOrWhiteSpace(versionKind) || requestFormats?.Ebook is not { IsReady: false };
     private bool IsAudiobookReady => !string.IsNullOrWhiteSpace(versionKind) || requestFormats?.Audiobook is not { IsReady: false };
 
-    private void ApplyFormatDefaults()
+    private void ApplyFormatDefaults() =>
+        (wantsEbook, wantsAudiobook) = RequestFormatDefaults.Choose(defaultFormat, requestFormats);
+
+    private async Task LoadDefaultFormatAsync()
     {
-        wantsEbook = requestFormats?.Ebook is not { IsReady: false };
-        // Audiobook is only preselected when ebook is not an option.
-        wantsAudiobook = !wantsEbook && requestFormats?.Audiobook is { IsReady: true };
+        try
+        {
+            defaultFormat = await DefaultFormats.GetAsync();
+        }
+        catch (HttpRequestException)
+        {
+            // Informational only -- the form falls back to ebook.
+        }
     }
 
     private async Task LoadRequestFormatsAsync()
@@ -604,11 +615,15 @@
 
     protected override async Task OnInitializedAsync()
     {
+        // OnParametersSetAsync applies the default, and it runs after this method completes.
+        await LoadDefaultFormatAsync();
         var formatsLoad = LoadRequestFormatsAsync();
 
         try
         {
-            kindleTarget = await DeliveryTargets.GetMyKindleTargetAsync();
+            // With no delivery service, leave the target unset so nothing offers a send.
+            kindleAvailable = await DeliveryTargets.IsKindleDeliveryAvailableAsync();
+            kindleTarget = kindleAvailable ? await DeliveryTargets.GetMyKindleTargetAsync() : null;
             sendToKindle = kindleTarget is { IsEnabled: true, SendByDefault: true };
         }
         catch (HttpRequestException)

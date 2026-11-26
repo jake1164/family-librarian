@@ -1162,7 +1162,7 @@ several weaker signals in a later one:
 1. **Completeness.** A recording known to be abridged ranks behind one that
    is not known to be.
 2. **Narration**, governed by the requester's own narration preference
-   (`/settings/audiobook-narration`, defaulting to *Prefer human narration*
+   (`/settings/formats`, defaulting to *Prefer human narration*
    for every account): under *Prefer human narration*, a confirmed human
    recording outranks every other candidate, but
    a synthetic (computer-generated) one remains fully eligible when no human

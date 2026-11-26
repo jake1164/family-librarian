@@ -2,10 +2,9 @@ namespace FamilyLibrarian.Domain.Accounts;
 
 /// <summary>
 /// A household member's own daily "do not disturb" window, expressed in their
-/// own local time zone (HUMAN-ACQ-1 D9). Stored as a general per-user setting;
-/// as of this slice it is enforced only by the Matrix verification alert — see
-/// <c>.ai_docs/human-acq-1-matrix-authorize-plan.md</c> and the deferred
-/// <c>NOTIFY-QUIET-1</c> master-plan item for extending it to every notification.
+/// own local time zone (HUMAN-ACQ-1 D9). Queued email and Matrix notifications,
+/// and administrator verification alerts, wait until the window ends. Messages
+/// the user is waiting for, such as a Matrix link code or chat reply, are not held.
 /// </summary>
 /// <remarks>
 /// <see cref="StartMinute"/>/<see cref="EndMinute"/> are minutes after local

@@ -65,8 +65,7 @@ public sealed class CwaEreaderDeliveryProvider(
         var settings = await settingsStore.FindAsync(cancellationToken);
         if (!IsConfigured(settings))
         {
-            return new ConnectionTestOutcome(
-                false, "Configure an e-reader delivery service account username and password before testing.");
+            return new ConnectionTestOutcome(false, DeliveryTargetService.DeliveryUnavailableMessage);
         }
 
         var password = ResolvePassword(settings!);
@@ -74,7 +73,7 @@ public sealed class CwaEreaderDeliveryProvider(
         {
             return new ConnectionTestOutcome(
                 false, "The saved e-reader delivery service account password can no longer be decrypted. " +
-                       "Enter it again, then save and test.");
+                       "Ask an administrator to re-enter it.");
         }
 
         var login = await sessionClient.TestLoginAsync(

@@ -43,6 +43,8 @@ public sealed class EndpointAuthorizationTests
     [TestMethod]
     [DataRow("/api/v1/me")]
     [DataRow("/api/v1/me/quiet-hours/")]
+    [DataRow("/api/v1/me/default-request-format/")]
+    [DataRow("/api/v1/me/delivery/kindle/availability")]
     [DataRow("/api/v1/antiforgery/token")]
     [DataRow("/api/v1/admin/ping")]
     [DataRow("/api/v1/admin/integrations/metadata/")]

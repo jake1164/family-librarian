@@ -308,8 +308,8 @@ a new code replaces the old one, and the page can unlink the account again.
 
 Once linked, notifications arrive as chat messages. A "did your book arrive?"
 question after a Kindle send can be answered by replying `yes` or `no` in chat
-instead of the web page; answering twice is harmless. Quiet hours on the same
-page are described under the verification alert in
+instead of the web page; answering twice is harmless. Quiet hours, which hold
+these messages overnight, are described under
 [Reverse proxy and secrets](#reverse-proxy-and-secrets). Administrator human-check
 alerts also use this channel.
 
@@ -374,6 +374,10 @@ Communications SMTP settings serve a different purpose.
    CWA ingest configuration is also separate from sending an existing book.
    The e-reader account requires a reachable form-login endpoint; an interactive
    SSO-only login is not sufficient for this integration.
+   Until the base URL, username and password are all saved, **Ebook delivery**
+   says Kindle delivery isn't available: users can't add a Kindle address or
+   run the sign-in test, and book pages offer no Kindle sends. An address saved
+   earlier is kept and can still be edited or disabled.
 4. Use **Ebook delivery → Test service sign-in** to verify saved credentials.
    This does not verify send permissions, mail delivery, or on-device arrival.
    Make the first actual send with one intended recipient and one suitable book,
@@ -611,10 +615,27 @@ web chat always links saved records.
 
 Each administrator links their own Matrix ID at **Settings → Matrix chat**
 (`/settings/matrix`) to receive this alert; an administrator with no verified
-link simply receives none. The same page's quiet hours (a time zone and daily
-window) hold this alert until the window ends instead of dropping it — a
-general per-account setting, not admin-only, though only administrators
-receive an alert this slice enforces it against today.
+link simply receives none.
+
+Any user can set quiet hours (a time zone and daily window) at **Settings →
+Quiet hours** (`/settings/quiet-hours`). Their queued email and Matrix
+notifications, and an administrator's verification alerts, wait until the window
+ends instead of being dropped. Books are still found and delivered, including
+Kindle sends, and in-app notifications are unaffected. Messages a user is waiting
+for, such as a Matrix link code or a chat reply, are not held. A
+typed Matrix "yes", "no", "take" or "keep looking" only answers a message that
+has already been sent. The page is disabled until email or Matrix delivery is
+switched on.
+
+**My Kindle deliveries** appears in the side menu once Kindle delivery is set up,
+or for a user who already has delivery history. **Settings → Format preferences**
+(`/settings/formats`) sets which formats a user's request forms start with
+(ebook, audiobook or both) and their audiobook narration choice; choices for a
+format that isn't set up are disabled. Chat requests still state their format.
+
+Until an administrator saves a homeserver and access token and enables Matrix
+under **Communications**, that page says Matrix chat isn't available and nobody
+can start a link. An existing link is kept and can still be removed.
 
 Keep PostgreSQL credentials, bootstrap credentials, OIDC secrets, and provider
 credentials outside the repository. Provider credentials entered through the

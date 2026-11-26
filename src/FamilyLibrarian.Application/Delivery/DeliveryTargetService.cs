@@ -34,6 +34,18 @@ public sealed class DeliveryTargetService(
 {
     private const string CwaProviderId = "cwa";
 
+    /// <summary>Shown to any signed-in user, so it names who can fix it rather than which settings are missing.</summary>
+    public const string DeliveryUnavailableMessage =
+        "Kindle delivery isn't available yet. An administrator needs to set up the delivery service.";
+
+    /// <summary>
+    /// Whether the shared delivery service has enough saved configuration to
+    /// send a book. It says nothing about whether the saved sign-in works, and
+    /// exposes no configuration detail, so any signed-in user may ask.
+    /// </summary>
+    public async Task<bool> IsKindleDeliveryAvailableAsync(CancellationToken cancellationToken) =>
+        FindDeliveryProvider() is { } provider && await provider.CanDeliverAsync(cancellationToken);
+
     public async Task<DeliveryTarget?> GetMyKindleTargetAsync(CancellationToken cancellationToken) =>
         currentUser.UserId is { } userId
             ? await FindKindleTargetAsync(userId, cancellationToken)
@@ -70,6 +82,13 @@ public sealed class DeliveryTargetService(
                 // The client's expectedVersion came from a row that is gone now
                 // (removed from another tab, say) -- not a blind create.
                 return SetKindleTargetResult.Conflict();
+            }
+
+            // Only adding is refused. An existing address stays editable if the
+            // service is later removed, so its owner is never stuck with it.
+            if (!await IsKindleDeliveryAvailableAsync(cancellationToken))
+            {
+                return SetKindleTargetResult.Invalid(DeliveryUnavailableMessage);
             }
 
             var created = new DeliveryTarget(
@@ -131,7 +150,7 @@ public sealed class DeliveryTargetService(
             return new TestKindleDeliveryResult(false, "Sign in and try again.");
         }
 
-        var provider = deliveryProviders.FirstOrDefault(candidate => candidate.Id == CwaProviderId);
+        var provider = FindDeliveryProvider();
         if (provider is null)
         {
             return new TestKindleDeliveryResult(false, "Kindle delivery is not available.");
@@ -235,6 +254,9 @@ public sealed class DeliveryTargetService(
             target.Id.ToString(),
             new { target.Id, target.UserId, target.IsEnabled },
             cancellationToken);
+
+    private IEbookDeliveryProvider? FindDeliveryProvider() =>
+        deliveryProviders.FirstOrDefault(candidate => candidate.Id == CwaProviderId);
 
     private async Task<DeliveryTarget?> FindKindleTargetAsync(Guid userId, CancellationToken cancellationToken)
     {

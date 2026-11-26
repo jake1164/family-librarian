@@ -334,7 +334,11 @@ public sealed class PublishingQueueEndpointTests
         using var userA = factory.CreateClient(new WebApplicationFactoryClientOptions { AllowAutoRedirect = false });
         await SignInAsAdminAsync(userA);
         userA.DefaultRequestHeaders.Add(AntiforgeryTokenEndpoint.HeaderName, await WebTestFixture.GetAntiforgeryTokenAsync(userA));
-        using var userB = await fixture.CreateUserClientAsync();
+        // Signed in through the same host as user A, so both see the same delivery provider.
+        using var userB = factory.CreateClient(new WebApplicationFactoryClientOptions { AllowAutoRedirect = false });
+        var signedInB = await userB.PostAsJsonAsync("/api/auth/login",
+            new LoginRequest { Email = WebTestFixture.UserEmail, Password = WebTestFixture.UserPassword });
+        Assert.AreEqual(HttpStatusCode.NoContent, signedInB.StatusCode);
         userB.DefaultRequestHeaders.Add(AntiforgeryTokenEndpoint.HeaderName, await WebTestFixture.GetAntiforgeryTokenAsync(userB));
 
         await ConfigureCwaAsync(userA);

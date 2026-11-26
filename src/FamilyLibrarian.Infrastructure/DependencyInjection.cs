@@ -270,6 +270,7 @@ public static class DependencyInjection
         services.AddScoped<OutboundCommunicationService>();
         services.AddScoped<OutboundCommunicationDispatcher>();
         services.AddScoped<IUserEmailLookup, UserEmailLookup>();
+        services.AddScoped<IUserQuietHoursLookup, UserQuietHoursLookup>();
         services.AddScoped<IOutboundCommunicationProvider, SmtpOutboundCommunicationProvider>();
 
         // Matrix (COMM-1): a second IOutboundCommunicationProvider, plus the
@@ -507,6 +508,8 @@ public static class DependencyInjection
         services.AddScoped<InvitationService>();
         services.AddScoped<AccountAdminService>();
         services.AddScoped<AudiobookNarrationPreferenceService>();
+        services.AddScoped<IDefaultRequestFormatStore, IdentityDefaultRequestFormatStore>();
+        services.AddScoped<DefaultRequestFormatService>();
         services.AddScoped<QuietHoursPreferenceService>();
 
         services.AddHttpContextAccessor();

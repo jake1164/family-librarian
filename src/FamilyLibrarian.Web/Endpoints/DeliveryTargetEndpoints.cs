@@ -18,6 +18,7 @@ internal static class DeliveryTargetEndpoints
             .AddEndpointFilter<AntiforgeryEndpointFilter>();
 
         kindle.MapGet("/", GetMyKindleTargetAsync);
+        kindle.MapGet("/availability", GetKindleAvailabilityAsync);
         kindle.MapPut("/", SetMyKindleAddressAsync);
         kindle.MapPut("/enabled", SetMyKindleEnabledAsync);
         kindle.MapPost("/test", TestMyKindleDeliveryAsync);
@@ -54,6 +55,12 @@ internal static class DeliveryTargetEndpoints
         var target = await service.GetMyKindleTargetAsync(cancellationToken);
         return target is null ? Results.NotFound() : Results.Ok(ToResponse(target));
     }
+
+    private static async Task<IResult> GetKindleAvailabilityAsync(
+        DeliveryTargetService service,
+        CancellationToken cancellationToken) =>
+        Results.Ok(new KindleDeliveryAvailabilityResponse(
+            await service.IsKindleDeliveryAvailableAsync(cancellationToken)));
 
     private static async Task<IResult> SetMyKindleAddressAsync(
         SetKindleAddressRequest request,

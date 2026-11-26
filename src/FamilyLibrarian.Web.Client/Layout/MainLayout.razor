@@ -8,6 +8,7 @@
 @inject LiveUpdatesService Updates
 @inject CatalogApiClient Catalog
 @inject FamilyLibrarian.Web.Client.Conversation.ConversationApiClient Conversation
+@inject FamilyLibrarian.Web.Client.Delivery.DeliveryTargetApiClient KindleDelivery
 @using FamilyLibrarian.Contracts.Operations
 @using FamilyLibrarian.Web.Client.Catalog
 @using FamilyLibrarian.Web.Client.Operations
@@ -68,9 +69,10 @@
                     </ActivatorContent>
                     <ChildContent>
                         <MudMenuItem Href="settings/ebook-delivery" Icon="@Icons.Material.Filled.Tablet">Ebook delivery</MudMenuItem>
-                        <MudMenuItem Href="settings/audiobook-narration" Icon="@Icons.Material.Filled.RecordVoiceOver">Audiobook narration</MudMenuItem>
+                        <MudMenuItem Href="settings/formats" Icon="@Icons.Material.Filled.AutoStories">Format preferences</MudMenuItem>
                         <MudMenuItem Href="settings/acquisition-preferences" Icon="@Icons.Material.Filled.Rule">Saved acquisition choices</MudMenuItem>
                         <MudMenuItem Href="settings/matrix" Icon="@Icons.Material.Filled.Chat">Matrix chat</MudMenuItem>
+                        <MudMenuItem Href="settings/quiet-hours" Icon="@Icons.Material.Filled.Bedtime">Quiet hours</MudMenuItem>
                         <AuthorizeView Roles="Admin" Context="settingsAdminContext">
                             <MudDivider Class="my-1" />
                             <MudMenuItem Href="settings/metadata-providers" Icon="@Icons.Material.Filled.AutoStories">Metadata providers</MudMenuItem>
@@ -170,7 +172,10 @@
                 <MudNavLink Href="requests" Icon="@Icons.Material.Filled.MenuBook">My requests</MudNavLink>
                 <MudNavLink Href="reading" Icon="@Icons.Material.Filled.Star">My reading</MudNavLink>
                 <MudNavLink Href="following" Icon="@Icons.Material.Filled.Bookmarks">Following</MudNavLink>
-                <MudNavLink Href="deliveries" Icon="@Icons.Material.Filled.Tablet">My Kindle deliveries</MudNavLink>
+                @if (showKindleDeliveries)
+                {
+                    <MudNavLink Href="deliveries" Icon="@Icons.Material.Filled.Tablet">My Kindle deliveries</MudNavLink>
+                }
                 @* Plain "open the library" links to the connected CWA/Audiobookshelf
                    sites, distinct from the per-book deep links on WorkDetail/BookDetail.
                    Hidden per-destination when it isn't enabled or has no URL configured. *@
@@ -290,6 +295,7 @@
     private SystemReadinessResponse? systemReadiness;
     private ExternalLibraryLinksResponse? externalLibraryLinks;
     private bool conversationEnabled;
+    private bool showKindleDeliveries;
 
     private int ProviderIssueCount => adminAttention?.ProviderIssues.Count ?? 0;
 
@@ -372,12 +378,14 @@
                     await RefreshSystemReadinessAsync(token);
                     await RefreshExternalLibraryLinksAsync(token);
                     await RefreshConversationAsync(token);
+                    await RefreshKindleDeliveriesAsync(token);
                 }
                 else
                 {
                     systemReadiness = null;
                     externalLibraryLinks = null;
                     conversationEnabled = false;
+                    showKindleDeliveries = false;
                 }
                 if (isAdmin)
                 {
@@ -452,6 +460,20 @@
         catch (HttpRequestException)
         {
             // Best-effort: the Chat link just stays hidden.
+        }
+    }
+
+    private async Task RefreshKindleDeliveriesAsync(CancellationToken cancellationToken)
+    {
+        try
+        {
+            // Someone with past deliveries keeps the link even if the service is later removed.
+            showKindleDeliveries = await KindleDelivery.IsKindleDeliveryAvailableAsync(cancellationToken) ||
+                (await KindleDelivery.ListMyAttemptsAsync(cancellationToken)).Count > 0;
+        }
+        catch (HttpRequestException)
+        {
+            // Best-effort: the link keeps its last known state.
         }
     }
 

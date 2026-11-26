@@ -19,6 +19,10 @@ public sealed class DeliveryTargetApiClient(HttpClient httpClient, AntiforgeryTo
         return await response.Content.ReadFromJsonAsync<PersonalDeliveryAttemptResponse>(cancellationToken);
     }
 
+    public async Task<bool> IsKindleDeliveryAvailableAsync(CancellationToken cancellationToken = default) =>
+        (await httpClient.GetFromJsonAsync<KindleDeliveryAvailabilityResponse>(
+            "api/v1/me/delivery/kindle/availability", cancellationToken))?.IsAvailable ?? false;
+
     public async Task<DeliveryTargetResponse?> GetMyKindleTargetAsync(
         CancellationToken cancellationToken = default)
     {

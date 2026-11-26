@@ -1,7 +1,9 @@
 using FamilyLibrarian.Application.Abstractions;
 using FamilyLibrarian.Application.Accounts;
+using FamilyLibrarian.Application.Communications;
 using FamilyLibrarian.Application.Integrations;
 using FamilyLibrarian.Domain.Accounts;
+using FamilyLibrarian.Domain.Communications;
 
 namespace FamilyLibrarian.Infrastructure.Tests.Accounts;
 
@@ -97,8 +99,30 @@ public sealed class QuietHoursPreferenceServiceTests
         Assert.IsNull(store.StoredQuietHours(userId));
     }
 
+    [TestMethod]
+    public async Task MessagingIsAvailableOnlyWhenSomeProviderIsSwitchedOn()
+    {
+        QuietHoursPreferenceService With(params bool[] enabled) => new(
+            new FakeAccountStore(), new StubCurrentUser(null), new RecordingAuditWriter(),
+            enabled.Select(value => new StubProvider(value)).ToArray());
+
+        Assert.IsFalse(await With().IsMessagingAvailableAsync(CancellationToken.None));
+        Assert.IsFalse(await With(false, false).IsMessagingAvailableAsync(CancellationToken.None));
+        Assert.IsTrue(await With(false, true).IsMessagingAvailableAsync(CancellationToken.None));
+    }
+
+    private sealed class StubProvider(bool enabled) : IOutboundCommunicationProvider
+    {
+        public string ProviderId => "stub";
+
+        public Task<bool> IsEnabledAsync(CancellationToken cancellationToken) => Task.FromResult(enabled);
+
+        public Task<SendResult> SendAsync(OutboundCommunication communication, CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+    }
+
     private static QuietHoursPreferenceService Create(IUserAccountStore store, Guid? userId, IAuditWriter? audit = null) =>
-        new(store, new StubCurrentUser(userId), audit ?? new RecordingAuditWriter());
+        new(store, new StubCurrentUser(userId), audit ?? new RecordingAuditWriter(), []);
 
     private sealed class StubCurrentUser(Guid? userId) : ICurrentUser
     {

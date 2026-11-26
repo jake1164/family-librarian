@@ -192,6 +192,10 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options)
                 .HasColumnName("audiobook_narration_preference")
                 .HasConversion<string>()
                 .HasMaxLength(32);
+            entity.Property(user => user.DefaultRequestFormat)
+                .HasColumnName("default_request_format")
+                .HasConversion<string>()
+                .HasMaxLength(32);
             entity.Property(user => user.QuietHoursTimeZoneId).HasColumnName("quiet_hours_time_zone_id").HasMaxLength(64);
             entity.Property(user => user.QuietHoursStartMinute).HasColumnName("quiet_hours_start_minute");
             entity.Property(user => user.QuietHoursEndMinute).HasColumnName("quiet_hours_end_minute");

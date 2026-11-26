@@ -1,0 +1,182 @@
+@page "/settings/formats"
+@attribute [Authorize]
+@using FamilyLibrarian.Contracts.Catalog
+@using FamilyLibrarian.Web.Client.Accounts
+@using FamilyLibrarian.Web.Client.Catalog
+@inject DefaultRequestFormatApiClient DefaultFormatApi
+@inject AudiobookNarrationPreferenceApiClient NarrationApi
+@inject CatalogApiClient Catalog
+@inject ISnackbar Snackbar
+
+<PageTitle>Format preferences · Family Librarian</PageTitle>
+
+<MudText Typo="Typo.h4" GutterBottom="true">Format preferences</MudText>
+
+@if (isLoading)
+{
+    <MudProgressCircular Indeterminate="true" aria-label="Loading format preferences" />
+}
+else if (loadFailed)
+{
+    <MudAlert Severity="Severity.Error">We could not load your format preferences.</MudAlert>
+}
+else
+{
+    <MudText Typo="Typo.h5" GutterBottom="true">Request by default</MudText>
+    <MudText Typo="Typo.body1" Class="mb-4">
+        Which formats are already ticked when you ask for a book. You can still change them for each request.
+    </MudText>
+    @if (!EbookOffered || !AudiobookOffered)
+    {
+        <MudAlert Severity="Severity.Info" Class="mb-3">
+            @UnavailableText Choices that need it are turned off until an administrator sets it up.
+        </MudAlert>
+    }
+    <MudPaper Class="pa-4" Outlined="true">
+        <MudRadioGroup T="string" Value="@defaultFormat" ValueChanged="@SetDefaultFormatAsync" Disabled="@busy">
+            <MudRadio T="string" Value="@("Ebook")" Color="Color.Primary" Disabled="@(!EbookOffered)">Ebook</MudRadio>
+            <MudRadio T="string" Value="@("Audiobook")" Color="Color.Primary" Disabled="@(!AudiobookOffered)">Audiobook</MudRadio>
+            <MudRadio T="string" Value="@("Both")" Color="Color.Primary" Disabled="@(!EbookOffered || !AudiobookOffered)">Both</MudRadio>
+        </MudRadioGroup>
+    </MudPaper>
+
+    <MudText Typo="Typo.h5" GutterBottom="true" Class="mt-8">Audiobook narration</MudText>
+    <MudText Typo="Typo.body1" Class="mb-4">
+        Controls which audiobook recording Family Librarian picks automatically when a
+        requested title has more than one acceptable recording. This never overrides
+        identity, language, or rights checks -- it only breaks a tie between otherwise
+        acceptable copies.
+    </MudText>
+    @if (!AudiobookOffered)
+    {
+        <MudAlert Severity="Severity.Info" Class="mb-3">
+            Audiobooks aren't available yet, so there is nothing to choose here.
+        </MudAlert>
+    }
+    <MudPaper Class="pa-4" Outlined="true">
+        <MudRadioGroup T="string" Value="@narration" ValueChanged="@SetNarrationAsync" Disabled="@(busy || !AudiobookOffered)">
+            <MudRadio T="string" Value="@("PreferHuman")" Color="Color.Primary" Disabled="@(!AudiobookOffered)">
+                <MudText Typo="Typo.subtitle1">Prefer human narration</MudText>
+                <MudText Typo="Typo.body2" Class="mud-text-secondary">
+                    Prefer human-narrated copies when available, but allow synthetic narration
+                    when it is the only suitable option.
+                </MudText>
+            </MudRadio>
+            <MudRadio T="string" Value="@("HumanOnly")" Color="Color.Primary" Class="mt-4" Disabled="@(!AudiobookOffered)">
+                <MudText Typo="Typo.subtitle1">Human narration only</MudText>
+                <MudText Typo="Typo.body2" Class="mud-text-secondary">
+                    Do not automatically acquire recordings known to use synthetic narration.
+                </MudText>
+            </MudRadio>
+            <MudRadio T="string" Value="@("NoPreference")" Color="Color.Primary" Class="mt-4" Disabled="@(!AudiobookOffered)">
+                <MudText Typo="Typo.subtitle1">No narration preference</MudText>
+                <MudText Typo="Typo.body2" Class="mud-text-secondary">
+                    Do not use narration type when choosing among otherwise suitable copies.
+                </MudText>
+            </MudRadio>
+        </MudRadioGroup>
+    </MudPaper>
+}
+
+@code {
+    private bool isLoading = true;
+    private bool loadFailed;
+    private bool busy;
+    private string defaultFormat = "Ebook";
+    private string narration = "PreferHuman";
+    private RequestFormatsResponse? requestFormats;
+
+    // A failed readiness lookup leaves every choice open: saving one is harmless.
+    private bool EbookOffered => requestFormats?.Ebook.IsEnabled ?? true;
+    private bool AudiobookOffered => requestFormats?.Audiobook.IsEnabled ?? true;
+
+    private string UnavailableText => (EbookOffered, AudiobookOffered) switch
+    {
+        (false, false) => "Ebooks and audiobooks aren't available yet.",
+        (false, true) => "Ebooks aren't available yet.",
+        _ => "Audiobooks aren't available yet."
+    };
+
+    protected override async Task OnInitializedAsync()
+    {
+        try
+        {
+            defaultFormat = await DefaultFormatApi.GetAsync() ?? defaultFormat;
+            narration = (await NarrationApi.GetAsync())?.Preference ?? narration;
+        }
+        catch (HttpRequestException)
+        {
+            loadFailed = true;
+        }
+
+        try
+        {
+            requestFormats = await Catalog.GetRequestFormatsAsync();
+        }
+        catch (HttpRequestException)
+        {
+            requestFormats = null;
+        }
+
+        isLoading = false;
+    }
+
+    private async Task SetDefaultFormatAsync(string value)
+    {
+        var previous = defaultFormat;
+        defaultFormat = value;
+        busy = true;
+
+        try
+        {
+            if (await DefaultFormatApi.SetAsync(value))
+            {
+                Snackbar.Add("Default request format saved.", Severity.Success);
+            }
+            else
+            {
+                defaultFormat = previous;
+                Snackbar.Add("That could not be saved.", Severity.Error);
+            }
+        }
+        catch (HttpRequestException)
+        {
+            defaultFormat = previous;
+            Snackbar.Add("That could not be saved. Please try again.", Severity.Error);
+        }
+        finally
+        {
+            busy = false;
+        }
+    }
+
+    private async Task SetNarrationAsync(string value)
+    {
+        var previous = narration;
+        narration = value;
+        busy = true;
+
+        try
+        {
+            var result = await NarrationApi.SetAsync(value);
+            if (result.Succeeded)
+            {
+                Snackbar.Add("Audiobook narration preference saved.", Severity.Success);
+            }
+            else
+            {
+                narration = previous;
+                Snackbar.Add(result.Error ?? "That could not be saved.", Severity.Error);
+            }
+        }
+        catch (HttpRequestException)
+        {
+            narration = previous;
+            Snackbar.Add("That could not be saved. Please try again.", Severity.Error);
+        }
+        finally
+        {
+            busy = false;
+        }
+    }
+}
