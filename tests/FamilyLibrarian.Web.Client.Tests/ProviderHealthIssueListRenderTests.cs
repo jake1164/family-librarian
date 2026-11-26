@@ -6,7 +6,7 @@ using Microsoft.Extensions.DependencyInjection;
 using MudBlazor.Services;
 using Microsoft.Extensions.Logging.Abstractions;
 
-namespace FamilyLibrarian.Web.Tests;
+namespace FamilyLibrarian.Web.Client.Tests;
 
 /// <summary>
 /// Provider-authored issue text must reach the admin page as inert text.

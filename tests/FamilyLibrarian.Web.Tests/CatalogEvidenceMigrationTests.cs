@@ -23,6 +23,7 @@ namespace FamilyLibrarian.Web.Tests;
 /// on real PostgreSQL.
 /// </summary>
 [TestClass]
+[TestCategory("Migration")]
 public sealed class CatalogEvidenceMigrationTests
 {
     private const string MigrationSuffix = "_AddCatalogObservationEvidence";

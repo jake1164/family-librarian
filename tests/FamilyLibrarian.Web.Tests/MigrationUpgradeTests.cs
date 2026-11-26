@@ -20,6 +20,7 @@ namespace FamilyLibrarian.Web.Tests;
 /// the checked-in current model without rebuilding its database from scratch.
 /// </summary>
 [TestClass]
+[TestCategory("Migration")]
 public sealed class MigrationUpgradeTests
 {
     [TestMethod]

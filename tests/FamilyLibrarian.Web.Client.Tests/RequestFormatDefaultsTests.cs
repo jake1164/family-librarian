@@ -1,7 +1,7 @@
 using FamilyLibrarian.Contracts.Catalog;
 using FamilyLibrarian.Web.Client.Requests;
 
-namespace FamilyLibrarian.Web.Tests;
+namespace FamilyLibrarian.Web.Client.Tests;
 
 [TestClass]
 public sealed class RequestFormatDefaultsTests

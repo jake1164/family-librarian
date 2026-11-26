@@ -5,7 +5,7 @@ using System.Globalization;
 using System.Text.Json;
 using FamilyLibrarian.Application.Catalog;
 
-namespace FamilyLibrarian.Web.Tests;
+namespace FamilyLibrarian.Infrastructure.Tests.Catalog;
 
 /// <summary>
 /// The temporary browse cache is a bounded, owner-private operational store. Time is always passed in, so these tests

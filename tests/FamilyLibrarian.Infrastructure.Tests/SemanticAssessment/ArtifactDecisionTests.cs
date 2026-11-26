@@ -1,5 +1,5 @@
 using System.Text.Json;
-using System.Diagnostics;
+using FamilyLibrarian.Infrastructure.Tests.Catalog;
 using FamilyLibrarian.Application.Abstractions;
 using FamilyLibrarian.Application.ModelGateway;
 using FamilyLibrarian.Application.Security;
@@ -326,13 +326,27 @@ public sealed class ArtifactDecisionTests
     [DataRow(120, 45)]
     public async Task ActualDeadlineUsesTheSmallerOfInstallationAnd45Seconds(int installation, int seconds)
     {
-        var kit = new ArtifactDecisionKit { TimeoutSeconds = installation,
-            BeforeParseAsync = token => Task.Delay(Timeout.InfiniteTimeSpan, token) };
-        var elapsed = Stopwatch.StartNew();
-        Assert.IsNull(await kit.Service.GetHoldAsync(ArtifactDecisionKit.Asset(), ArtifactDecisionKit.Match(),
-            ArtifactDecisionKit.Expected, CancellationToken.None));
-        Assert.IsTrue(elapsed.Elapsed.TotalSeconds >= seconds - 1 && elapsed.Elapsed.TotalSeconds < seconds + 15);
+        var time = new SteppedClock();
+        var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var kit = new ArtifactDecisionKit
+        {
+            TimeoutSeconds = installation,
+            TimeProvider = time,
+            BeforeParseAsync = token =>
+            {
+                entered.SetResult();
+                return Task.Delay(Timeout.InfiniteTimeSpan, token);
+            }
+        };
+        var review = kit.Service.GetHoldAsync(ArtifactDecisionKit.Asset(), ArtifactDecisionKit.Match(),
+            ArtifactDecisionKit.Expected, CancellationToken.None);
+        await entered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        time.Advance(TimeSpan.FromSeconds(seconds) - TimeSpan.FromTicks(1));
+        Assert.IsFalse(review.IsCompleted, "The review must remain pending before its deadline.");
+        time.Advance(TimeSpan.FromTicks(1));
+        Assert.IsNull(await review.WaitAsync(TimeSpan.FromSeconds(5)));
         Assert.AreEqual(ModelCallOutcome.Timeout, kit.Store.Findings.Single().Outcome);
+        Assert.AreEqual(0, time.PendingTimers, "Disposing the review must release its deadline timer.");
     }
 
     [TestMethod]
@@ -411,6 +425,7 @@ internal sealed class ArtifactDecisionKit : IModelRoleResolver, IModelExecutionP
     public bool Cloud { get; init; }
     public bool AllowDetails { get; init; }
     public int TimeoutSeconds { get; init; } = 30;
+    public TimeProvider? TimeProvider { get; init; }
     public string Outcome { get; set; } = "hold";
     public string? Response { get; set; }
     public ModelCallOutcome? PolicyFailure { get; init; }
@@ -419,7 +434,7 @@ internal sealed class ArtifactDecisionKit : IModelRoleResolver, IModelExecutionP
     public Action<CancellationToken>? BeforeParse { get; init; }
     public Func<CancellationToken, Task>? BeforeParseAsync { get; init; }
     public FakeFindingStore Store { get; } = new();
-    public ArtifactDecisionService Service => new(this, this, Store, this);
+    public ArtifactDecisionService Service => new(this, this, Store, this, timeProvider: TimeProvider);
     public static ExpectedArtifactProfile Expected { get; } = new("Cinder Gate", [], "Mara Quillon", [], [], "en", 100, null, false);
     public static AssetIdentityVerificationResult Match() => AssetIdentityVerificationResult.Match("test",
         [new("ev-title", EvidenceDimension.IdentityCorroboration, "identity.title_agrees", EvidencePolarity.Positive),

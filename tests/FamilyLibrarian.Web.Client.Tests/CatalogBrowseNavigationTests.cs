@@ -5,7 +5,7 @@ using FamilyLibrarian.Contracts.Catalog;
 using FamilyLibrarian.Web.Client.Catalog;
 using Microsoft.AspNetCore.Components.Authorization;
 
-namespace FamilyLibrarian.Web.Tests;
+namespace FamilyLibrarian.Web.Client.Tests;
 
 [TestClass]
 public sealed class CatalogBrowseNavigationTests

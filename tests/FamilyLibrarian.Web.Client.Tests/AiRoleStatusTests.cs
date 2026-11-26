@@ -1,7 +1,7 @@
 using FamilyLibrarian.Contracts.ModelGateway;
 using FamilyLibrarian.Web.Client.ModelGateway;
 
-namespace FamilyLibrarian.Web.Tests;
+namespace FamilyLibrarian.Web.Client.Tests;
 
 /// <summary>C1-d step 1: the per-feature status is a fixed rule over counts, states its reason, and is not a quality score.</summary>
 [TestClass]

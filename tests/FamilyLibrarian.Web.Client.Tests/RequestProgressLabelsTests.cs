@@ -1,7 +1,7 @@
 using FamilyLibrarian.Contracts.Requests;
 using FamilyLibrarian.Web.Client.Requests;
 
-namespace FamilyLibrarian.Web.Tests;
+namespace FamilyLibrarian.Web.Client.Tests;
 
 /// <summary>
 /// The word beside a request's title must agree with its format chips. The lab: a book whose ebook said "Fetching from the

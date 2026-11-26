@@ -12,14 +12,14 @@ public sealed class OpenAiCompatibleModelClientTests
 {
     private const string Key = "sk-test-key-123";
 
-    private sealed class Handler(Func<HttpRequestMessage, Task<HttpResponseMessage>> respond) : HttpMessageHandler
+    private sealed class Handler(Func<HttpRequestMessage, CancellationToken, Task<HttpResponseMessage>> respond) : HttpMessageHandler
     {
         public List<(HttpRequestMessage Request, string Body)> Seen { get; } = [];
 
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
         {
             Seen.Add((request, request.Content is null ? string.Empty : await request.Content.ReadAsStringAsync(cancellationToken)));
-            return await respond(request);
+            return await respond(request, cancellationToken);
         }
     }
 
@@ -43,6 +43,9 @@ public sealed class OpenAiCompatibleModelClientTests
         "\"usage\":{\"prompt_tokens\":11,\"completion_tokens\":2,\"total_tokens\":13}}";
 
     private static (OpenAiCompatibleModelClient Client, Handler Handler) Make(Func<HttpRequestMessage, Task<HttpResponseMessage>> respond)
+        => Make((request, _) => respond(request));
+
+    private static (OpenAiCompatibleModelClient Client, Handler Handler) Make(Func<HttpRequestMessage, CancellationToken, Task<HttpResponseMessage>> respond)
     {
         var handler = new Handler(respond);
         return (new OpenAiCompatibleModelClient(new Factory(handler)), handler);
@@ -171,14 +174,14 @@ public sealed class OpenAiCompatibleModelClientTests
     [TestMethod]
     public async Task AnAnswerThatNeverComesIsATimeoutNotAHangOrAnException()
     {
-        var (client, _) = Make(async _ =>
+        var (client, _) = Make(async (_, token) =>
         {
-            await Task.Delay(TimeSpan.FromSeconds(30));
+            await Task.Delay(Timeout.InfiniteTimeSpan, token);
             return Json(HttpStatusCode.OK, Success);
         });
         var connection = Connection() with { Timeout = TimeSpan.FromMilliseconds(100) };
 
-        var response = await client.CompleteAsync(connection, Request(), CancellationToken.None);
+        var response = await client.CompleteAsync(connection, Request(), CancellationToken.None).WaitAsync(TimeSpan.FromSeconds(5));
 
         Assert.AreEqual(ModelFailureKind.Timeout, response.Failure);
     }
@@ -186,14 +189,15 @@ public sealed class OpenAiCompatibleModelClientTests
     [TestMethod]
     public async Task CancellationByTheCallerPropagates()
     {
-        var (client, _) = Make(async request =>
+        var (client, _) = Make(async (_, token) =>
         {
-            await Task.Delay(TimeSpan.FromSeconds(30));
+            await Task.Delay(Timeout.InfiniteTimeSpan, token);
             return Json(HttpStatusCode.OK, Success);
         });
         using var cancellation = new CancellationTokenSource(TimeSpan.FromMilliseconds(100));
 
-        await Assert.ThrowsAsync<TaskCanceledException>(() => client.CompleteAsync(Connection(seconds: 60), Request(), cancellation.Token));
+        await Assert.ThrowsAsync<TaskCanceledException>(() => client.CompleteAsync(Connection(seconds: 60), Request(), cancellation.Token)
+            .WaitAsync(TimeSpan.FromSeconds(5)));
     }
 
     [TestMethod]

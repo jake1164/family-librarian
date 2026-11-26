@@ -11,7 +11,7 @@ using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.JSInterop;
 using MudBlazor.Services;
 
-namespace FamilyLibrarian.Web.Tests;
+namespace FamilyLibrarian.Web.Client.Tests;
 
 /// <summary>The saved-decisions panel and its form: plain wording, counts only, and a form that knows what changed.</summary>
 [TestClass]

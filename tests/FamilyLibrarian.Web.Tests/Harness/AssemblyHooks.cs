@@ -1,9 +1,7 @@
-// Classes run in parallel; tests within a class stay sequential, because several
-// boot a second host over their class's database. Each class owns its database
-// and host, the shared container only hands out clones, and host startup (the
-// one process-wide step) is serialized in FamilyLibrarianAppFactory.CreateHost.
-// A class that cannot share the machine opts out with [DoNotParallelize].
-[assembly: Parallelize(Scope = ExecutionScope.ClassLevel, Workers = 0)]
+// Bound concurrent host construction independently of the machine's CPU count.
+// Each class owns its database; methods stay sequential because some restart a
+// host over that database. Classes sharing process-wide state opt out explicitly.
+[assembly: Parallelize(Scope = ExecutionScope.ClassLevel, Workers = 8)]
 
 namespace FamilyLibrarian.Web.Tests.Harness;
 

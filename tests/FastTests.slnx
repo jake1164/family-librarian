@@ -1,0 +1,5 @@
+<Solution>
+  <Project Path="FamilyLibrarian.Domain.Tests/FamilyLibrarian.Domain.Tests.csproj" />
+  <Project Path="FamilyLibrarian.Infrastructure.Tests/FamilyLibrarian.Infrastructure.Tests.csproj" />
+  <Project Path="FamilyLibrarian.Web.Client.Tests/FamilyLibrarian.Web.Client.Tests.csproj" />
+</Solution>

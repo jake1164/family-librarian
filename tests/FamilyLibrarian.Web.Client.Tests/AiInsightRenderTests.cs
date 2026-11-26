@@ -11,7 +11,7 @@ using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.JSInterop;
 using MudBlazor.Services;
 
-namespace FamilyLibrarian.Web.Tests;
+namespace FamilyLibrarian.Web.Client.Tests;
 
 /// <summary>C1-d on screen: the period selector, the plain status with its reason, speed and tokens, and the trend and effectiveness panels.</summary>
 [TestClass]

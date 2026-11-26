@@ -114,6 +114,7 @@ public sealed class SearchUsabilityEndpointTests
     }
 
     [TestMethod]
+    [TestCategory("Release")]
     public async Task ReaderCanCompareBothNovelsAndRecognizeRelatedVersionsOnDesktopAndMobile()
     {
         if (Environment.GetEnvironmentVariable("FAMILY_LIBRARIAN_SEARCH_BROWSER_TESTS") != "1")

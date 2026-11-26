@@ -323,17 +323,39 @@ Server-side and Docker-container debugging continue to work from WSL.
 
 ## Tests
 
-The test baseline uses MSTest 4.3.3 with .NET 10's Microsoft Testing Platform.
-Run the full suite with:
+Tests use MSTest (pinned in `global.json`) with .NET 10's Microsoft Testing Platform.
+For routine development, run the fast lane, which needs no PostgreSQL or Docker:
 
 ```bash
-dotnet test --solution FamilyLibrarian.slnx
+dotnet test --solution tests/FastTests.slnx -- --filter "TestCategory!=Live&TestCategory!=LiveLab"
 ```
 
-Web integration tests share a disposable PostgreSQL container with a separate
-database per class. Their connection strings disable pooling so closed
-connections do not retain server slots across classes. Production connections
-retain their normal pooling configuration.
+In VS Code's Test Explorer, run the affected tests or classes while editing.
+`FamilyLibrarian.Web.Client.Tests` contains client logic and HTML-render tests;
+Domain and Infrastructure tests complete the fast lane. The default **test** task
+runs that lane. **test: Web class** prompts for a host test class, and
+**test: full regression** runs all deterministic tests with Docker required.
+Test Explorer's **Run All** still selects the entire main solution.
+
+Full deterministic regression (also run by PR CI):
+
+```bash
+dotnet test --solution FamilyLibrarian.slnx -- --filter "TestCategory!=Release&TestCategory!=Live&TestCategory!=LiveLab" --timeout 10m
+```
+
+Web integration tests share a disposable PostgreSQL container and clone migrated,
+seeded databases for isolation. Test connections use pooling with a short idle
+lifetime; production pooling is unchanged. Set
+`FAMILY_LIBRARIAN_REQUIRE_POSTGRES_TESTS=1` when Web tests are required: missing
+Docker then fails setup instead of reporting integration tests as skipped. CI
+and the full-regression/Web-class tasks set it automatically. Tests tagged
+`Migration` retain historical upgrade and data-preservation coverage.
+
+Run affected host tests before handing off a feature change. Authentication,
+startup/DI, shared harness and cross-cutting changes require full deterministic
+regression; database changes also require affected migration and concurrency
+checks. Browser tests (`Release`) and real-service tests (`Live`/`LiveLab`) remain
+separate opt-in runs. `--no-build` is useful only after building the changed code.
 
 ### Opt-in browser E2E
 

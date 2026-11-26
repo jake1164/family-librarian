@@ -5,7 +5,7 @@ using FamilyLibrarian.Web.Client.Realtime;
 using Microsoft.AspNetCore.Components.Authorization;
 using Microsoft.Extensions.Logging.Abstractions;
 
-namespace FamilyLibrarian.Web.Tests;
+namespace FamilyLibrarian.Web.Client.Tests;
 
 [TestClass]
 public sealed class LiveUpdatesClientTests
