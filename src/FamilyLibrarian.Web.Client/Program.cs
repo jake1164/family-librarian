@@ -60,6 +60,7 @@ builder.Services.AddScoped<SmtpSettingsApiClient>();
 builder.Services.AddScoped<MatrixSettingsApiClient>();
 builder.Services.AddScoped<MatrixLinkApiClient>();
 builder.Services.AddScoped<FamilyLibrarian.Web.Client.Conversation.ConversationApiClient>();
+builder.Services.AddScoped<FamilyLibrarian.Web.Client.Conversation.ChatSettingsApiClient>();
 builder.Services.AddScoped<FamilyLibrarian.Web.Client.ModelTesting.ModelTestApiClient>();
 builder.Services.AddScoped<FamilyLibrarian.Web.Client.ModelGateway.ModelGatewayApiClient>();
 builder.Services.AddScoped<FamilyLibrarian.Web.Client.Storage.StorageApiClient>();

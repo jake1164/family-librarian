@@ -346,9 +346,13 @@ public static class DependencyInjection
         services.AddSingleton<ArtifactSemanticShadowBuffer>();
         services.AddSingleton<IArtifactSemanticShadow>(provider => provider.GetRequiredService<ArtifactSemanticShadowBuffer>());
 
-        // Conversation (alpha.6 M2): everything is off until Conversation:Enabled (and a transport flag) is set.
+        // Conversation (alpha.6 M2): everything is off until an administrator turns it on from the Chat assistant settings page.
+        // The Conversation configuration section supplies the limits, and the defaults that apply until a choice has been saved.
         services.AddSingleton(provider =>
             provider.GetRequiredService<IConfiguration>().GetSection("Conversation").Get<ConversationOptions>() ?? new ConversationOptions());
+        services.AddScoped<IChatSettingsStore, ChatSettingsStore>();
+        services.AddScoped<IConversationAvailability, ConversationAvailabilityReader>();
+        services.AddScoped<FamilyLibrarian.Application.ChatAdministration.ChatSettingsService>();
         services.AddSingleton<IConversationLimiter, ConversationLimiter>();
         services.AddSingleton<IConversationDiagnostics, ConversationDiagnostics>();
         services.AddScoped<IConversationSessionStore, EfConversationSessionStore>();

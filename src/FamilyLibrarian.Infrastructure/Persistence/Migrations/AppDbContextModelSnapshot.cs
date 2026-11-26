@@ -2331,6 +2331,37 @@ namespace FamilyLibrarian.Infrastructure.Persistence.Migrations
                     b.ToTable("user_matrix_destinations", "communications");
                 });
 
+            modelBuilder.Entity("FamilyLibrarian.Domain.Conversation.ChatSettings", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<DateTimeOffset>("CreatedAtUtc")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("created_at_utc");
+
+                    b.Property<bool>("MatrixEnabled")
+                        .HasColumnType("boolean")
+                        .HasColumnName("matrix_enabled");
+
+                    b.Property<DateTimeOffset>("UpdatedAtUtc")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("updated_at_utc");
+
+                    b.Property<Guid?>("UpdatedByUserId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("updated_by_user_id");
+
+                    b.Property<bool>("WebEnabled")
+                        .HasColumnType("boolean")
+                        .HasColumnName("web_enabled");
+
+                    b.HasKey("Id");
+
+                    b.ToTable("settings", "conversation");
+                });
+
             modelBuilder.Entity("FamilyLibrarian.Domain.Conversation.ConversationRequestKey", b =>
                 {
                     b.Property<string>("Key")

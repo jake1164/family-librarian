@@ -107,6 +107,8 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options)
 
     public DbSet<ConversationRequestKey> ConversationRequestKeys => Set<ConversationRequestKey>();
 
+    public DbSet<ChatSettings> ChatSettings => Set<ChatSettings>();
+
     public DbSet<UserWorkFeedback> UserWorkFeedback => Set<UserWorkFeedback>();
 
     public DbSet<Follow> Follows => Set<Follow>();
@@ -634,6 +636,18 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options)
             entity.Property(link => link.ProviderId).HasColumnName("provider_id").HasMaxLength(64);
             entity.Property(link => link.ProviderResultId).HasColumnName("provider_result_id").HasMaxLength(256);
             entity.HasOne<DecisionSnapshot>().WithMany().HasForeignKey(link => link.SnapshotId).OnDelete(DeleteBehavior.Cascade);
+        });
+
+        builder.Entity<ChatSettings>(entity =>
+        {
+            entity.ToTable("settings", "conversation");
+            entity.HasKey(settings => settings.Id);
+            entity.Property(settings => settings.Id).HasColumnName("id").ValueGeneratedNever();
+            entity.Property(settings => settings.WebEnabled).HasColumnName("web_enabled");
+            entity.Property(settings => settings.MatrixEnabled).HasColumnName("matrix_enabled");
+            entity.Property(settings => settings.UpdatedByUserId).HasColumnName("updated_by_user_id");
+            entity.Property(settings => settings.CreatedAtUtc).HasColumnName("created_at_utc");
+            entity.Property(settings => settings.UpdatedAtUtc).HasColumnName("updated_at_utc");
         });
 
         // Conversation (alpha.6 M2-3): minimal structured state, plus the records that make a replayed message harmless.

@@ -21,21 +21,22 @@ internal static class ConversationEndpoints
             .RequireAuthorization()
             .AddEndpointFilter<AntiforgeryEndpointFilter>();
 
-        conversation.MapGet("/status", GetStatus);
+        conversation.MapGet("/status", GetStatusAsync);
         conversation.MapPost("/messages", SendMessageAsync).RequireRateLimiting(RateLimitPolicy);
     }
 
-    private static IResult GetStatus(ConversationOptions options) =>
-        Results.Ok(new ConversationStatusResponse(options.IsEnabledFor(ConversationTransports.Web), options.MaxInputCharacters));
+    private static async Task<IResult> GetStatusAsync(
+        ConversationOptions options, IConversationAvailability availability, CancellationToken cancellationToken) =>
+        Results.Ok(new ConversationStatusResponse((await availability.GetAsync(cancellationToken)).Web, options.MaxInputCharacters));
 
     private static async Task<IResult> SendMessageAsync(
         ConversationMessageRequest request,
-        ConversationOptions options,
+        IConversationAvailability availability,
         IConversationService conversation,
         CancellationToken cancellationToken)
     {
         // A feature that is off does not exist: same answer as an unknown route.
-        if (!options.IsEnabledFor(ConversationTransports.Web))
+        if (!(await availability.GetAsync(cancellationToken)).Web)
         {
             return Results.NotFound();
         }

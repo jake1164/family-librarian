@@ -37,6 +37,13 @@ file before proposing, changing, or reviewing code.
 - Use cookie-based browser authentication where suitable. Local Identity must work without Authentik; generic OIDC is optional and Authentik is a documented/tested target, not a requirement.
 - Apply authorization in server-side application/API handlers, validate all input, use anti-forgery protection for cookie-authenticated state changes, and keep audit/status transitions explicit.
 
+## Settings are UI-first
+
+- A standard user must never have to wonder how to enable or configure something. Anything a user or administrator turns on or configures is done in the web UI.
+- Environment variables, configuration files and Compose edits are for automated lab setup and testing. Security is the only expected reason for a setting to exist only there. If a setting is configuration-only, state the security reason; without one it is a gap to report.
+- A new feature switch or operator setting ships with its UI control in the same slice, with a pointer from wherever a user would look for it.
+- Configuration may supply the value used until one is saved in the UI, so a lab can preset it. A choice saved in the UI wins.
+
 ## Delivery workflow
 
 - Do not be a yes-person. Give clear, evidence-based feedback and push back when a request conflicts with the architecture, security, current documentation, or the project's stated goals. Explain the trade-off and offer a safer or more maintainable alternative where possible.

@@ -9,6 +9,47 @@ namespace FamilyLibrarian.Web.Tests;
 public sealed class SettingsNavigationBrowserTests
 {
     [TestMethod]
+    public async Task AnAdministratorTurnsChatOnFromSettingsAndTheMenuFollowsWithoutAReload()
+    {
+        if (Environment.GetEnvironmentVariable("FAMILY_LIBRARIAN_SETTINGS_BROWSER_TESTS") != "1")
+            Assert.Inconclusive("Set FAMILY_LIBRARIAN_SETTINGS_BROWSER_TESTS=1 for the isolated settings navigation browser regression.");
+        await using var fixture = await WebTestFixture.CreateAsync();
+        var available = WebTestFixture.Require(fixture);
+        await using var original = new FamilyLibrarianAppFactory(available.ConnectionString);
+        await using var factory = original.WithWebHostBuilder(builder => builder.UseStaticWebAssets());
+        factory.UseKestrel(options => options.Listen(System.Net.IPAddress.Loopback, 0));
+        using var client = factory.CreateClient();
+        using var playwright = await Playwright.CreateAsync();
+        await using var browser = await playwright.Chromium.LaunchAsync(new()
+        {
+            Headless = true,
+            ExecutablePath = Environment.GetEnvironmentVariable("FAMILY_LIBRARIAN_E2E_CHROMIUM_EXECUTABLE")
+        });
+        var page = await browser.NewPageAsync();
+        page.SetDefaultTimeout(15000);
+        await page.GotoAsync(new Uri(client.BaseAddress!, "/login").ToString());
+        await page.GetByLabel("Email", new() { Exact = true }).FillAsync(FamilyLibrarianAppFactory.AdminEmail);
+        await page.GetByLabel("Password", new() { Exact = true }).FillAsync(FamilyLibrarianAppFactory.AdminPassword);
+        await page.GetByRole(AriaRole.Button, new() { Name = "Sign in", Exact = true }).ClickAsync();
+        await page.WaitForURLAsync(url => new Uri(url).AbsolutePath == "/");
+
+        // Found from the AI models page, which is where someone who just set up a model is likely to look.
+        await page.GotoAsync(new Uri(client.BaseAddress!, "/admin/model-gateway").ToString());
+        await page.Locator(".mud-main-content a[href='settings/chat']").ClickAsync();
+        await page.WaitForURLAsync(url => new Uri(url).AbsolutePath == "/settings/chat");
+        var chatLink = page.Locator(".mud-drawer a[href='chat']");
+        await Assertions.Expect(page.GetByText("Web chat is off", new() { Exact = true })).ToBeVisibleAsync();
+        await Assertions.Expect(chatLink).ToHaveCountAsync(0);
+
+        await page.GetByLabel("Web chat", new() { Exact = true }).ClickAsync();
+
+        await Assertions.Expect(page.GetByText("Web chat is on", new() { Exact = true })).ToBeVisibleAsync();
+        await Assertions.Expect(chatLink).ToHaveCountAsync(1);
+        await chatLink.ClickAsync();
+        await Assertions.Expect(page.GetByLabel("Message to the librarian", new() { Exact = true })).ToBeVisibleAsync();
+    }
+
+    [TestMethod]
     public async Task SettingsEditsWarnOnInternalBackAndReloadAndSuccessfulSavesClearOnlyTheirOwnSection()
     {
         if (Environment.GetEnvironmentVariable("FAMILY_LIBRARIAN_SETTINGS_BROWSER_TESTS") != "1")

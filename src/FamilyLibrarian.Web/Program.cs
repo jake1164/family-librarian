@@ -323,6 +323,7 @@ app.MapSmtpSettingsEndpoints();
 app.MapMatrixSettingsEndpoints();
 app.MapMatrixIdentityLinkEndpoints();
 app.MapConversationEndpoints();
+app.MapChatSettingsEndpoints();
 app.MapModelTestEndpoints();
 app.MapModelGatewayEndpoints();
 app.MapStorageEndpoints();

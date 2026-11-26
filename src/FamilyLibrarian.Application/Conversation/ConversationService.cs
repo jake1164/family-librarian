@@ -35,6 +35,7 @@ public sealed partial class ConversationService(
     IConversationTransaction transaction,
     IConversationLimiter limiter,
     ConversationOptions options,
+    IConversationAvailability availability,
     IClock clock,
     ICatalogAnswerService answers,
     CatalogAnswerContextStore answerContexts,
@@ -52,7 +53,8 @@ public sealed partial class ConversationService(
     {
         ArgumentNullException.ThrowIfNull(turn);
 
-        if (!ConversationTransports.IsKnown(turn.Transport) || !options.IsEnabledFor(turn.Transport))
+        if (!ConversationTransports.IsKnown(turn.Transport) ||
+            !(await availability.GetAsync(cancellationToken)).IsEnabledFor(turn.Transport))
         {
             return Terminal(ConversationReplyKind.Disabled, "Chat isn't turned on for this account's installation.");
         }

@@ -3,6 +3,7 @@ using FamilyLibrarian.Application.Acquisition;
 using FamilyLibrarian.Application.Catalog;
 using FamilyLibrarian.Application.Communications;
 using FamilyLibrarian.Application.Conversation;
+using FamilyLibrarian.Infrastructure.Tests.Conversation;
 using FamilyLibrarian.Application.Delivery;
 using FamilyLibrarian.Application.Integrations;
 using FamilyLibrarian.Application.Notifications;
@@ -350,7 +351,11 @@ public sealed class MatrixInboundRouterTests
             Router = new MatrixInboundRouter(
                 DestinationStore, CommunicationStore, deliveryAttempts, SettingsStore,
                 new FakeCredentialProtector(), MatrixClient, clock, new NullAuditWriter(),
-                conversation: conversation, conversationOptions: conversationOptions, interactionOptions: interactionOptions);
+                conversation: conversation,
+                conversationAvailability: conversationOptions is null
+                    ? null
+                    : new ConversationAvailabilityReader(new InMemoryChatSettingsStore(), conversationOptions),
+                interactionOptions: interactionOptions);
         }
 
         public void ConfigureMatrix()
