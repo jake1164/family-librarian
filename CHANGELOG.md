@@ -5,6 +5,39 @@ All notable changes to Family Librarian are documented here. Newest release at t
 
 ---
 
+## [v1.0.0-alpha.7.1] — 2026-11-26
+
+Chat can be turned on from the web UI, personal settings only offer what is set up, and several setup and reliability problems are fixed.
+
+### Settings
+
+- Administrators turn web chat and Matrix chat on or off separately at **Settings → Chat assistant**. Changes apply to the next message without a restart. Chat is still off on new installations and does not require AI.
+- Quiet hours have their own page, **Settings → Quiet hours**, and now hold all of a user's queued email and Matrix notifications until the window ends. Before, they held only administrator verification alerts. Books are still found and delivered, and Matrix link codes and chat replies are not held.
+- **Settings → Format preferences** sets whether request forms start with ebook, audiobook or both. The audiobook narration choice moved to this page.
+- Until Kindle delivery or Matrix is set up, users are told it isn't available and can't start setting it up, and book pages offer no Kindle sends. A saved Kindle address or Matrix link is kept. **My Kindle deliveries** appears only when Kindle delivery is set up or the user has delivery history.
+- On **AI models**, **Test connection** replaces **Refresh model list**. It can test an endpoint and key before you save them, saves nothing, and says which endpoint and key it used.
+
+### Fixes
+
+- Matrix settings: **Save settings** now saves the access token too, replacing the separate **Save token** button. Testing unsaved values no longer counts as testing the saved settings.
+- External providers: the background recovery check could pick up a new download before its first submission had finished, causing a save conflict. It now waits and rechecks the job first.
+- A warning that a provider was blocked now clears once a newer health check shows that it can search and download again.
+- The Project Gutenberg catalogue refresh now falls back to `gutenberg.pglaf.org` when `www.gutenberg.org` is unavailable. If you restrict outbound traffic, allow that host.
+
+### Removed
+
+- Provider catalogs. To add an external provider, deploy it and register its base URL.
+
+### Upgrading
+
+- Three database migrations run on upgrade. One adds the chat settings and one adds each user's default request format; existing users start on ebook.
+- **One migration deletes data:** it drops the provider catalog table, including saved catalog URLs and cached listings. Registered providers are not affected. Back up the database first if you want to keep that data.
+- If you enabled chat with `Conversation__*` environment variables, they still apply until an administrator saves a choice on the **Chat assistant** page.
+- Anyone who already set quiet hours will now have their other email and Matrix notifications held during that window too.
+- The audiobook narration page moved from `/settings/audiobook-narration` to `/settings/formats`.
+
+---
+
 ## [v1.0.0-alpha.7] — 2026-11-19
 
 Browse authors and series from search and book pages, and ask about reading order or release dates in web and Matrix chat.
