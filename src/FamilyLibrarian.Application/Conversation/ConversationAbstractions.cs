@@ -9,11 +9,12 @@ namespace FamilyLibrarian.Application.Conversation;
 
 /// <summary>
 /// Conversation settings. Everything is off until explicitly enabled, and the limits are the approved defaults (D-4).
-/// Bound once at startup from the <c>Conversation</c> configuration section.
+/// Bound once at startup from the <c>Conversation</c> configuration section. The three switches here are only the defaults: once an
+/// administrator saves a choice on the Chat assistant page, that choice wins. Ask <see cref="IConversationAvailability"/>.
 /// </summary>
 public sealed class ConversationOptions
 {
-    /// <summary>Master switch. Nothing below does anything while this is false.</summary>
+    /// <summary>Configured master switch. While false, neither transport is on by default.</summary>
     public bool Enabled { get; set; }
 
     public bool MatrixEnabled { get; set; }

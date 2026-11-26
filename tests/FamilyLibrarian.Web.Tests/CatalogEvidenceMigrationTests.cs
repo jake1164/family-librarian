@@ -44,10 +44,10 @@ public sealed class CatalogEvidenceMigrationTests
     private static readonly string[] AddedTables =["catalog.source_observations", "catalog.metadata_claims"];
 
     /// <summary>
-    /// Tables that a migration newer than this one drops. Reversing this migration also reverses those, which recreates them
-    /// empty, so they exist on one side of the reversal and are outside what this test compares.
+    /// Tables that a migration newer than this one drops or creates. Reversing this migration also reverses those, so they exist
+    /// on one side of the reversal only and are outside what this test compares.
     /// </summary>
-    private static readonly string[] TablesDroppedByLaterMigrations = ["providers.provider_catalogs"];
+    private static readonly string[] TablesChangedByLaterMigrations = ["providers.provider_catalogs", "conversation.settings"];
 
     /// <summary>
     /// Columns that a migration newer than this one adds. Reversing this migration removes them too; reapplying restores
@@ -260,7 +260,7 @@ public sealed class CatalogEvidenceMigrationTests
             "SELECT quote_ident(schemaname) || '.' || quote_ident(tablename) FROM pg_catalog.pg_tables WHERE schemaname NOT IN ('pg_catalog','information_schema') " +
             "AND tablename <> '__EFMigrationsHistory' AND schemaname || '.' || tablename <> ALL (@later) ORDER BY 1", data))
         {
-            list.Parameters.AddWithValue("later", TablesDroppedByLaterMigrations);
+            list.Parameters.AddWithValue("later", TablesChangedByLaterMigrations);
             await using var reader = await list.ExecuteReaderAsync();
             while (await reader.ReadAsync())
             {

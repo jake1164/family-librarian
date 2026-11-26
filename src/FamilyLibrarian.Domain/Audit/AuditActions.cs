@@ -13,6 +13,7 @@ public static class AuditActions
     public const string DecisionCapturePurged = "decision_capture.purged";
     public const string ModelConnectionReconciled = "model_gateway.connection_reconciled";
     public const string ModelConnectionResolved = "model_gateway.connection_resolved";
+    public const string ChatSettingsChanged = "chat.settings_changed";
     public const string ProviderEnabled = "provider.enabled";
     public const string ProviderDisabled = "provider.disabled";
     public const string ProviderCredentialSet = "provider.credential_set";
@@ -140,6 +141,7 @@ public static class AuditSubjectTypes
 {
     public const string ModelTest = "model_test";
     public const string ModelGateway = "model_gateway";
+    public const string ChatSettings = "chat_settings";
     public const string Storage = "storage";
     public const string Provider = "provider";
     public const string Invitation = "invitation";

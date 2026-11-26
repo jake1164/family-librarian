@@ -16,6 +16,9 @@
             file safety checks, and if a model is unavailable the deterministic behaviour carries on unchanged. Each role
             runs on exactly the model you choose for it, and there is no automatic fall back from a local model to a cloud one.
         </MudText>
+        <MudText Typo="Typo.body2" Class="mt-2">
+            Setting up models does not turn chat on. Do that in <MudLink Href="settings/chat">Chat assistant</MudLink>.
+        </MudText>
     </div>
 
     @if (!string.IsNullOrWhiteSpace(message))

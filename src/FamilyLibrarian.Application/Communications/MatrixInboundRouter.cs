@@ -26,7 +26,7 @@ public sealed class MatrixInboundRouter(
     IAuditWriter audit,
     ProviderInteractionLinkService? providerInteractions = null,
     IConversationTurnExecutor? conversation = null,
-    ConversationOptions? conversationOptions = null,
+    IConversationAvailability? conversationAvailability = null,
     IAcquisitionQuestionMatrixAnswers? acquisitionQuestions = null,
     ProviderInteractionAlertOptions? interactionOptions = null)
 {
@@ -56,7 +56,8 @@ public sealed class MatrixInboundRouter(
         }
 
         var body = CommandBody(message);
-        var conversationOn = conversation is not null && conversationOptions?.IsEnabledFor(ConversationTransports.Matrix) == true;
+        var conversationOn = conversation is not null && conversationAvailability is not null &&
+            (await conversationAvailability.GetAsync(cancellationToken)).Matrix;
 
         if (message.IsEncrypted)
         {

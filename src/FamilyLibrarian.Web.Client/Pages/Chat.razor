@@ -23,7 +23,12 @@
     }
     else if (!status.Enabled)
     {
-        <MudAlert Severity="Severity.Info">Chat isn't turned on for this Family Librarian. <MudLink Href="search">Search the catalog</MudLink> instead.</MudAlert>
+        <MudAlert Severity="Severity.Info">
+            Chat isn't turned on for this Family Librarian. <MudLink Href="search">Search the catalog</MudLink> instead.
+            <AuthorizeView Roles="Admin">
+                You can <MudLink Href="settings/chat">turn it on in Chat assistant settings</MudLink>.
+            </AuthorizeView>
+        </MudAlert>
     }
     else
     {

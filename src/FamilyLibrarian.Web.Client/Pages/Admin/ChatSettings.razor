@@ -1,0 +1,119 @@
+@page "/settings/chat"
+@attribute [Authorize(Roles = "Admin")]
+@using FamilyLibrarian.Contracts.Conversation
+@using FamilyLibrarian.Web.Client.Conversation
+@inject ChatSettingsApiClient Api
+@inject ISnackbar Snackbar
+
+<PageTitle>Chat assistant settings | Family Librarian</PageTitle>
+
+<MudStack Spacing="3">
+    <div>
+        <MudText Typo="Typo.h4" GutterBottom="true">Chat assistant</MudText>
+        <MudText Typo="Typo.body1">
+            Let people ask for books in plain language. Chat uses the same permissions and request approval as the rest of
+            Family Librarian. A change here applies to the next message; nothing needs to be restarted.
+        </MudText>
+    </div>
+
+    @if (loadFailed)
+    {
+        <MudAlert Severity="Severity.Error" role="alert">We could not load the chat settings. Refresh to try again.</MudAlert>
+    }
+    else if (settings is null)
+    {
+        <MudProgressCircular Indeterminate="true" Color="Color.Primary" aria-label="Loading chat settings" />
+    }
+    else
+    {
+        <MudPaper Outlined="true" Class="pa-4">
+            <MudStack Row="true" Spacing="3" AlignItems="AlignItems.Center" Justify="Justify.SpaceBetween">
+                <div>
+                    <MudText Typo="Typo.h6">Web chat is @(settings.WebEnabled ? "on" : "off")</MudText>
+                    <MudText Typo="Typo.body2">Adds a Chat page to the menu for everyone who is signed in.</MudText>
+                </div>
+                <MudSwitch T="bool" Value="settings.WebEnabled" ValueChanged="SetWebAsync" Color="Color.Primary" Disabled="@busy"
+                           aria-label="Web chat" />
+            </MudStack>
+            @if (settings.WebEnabled)
+            {
+                <MudLink Href="chat" Class="mt-2 d-inline-block">Open chat</MudLink>
+            }
+        </MudPaper>
+
+        <MudPaper Outlined="true" Class="pa-4">
+            <MudStack Row="true" Spacing="3" AlignItems="AlignItems.Center" Justify="Justify.SpaceBetween">
+                <div>
+                    <MudText Typo="Typo.h6">Matrix chat is @(settings.MatrixEnabled ? "on" : "off")</MudText>
+                    <MudText Typo="Typo.body2">
+                        Lets people chat with the Matrix bot in an unencrypted direct message. Each person first links their own
+                        Matrix ID under <MudLink Href="settings/matrix">Matrix chat</MudLink> in the settings menu.
+                    </MudText>
+                </div>
+                <MudSwitch T="bool" Value="settings.MatrixEnabled" ValueChanged="SetMatrixAsync" Color="Color.Primary" Disabled="@busy"
+                           aria-label="Matrix chat" />
+            </MudStack>
+            @if (!settings.MatrixConnectionReady)
+            {
+                <MudAlert Severity="@(settings.MatrixEnabled ? Severity.Warning : Severity.Info)" Class="mt-3">
+                    The Matrix connection isn't set up and enabled, so Matrix chat can't answer yet. Set it up in
+                    <MudLink Href="settings/communications">Communications</MudLink>.
+                </MudAlert>
+            }
+        </MudPaper>
+
+        <MudAlert Severity="Severity.Info" Variant="Variant.Outlined">
+            Chat works without AI. To let a model help with messages the built-in rules don't recognize, set up
+            <MudLink Href="admin/model-gateway">AI models</MudLink>.
+        </MudAlert>
+    }
+</MudStack>
+
+@code {
+    private ChatSettingsResponse? settings;
+    private bool loadFailed, busy;
+
+    protected override async Task OnInitializedAsync()
+    {
+        try
+        {
+            settings = await Api.GetAsync();
+        }
+        catch (HttpRequestException)
+        {
+            loadFailed = true;
+        }
+    }
+
+    private Task SetWebAsync(bool enabled) =>
+        SaveAsync(new SetChatSettingsRequest(WebEnabled: enabled), $"Web chat turned {(enabled ? "on" : "off")}.");
+
+    private Task SetMatrixAsync(bool enabled) =>
+        SaveAsync(new SetChatSettingsRequest(MatrixEnabled: enabled), $"Matrix chat turned {(enabled ? "on" : "off")}.");
+
+    // The switches show only what the host returned, so a refused or failed save leaves them as they really are.
+    private async Task SaveAsync(SetChatSettingsRequest change, string successMessage)
+    {
+        busy = true;
+        try
+        {
+            var saved = await Api.SaveAsync(change);
+            if (saved is null)
+            {
+                Snackbar.Add("That change could not be saved.", Severity.Error);
+                return;
+            }
+
+            settings = saved;
+            Snackbar.Add(successMessage, Severity.Success);
+        }
+        catch (HttpRequestException)
+        {
+            Snackbar.Add("We couldn't reach Family Librarian. Try again.", Severity.Error);
+        }
+        finally
+        {
+            busy = false;
+        }
+    }
+}

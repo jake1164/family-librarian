@@ -275,6 +275,23 @@ Each external provider's own version, as declared by its manifest, appears as a
 periodic background health check (about every 15 minutes), so a provider
 upgrade shows up without any manual step.
 
+## Chat assistant
+
+Chat lets signed-in members ask for books in plain language, on the web or by
+messaging the Matrix bot. It is off on a new installation.
+
+An administrator opens **Settings → Chat assistant** (`/settings/chat`) and turns
+on **Web chat**, **Matrix chat**, or both. The change applies to the next message
+without a restart, and **Chat** appears in the menu while web chat is on.
+
+- Matrix chat also needs the Matrix connection below, and each member needs to
+  link their own Matrix ID.
+- Chat works without AI. Setting up AI models does not turn chat on.
+
+For automated lab and test installations only, `Conversation__Enabled=true` with
+`Conversation__WebEnabled=true` or `Conversation__MatrixEnabled=true` presets the
+switches. These apply only until a choice is saved on the settings page.
+
 ## Matrix chat notifications
 
 Matrix is an optional second notification channel beside SMTP. Every notification

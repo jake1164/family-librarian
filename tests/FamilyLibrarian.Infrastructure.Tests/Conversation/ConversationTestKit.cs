@@ -7,6 +7,7 @@ using FamilyLibrarian.Application.Conversation;
 using FamilyLibrarian.Application.Requests;
 using FamilyLibrarian.Domain.Accounts;
 using FamilyLibrarian.Domain.Catalog;
+using FamilyLibrarian.Domain.Conversation;
 using FamilyLibrarian.Domain.Requests;
 
 namespace FamilyLibrarian.Infrastructure.Tests.Conversation;
@@ -422,6 +423,17 @@ internal sealed class FakeAccounts(UserStatus status = UserStatus.Active) : IUse
     public Task<AccountOperationResult> SetQuietHoursAsync(Guid userId, QuietHours? quietHours, CancellationToken cancellationToken) => throw new NotSupportedException();
 }
 
+internal sealed class InMemoryChatSettingsStore : IChatSettingsStore
+{
+    public ChatSettings? Saved { get; private set; }
+
+    public Task<ChatSettings?> FindAsync(CancellationToken cancellationToken) => Task.FromResult(Saved);
+
+    public void Add(ChatSettings settings) => Saved = settings;
+
+    public Task SaveAsync(CancellationToken cancellationToken) => Task.CompletedTask;
+}
+
 internal sealed class ConversationHarness
 {
     public ConversationHarness(bool enabled = true, Guid? userId = null)
@@ -434,6 +446,9 @@ internal sealed class ConversationHarness
     }
 
     public ConversationOptions Options { get; }
+
+    /// <summary>Empty until a test saves a choice, so the configured switches above apply.</summary>
+    public InMemoryChatSettingsStore ChatSettings { get; } = new();
 
     public FakeCurrentUser User { get; }
 
@@ -464,7 +479,8 @@ internal sealed class ConversationHarness
     public IConversationDiagnostics? Diagnostics { get; set; }
 
     public ConversationService Service => new(
-        User, Tools, Sessions, Events, Transaction, Limiter, Options, Clock, AnswerService ?? Answers, AnswerContexts, Interpreter, Diagnostics, accounts: Accounts);
+        User, Tools, Sessions, Events, Transaction, Limiter, Options,
+        new ConversationAvailabilityReader(ChatSettings, Options), Clock, AnswerService ?? Answers, AnswerContexts, Interpreter, Diagnostics, accounts: Accounts);
 
     public int EventCounter { get; private set; }
 

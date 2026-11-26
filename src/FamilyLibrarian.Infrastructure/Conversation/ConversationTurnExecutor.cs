@@ -6,14 +6,14 @@ using Microsoft.Extensions.Logging;
 namespace FamilyLibrarian.Infrastructure.Conversation;
 
 public sealed partial class ConversationTurnExecutor(
-    IServiceScopeFactory scopes, ConversationOptions options, ILogger<ConversationTurnExecutor> logger) : IConversationTurnExecutor
+    IServiceScopeFactory scopes, ILogger<ConversationTurnExecutor> logger) : IConversationTurnExecutor
 {
     public async Task<ConversationTurnResult?> RunMatrixTurnAsync(MatrixInboundMessage message, string text, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(message);
 
         // No event id means no way to make a replay harmless; real Matrix events always have one.
-        if (!options.IsEnabledFor(ConversationTransports.Matrix) || string.IsNullOrWhiteSpace(message.EventId))
+        if (string.IsNullOrWhiteSpace(message.EventId))
         {
             return null;
         }
@@ -22,6 +22,12 @@ public sealed partial class ConversationTurnExecutor(
         {
             // A scope per message: the principal lives and dies with it.
             await using var scope = scopes.CreateAsyncScope();
+            var availability = await scope.ServiceProvider.GetRequiredService<IConversationAvailability>().GetAsync(cancellationToken);
+            if (!availability.Matrix)
+            {
+                return null;
+            }
+
             var authenticated = await scope.ServiceProvider.GetRequiredService<MatrixPrincipalAuthenticator>()
                 .AuthenticateAsync(message, cancellationToken);
             if (!authenticated.IsAuthenticated)

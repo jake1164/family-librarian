@@ -1,6 +1,7 @@
 using FamilyLibrarian.Contracts.Realtime;
 using FamilyLibrarian.Domain.Acquisition;
 using FamilyLibrarian.Domain.Communications;
+using FamilyLibrarian.Domain.Conversation;
 using FamilyLibrarian.Domain.Delivery;
 using FamilyLibrarian.Domain.Notifications;
 using FamilyLibrarian.Domain.Requests;
@@ -141,6 +142,10 @@ internal sealed class LiveChanges
                 case ProviderSetting:
                 case ExternalProvider:
                     changes.AdminTopics |= LiveUpdateTopics.Sources | LiveUpdateTopics.Requests;
+                    changes.SharedTopics |= LiveUpdateTopics.System;
+                    break;
+                case ChatSettings:
+                    // Every signed-in member's menu shows or hides the Chat link from this.
                     changes.SharedTopics |= LiveUpdateTopics.System;
                     break;
                 case CwaSettings:
