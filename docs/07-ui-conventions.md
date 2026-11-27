@@ -251,6 +251,21 @@ status colors, and never phrased as one recording being generally “better”
 than another. An `Unknown` classification is a valid, expected result — do not
 imply it as a defect or guess a kind the provider's own evidence did not state.
 
+## On/off switches
+
+Every `MudSwitch` sets a color and shows a label; without a color, a switch that
+is on looks inactive.
+
+- **Turning a feature, source or connection on or off:** `Color.Primary`, with a
+  label that follows the state: `Enabled` / `Disabled`. Where no title sits beside
+  the switch, name the feature in the label and still follow the state ("Model
+  testing is enabled" / "Model testing is disabled"). If the title beside it is
+  the only thing naming the feature, also set `aria-label` to that name.
+- **Options and view filters:** `Color.Primary`, with a fixed label describing
+  what turning it on does ("Needs attention only").
+- **Risky permissions** (widening what can leave the server or be released
+  without a person, or restricting how people sign in): `Color.Warning`.
+
 ## Adding a new status or media type
 
 1. Add the color/label mapping to `MediaTypeVisuals` — not to the page.

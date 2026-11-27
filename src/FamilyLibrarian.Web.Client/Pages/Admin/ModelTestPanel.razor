@@ -55,7 +55,7 @@
                 <MudButton Variant="Variant.Filled" Color="Color.Primary" Disabled="@busy" OnClick="SaveAsync">Save test settings</MudButton>
                 <MudDivider />
                 <MudSwitch T="bool" Value="settings.IsEnabled" ValueChanged="SetEnabledAsync" Color="Color.Primary" Disabled="@busy"
-                           Label="Model testing is enabled" />
+                           Label="@(settings.IsEnabled ? "Model testing is enabled" : "Model testing is disabled")" />
             </MudStack>
         </MudPaper>
 

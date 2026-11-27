@@ -117,7 +117,7 @@ else
         {
             <MudSpacer />
             <MudSwitch T="bool" Value="showOnlyAttention" ValueChanged="@((bool v) => showOnlyAttention = v)"
-                       Color="Color.Error" Label="Needs attention only" Class="mt-0" />
+                       Color="Color.Primary" Label="Needs attention only" Class="mt-0" />
         }
     </MudStack>
     @if (queue.DeliveryAttempts.Count == 0)
