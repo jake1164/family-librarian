@@ -5274,6 +5274,10 @@ namespace FamilyLibrarian.Infrastructure.Persistence.Migrations
                         .HasColumnType("integer")
                         .HasColumnName("book_count");
 
+                    b.Property<long>("DownloadedBytes")
+                        .HasColumnType("bigint")
+                        .HasColumnName("downloaded_bytes");
+
                     b.Property<string>("FailureMessage")
                         .HasMaxLength(2000)
                         .HasColumnType("character varying(2000)")
@@ -5322,6 +5326,16 @@ namespace FamilyLibrarian.Infrastructure.Persistence.Migrations
                     b.Property<int>("ParseErrorCount")
                         .HasColumnType("integer")
                         .HasColumnName("parse_error_count");
+
+                    b.Property<string>("ProgressMessage")
+                        .HasMaxLength(500)
+                        .HasColumnType("character varying(500)")
+                        .HasColumnName("progress_message");
+
+                    b.Property<string>("SourceHost")
+                        .HasMaxLength(253)
+                        .HasColumnType("character varying(253)")
+                        .HasColumnName("source_host");
 
                     b.Property<string>("Status")
                         .IsRequired()

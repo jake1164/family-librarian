@@ -70,6 +70,9 @@ internal sealed class GutenbergCatalogMaintenance(
         state.LastSuccessfulIncrementalSyncUtc = null;
         state.LastSourceModifiedUtc = null;
         state.LastArchiveSizeBytes = null;
+        state.DownloadedBytes = 0;
+        state.SourceHost = null;
+        state.ProgressMessage = null;
         state.BookCount = 0;
         state.FormatCount = 0;
         state.InProgressBookCount = 0;

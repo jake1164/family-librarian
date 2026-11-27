@@ -1,6 +1,5 @@
 using FamilyLibrarian.Application.Catalog;
-using FamilyLibrarian.Application.Providers;
-using FamilyLibrarian.Infrastructure.Providers;
+using FamilyLibrarian.Web.Gutenberg;
 
 namespace FamilyLibrarian.Web.Endpoints;
 
@@ -26,47 +25,21 @@ internal static class GutenbergCatalogEndpoints
         Results.Ok(await catalog.GetStatusAsync(cancellationToken));
 
     private static async Task<IResult> SynchronizeAsync(
-        IGutenbergCatalog catalog,
-        IGutenbergCatalogSynchronizer synchronizer,
-        IProviderRegistry registry,
-        IProviderSettingsStore settings,
+        GutenbergCatalogRefreshCoordinator coordinator,
         CancellationToken cancellationToken)
     {
-        // The UI disables the button, but a disabled source must not be
-        // downloaded or imported by any caller.
-        if (!await ProviderState.IsUsableAsync(registry, settings, ProviderRegistry.GutenbergProviderId, cancellationToken))
-        {
-            return Results.Conflict(new
-            {
-                detail = "Project Gutenberg is disabled. Enable it before refreshing the catalogue."
-            });
-        }
-
-        var currentStatus = await catalog.GetStatusAsync(cancellationToken);
-        if (currentStatus.Status is "CheckingUpdates" or "Downloading" or "Parsing" or "Importing" or "Retrying" or "Purging")
-        {
-            return Results.Conflict(new
-            {
-                detail = "The Project Gutenberg catalogue is already being refreshed."
-            });
-        }
-
-        var result = currentStatus.IsReady
-            ? await synchronizer.SynchronizeIncrementalAsync(cancellationToken)
-            : await synchronizer.SynchronizeAsync(cancellationToken);
-        return result.Succeeded ? Results.Ok(result.Status) : Results.Problem(
-            title: "Project Gutenberg catalogue synchronization failed.",
-            detail: result.Error,
-            statusCode: StatusCodes.Status502BadGateway);
+        var result = await coordinator.QueueAsync(onlyWhenMissing: false, cancellationToken);
+        return result.Accepted
+            ? Results.Accepted("/api/v1/admin/gutenberg/status", result.Status)
+            : Results.Conflict(new { detail = result.Error });
     }
 
     private static async Task<IResult> PurgeAsync(
-        IGutenbergCatalog catalog,
-        IGutenbergCatalogMaintenance maintenance,
+        GutenbergCatalogRefreshCoordinator coordinator,
         CancellationToken cancellationToken)
     {
-        var currentStatus = await catalog.GetStatusAsync(cancellationToken);
-        if (currentStatus.Status is "CheckingUpdates" or "Downloading" or "Parsing" or "Importing" or "Retrying" or "Purging")
+        var result = await coordinator.TryPurgeAsync(cancellationToken);
+        if (result is null)
         {
             return Results.Conflict(new
             {
@@ -76,6 +49,6 @@ internal static class GutenbergCatalogEndpoints
 
         // Deletion continues server-side if the administrator navigates away.
         // Its persisted Purging status lets the page resume progress tracking.
-        return Results.Ok(await maintenance.PurgeAsync(CancellationToken.None));
+        return Results.Ok(result);
     }
 }

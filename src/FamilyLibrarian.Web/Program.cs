@@ -43,6 +43,7 @@ builder.Services.AddScoped<SystemReadinessService>();
 builder.Services.AddSingleton<AvailabilityRunCoordinator>();
 builder.Services.AddHostedService<AvailabilityRunHostedService>();
 builder.Services.AddSingleton<CatalogSearchRunCoordinator>();
+builder.Services.AddSingleton<GutenbergCatalogRefreshCoordinator>();
 // The browse context store, discovery journeys, admission limiter and CatalogDiscoveryService are the transport-neutral core and
 // are registered with the Infrastructure services, so the web routes and the shared answer service use the same instances.
 builder.Services.AddScoped<CatalogBrowseNavigation>();

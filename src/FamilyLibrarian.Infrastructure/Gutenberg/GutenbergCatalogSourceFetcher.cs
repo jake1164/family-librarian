@@ -23,7 +23,8 @@ internal static class GutenbergCatalogSourceFetcher
         TimeSpan responseTimeout,
         HttpCompletionOption completionOption,
         int startIndex,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        Func<Uri, CancellationToken, Task>? sourceAttempt = null)
     {
         if (sources.Count == 0)
         {
@@ -37,6 +38,7 @@ internal static class GutenbergCatalogSourceFetcher
             cancellationToken.ThrowIfCancellationRequested();
             var index = (startIndex + offset) % sources.Count;
             var source = sources[index];
+            if (sourceAttempt is not null) await sourceAttempt(source, cancellationToken);
             using var attemptTimeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
             attemptTimeout.CancelAfter(responseTimeout);
             try

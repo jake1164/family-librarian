@@ -38,6 +38,7 @@ internal sealed partial class GutenbergCatalogSynchronizer(
                 database.ChangeTracker.Clear();
                 var state = await GetOrCreateStateAsync(CancellationToken.None);
                 state.Status = "Retrying";
+                state.ProgressMessage = "Retrying the catalogue refresh after a temporary download error.";
                 state.FailureMessage = $"Attempt {attempt} of {maximumAttempts} failed: {exception.Message} Retrying automatically.";
                 await database.SaveChangesAsync(CancellationToken.None);
                 LogImportRetrying(attempt, maximumAttempts, exception);
@@ -66,6 +67,10 @@ internal sealed partial class GutenbergCatalogSynchronizer(
         state.LastAttemptUtc = startedAt;
         state.Status = "CheckingUpdates";
         state.FailureMessage = null;
+        state.DownloadedBytes = 0;
+        state.LastArchiveSizeBytes = null;
+        state.SourceHost = null;
+        state.ProgressMessage = "Checking the daily new-and-updated-books feed.";
         ResetImportProgress(state, startedAt);
         await database.SaveChangesAsync(cancellationToken);
 
@@ -79,6 +84,7 @@ internal sealed partial class GutenbergCatalogSynchronizer(
             var rdfSourceIndex = 0;
             foreach (var gutenbergId in updates)
             {
+                state.ProgressMessage = $"Downloading updated book records: {books.Count:N0} of {updates.Count:N0} checked.";
                 var rdfSource = await GetFromSourcesAsync(
                     CreateRdfUris(gutenbergId),
                     HttpCompletionOption.ResponseHeadersRead,
@@ -86,7 +92,10 @@ internal sealed partial class GutenbergCatalogSynchronizer(
                     cancellationToken);
                 rdfSourceIndex = rdfSource.SourceIndex;
                 using var response = rdfSource.Response;
-                await using var rdf = await response.Content.ReadAsStreamAsync(cancellationToken);
+                await using var body = await response.Content.ReadAsStreamAsync(cancellationToken);
+                await using var rdf = new MemoryStream();
+                await GutenbergCatalogDownload.CopyAsync(body, rdf, timeProvider, null, cancellationToken);
+                rdf.Position = 0;
                 var book = ParseBook(rdf, generationId);
                 if (book is null || book.GutenbergId != gutenbergId)
                 {
@@ -94,6 +103,10 @@ internal sealed partial class GutenbergCatalogSynchronizer(
                 }
 
                 books.Add(book);
+                state.InProgressBookCount = books.Count;
+                state.InProgressFormatCount += book.Formats.Count;
+                state.LastProgressUtc = timeProvider.GetUtcNow();
+                await database.SaveChangesAsync(cancellationToken);
             }
 
             state.Status = "Importing";
@@ -133,6 +146,7 @@ internal sealed partial class GutenbergCatalogSynchronizer(
             ResetImportProgress(state, timeProvider.GetUtcNow());
             state.LastDuration = now - startedAt;
             state.Status = "Completed";
+            state.ProgressMessage = null;
             state.FailureMessage = null;
             await database.SaveChangesAsync(cancellationToken);
             await transaction.CommitAsync(cancellationToken);
@@ -142,6 +156,8 @@ internal sealed partial class GutenbergCatalogSynchronizer(
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
+            database.ChangeTracker.Clear();
+            await RecordInterruptionAsync();
             throw;
         }
         catch (Exception exception)
@@ -150,7 +166,8 @@ internal sealed partial class GutenbergCatalogSynchronizer(
             database.ChangeTracker.Clear();
             var failedState = await GetOrCreateStateAsync(CancellationToken.None);
             failedState.Status = "Failed";
-            failedState.FailureMessage = exception.Message;
+            failedState.FailureMessage = exception.Message[..Math.Min(exception.Message.Length, 2_000)];
+            failedState.ProgressMessage = null;
             failedState.LastDuration = timeProvider.GetUtcNow() - startedAt;
             await database.SaveChangesAsync(CancellationToken.None);
             return new GutenbergCatalogSyncResult(false, GutenbergCatalogRepository.ToStatus(failedState, null), exception.Message);
@@ -165,6 +182,10 @@ internal sealed partial class GutenbergCatalogSynchronizer(
         state.LastAttemptUtc = startedAt;
         state.Status = "Downloading";
         state.FailureMessage = null;
+        state.DownloadedBytes = 0;
+        state.LastArchiveSizeBytes = null;
+        state.SourceHost = null;
+        state.ProgressMessage = "Downloading the full catalogue because the daily feed cannot cover the gap since the last successful check.";
         ResetImportProgress(state, startedAt);
         await database.SaveChangesAsync(cancellationToken);
 
@@ -186,12 +207,28 @@ internal sealed partial class GutenbergCatalogSynchronizer(
             await database.SaveChangesAsync(cancellationToken);
 
             await using var archive = await response.Content.ReadAsStreamAsync(cancellationToken);
-            using var decompressor = StartDecompressor();
             var temporaryTarPath = Path.Combine(Path.GetTempPath(), $"family-librarian-gutenberg-{Guid.NewGuid():N}.tar");
+            var temporaryArchivePath = temporaryTarPath + ".bz2";
             try
             {
-                var copyArchive = CopyArchiveToDecompressorAsync(archive, decompressor, cancellationToken);
-                var readDecompressorError = decompressor.StandardError.ReadToEndAsync(cancellationToken);
+                await using (var compressed = new FileStream(temporaryArchivePath, FileMode.CreateNew, FileAccess.Write,
+                    FileShare.None, 64 * 1024, FileOptions.Asynchronous | FileOptions.SequentialScan))
+                {
+                    var received = await GutenbergCatalogDownload.CopyAsync(archive, compressed, timeProvider,
+                        async (bytes, token) =>
+                        {
+                            state.DownloadedBytes = bytes;
+                            state.LastProgressUtc = timeProvider.GetUtcNow();
+                            await database.SaveChangesAsync(token);
+                        }, cancellationToken);
+                    if (state.LastArchiveSizeBytes is { } expected && received != expected)
+                        throw new EndOfStreamException($"The catalogue download ended after {received:N0} of {expected:N0} bytes.");
+                }
+
+                state.Status = "Decompressing";
+                state.ProgressMessage = "Download complete. Decompressing the catalogue before importing book records.";
+                state.LastProgressUtc = timeProvider.GetUtcNow();
+                await database.SaveChangesAsync(cancellationToken);
                 await using var temporaryTar = new FileStream(
                     temporaryTarPath,
                     FileMode.CreateNew,
@@ -199,16 +236,34 @@ internal sealed partial class GutenbergCatalogSynchronizer(
                     FileShare.None,
                     bufferSize: 1024 * 1024,
                     FileOptions.Asynchronous | FileOptions.SequentialScan);
-                await decompressor.StandardOutput.BaseStream.CopyToAsync(temporaryTar, cancellationToken);
-                await copyArchive;
-                await decompressor.WaitForExitAsync(cancellationToken);
-                var decompressorError = await readDecompressorError;
-                if (decompressor.ExitCode != 0)
+                using (var decompressor = StartDecompressor(temporaryArchivePath))
                 {
-                    throw new InvalidDataException($"The bzip2 decoder failed: {decompressorError.Trim()}");
+                    try
+                    {
+                        var error = decompressor.StandardError.ReadToEndAsync(cancellationToken);
+                        await GutenbergCatalogDownload.CopyAsync(decompressor.StandardOutput.BaseStream, temporaryTar, timeProvider,
+                            async (_, token) =>
+                            {
+                                state.LastProgressUtc = timeProvider.GetUtcNow();
+                                await database.SaveChangesAsync(token);
+                            }, cancellationToken);
+                        await decompressor.WaitForExitAsync(cancellationToken);
+                        var decompressorError = await error;
+                        if (decompressor.ExitCode != 0)
+                            throw new InvalidDataException($"The bzip2 decoder failed: {decompressorError.Trim()}");
+                    }
+                    finally
+                    {
+                        if (!decompressor.HasExited)
+                        {
+                            decompressor.Kill(entireProcessTree: true);
+                            await decompressor.WaitForExitAsync(CancellationToken.None);
+                        }
+                    }
                 }
 
                 state.Status = "Parsing";
+                state.ProgressMessage = "Reading catalogue records and importing books in batches.";
                 state.LastProgressUtc = timeProvider.GetUtcNow();
                 await database.SaveChangesAsync(cancellationToken);
                 temporaryTar.Position = 0;
@@ -256,12 +311,8 @@ internal sealed partial class GutenbergCatalogSynchronizer(
             }
             finally
             {
-                if (!decompressor.HasExited)
-                {
-                    decompressor.Kill(entireProcessTree: true);
-                }
-
                 File.Delete(temporaryTarPath);
+                File.Delete(temporaryArchivePath);
             }
 
             await database.SaveChangesAsync(cancellationToken);
@@ -277,6 +328,7 @@ internal sealed partial class GutenbergCatalogSynchronizer(
             state.LastDuration = timeProvider.GetUtcNow() - startedAt;
             state.Status = "Completed";
             state.FailureMessage = null;
+            state.ProgressMessage = null;
             await database.SaveChangesAsync(cancellationToken);
 
             LogImportCompleted(bookCount, formatCount, parseErrorCount, state.LastDuration);
@@ -284,7 +336,9 @@ internal sealed partial class GutenbergCatalogSynchronizer(
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
+            database.ChangeTracker.Clear();
             await RemoveImportedGenerationAsync(generationId, CancellationToken.None);
+            await RecordInterruptionAsync();
             throw;
         }
         catch (Exception exception)
@@ -294,7 +348,8 @@ internal sealed partial class GutenbergCatalogSynchronizer(
             await RemoveImportedGenerationAsync(generationId, CancellationToken.None);
             var failedState = await GetOrCreateStateAsync(CancellationToken.None);
             failedState.Status = "Failed";
-            failedState.FailureMessage = exception.Message;
+            failedState.FailureMessage = exception.Message[..Math.Min(exception.Message.Length, 2_000)];
+            failedState.ProgressMessage = null;
             failedState.ParseErrorCount = parseErrorCount;
             failedState.LastDuration = timeProvider.GetUtcNow() - startedAt;
             await database.SaveChangesAsync(CancellationToken.None);
@@ -329,7 +384,7 @@ internal sealed partial class GutenbergCatalogSynchronizer(
             return true;
         }
 
-        var lastSuccessfulCheck = state.LastSuccessfulIncrementalSyncUtc ?? state.LastSuccessfulSyncUtc;
+        var lastSuccessfulCheck = GutenbergCatalogRepository.LatestSuccessfulCheck(state);
         return lastSuccessfulCheck is null ||
             timeProvider.GetUtcNow() - lastSuccessfulCheck > TimeSpan.FromHours(options.Value.MaximumIncrementalGapHours);
     }
@@ -372,7 +427,14 @@ internal sealed partial class GutenbergCatalogSynchronizer(
             options.Value.SourceResponseTimeout,
             completionOption,
             startIndex,
-            cancellationToken);
+            cancellationToken,
+            async (source, token) =>
+            {
+                var state = await GetOrCreateStateAsync(token);
+                state.SourceHost = source.Host;
+                state.LastProgressUtc = timeProvider.GetUtcNow();
+                await database.SaveChangesAsync(token);
+            });
         // Only the switch is logged; later requests that start at the working
         // source would otherwise warn once per updated book.
         if (result.SourceIndex != startIndex)
@@ -429,28 +491,28 @@ internal sealed partial class GutenbergCatalogSynchronizer(
         await unpublished.ExecuteDeleteAsync(cancellationToken);
     }
 
-    private static Process StartDecompressor()
+    private static Process StartDecompressor(string archivePath)
     {
         var startInfo = new ProcessStartInfo
         {
             FileName = "bzip2",
             UseShellExecute = false,
-            RedirectStandardInput = true,
             RedirectStandardOutput = true,
             RedirectStandardError = true
         };
         startInfo.ArgumentList.Add("--decompress");
         startInfo.ArgumentList.Add("--stdout");
+        startInfo.ArgumentList.Add(archivePath);
         return Process.Start(startInfo) ?? throw new InvalidOperationException("Unable to start the bzip2 decoder.");
     }
 
-    private static async Task CopyArchiveToDecompressorAsync(
-        Stream archive,
-        Process decompressor,
-        CancellationToken cancellationToken)
+    private async Task RecordInterruptionAsync()
     {
-        await using var input = decompressor.StandardInput.BaseStream;
-        await archive.CopyToAsync(input, cancellationToken);
+        var state = await GetOrCreateStateAsync(CancellationToken.None);
+        state.Status = "Failed";
+        state.FailureMessage = "The catalogue refresh was interrupted when the application stopped. Refresh again to retry.";
+        state.ProgressMessage = null;
+        await database.SaveChangesAsync(CancellationToken.None);
     }
 
     private static bool IsRetryableImportFailure(Exception exception) =>

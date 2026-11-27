@@ -6,6 +6,7 @@ using FamilyLibrarian.Domain.Providers;
 using FamilyLibrarian.Contracts.Realtime;
 using Microsoft.EntityFrameworkCore;
 using FamilyLibrarian.Infrastructure.Persistence;
+using FamilyLibrarian.Infrastructure.Gutenberg;
 using FamilyLibrarian.Web.Realtime;
 using FamilyLibrarian.Web.Tests.Harness;
 using Microsoft.AspNetCore.Hosting;
@@ -21,6 +22,75 @@ namespace FamilyLibrarian.Web.Tests;
 [TestCategory("Release")]
 public sealed class LiveUpdatesBrowserTests
 {
+    [TestMethod]
+    public async Task GutenbergRefreshShowsQueuedDownloadBytesAndLivePhasesAfterReturningToSources()
+    {
+        if (Environment.GetEnvironmentVariable("FAMILY_LIBRARIAN_LIVE_BROWSER_TESTS") != "1")
+            Assert.Inconclusive("Set FAMILY_LIBRARIAN_LIVE_BROWSER_TESTS=1 for the isolated Sources progress regression.");
+        await using var fixture = await WebTestFixture.CreateAsync();
+        var available = WebTestFixture.Require(fixture);
+        await using var original = new FamilyLibrarianAppFactory(available.ConnectionString);
+        await using var factory = original.WithWebHostBuilder(builder => builder.UseStaticWebAssets());
+        factory.UseKestrel(options => options.Listen(System.Net.IPAddress.Loopback, 0));
+        using var client = factory.CreateClient();
+        await using (var scope = factory.Services.CreateAsyncScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            db.Add(new GutenbergCatalogSyncStateEntity
+            {
+                Status = "Completed", ActiveGenerationId = Guid.NewGuid(), BookCount = 1000, FormatCount = 2000,
+                LastSuccessfulSyncUtc = DateTimeOffset.UtcNow
+            });
+            await db.SaveChangesAsync();
+        }
+
+        using var playwright = await Playwright.CreateAsync();
+        await using var browser = await playwright.Chromium.LaunchAsync(new()
+        {
+            Headless = true, ExecutablePath = Environment.GetEnvironmentVariable("FAMILY_LIBRARIAN_E2E_CHROMIUM_EXECUTABLE")
+        });
+        var page = await browser.NewPageAsync();
+        var errors = new ConcurrentQueue<string>();
+        page.PageError += (_, error) => errors.Enqueue(error);
+        await LoginAsync(page, client.BaseAddress!, FamilyLibrarianAppFactory.AdminEmail, FamilyLibrarianAppFactory.AdminPassword);
+        await page.GotoAsync(new Uri(client.BaseAddress!, "/settings/sources").ToString());
+        await page.GetByRole(AriaRole.Button, new() { Name = "Refresh now", Exact = true }).ClickAsync();
+        await Assertions.Expect(page.GetByText("Queued", new() { Exact = true })).ToBeVisibleAsync();
+
+        async Task PhaseAsync(string phase)
+        {
+            await using var scope = factory.Services.CreateAsyncScope();
+            var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            var state = await db.Set<GutenbergCatalogSyncStateEntity>().SingleAsync();
+            state.Status = phase;
+            state.ProgressMessage = null;
+            state.SourceHost = "fallback.example";
+            state.DownloadedBytes = 52_428_800;
+            state.LastArchiveSizeBytes = 104_857_600;
+            state.InProgressBookCount = 250;
+            state.InProgressFormatCount = 1000;
+            state.LastProgressUtc = DateTimeOffset.UtcNow;
+            await db.SaveChangesAsync();
+        }
+
+        await PhaseAsync("Downloading");
+        await Assertions.Expect(page.GetByText("Downloaded 50.0 MiB of 100.0 MiB.", new() { Exact = true })).ToBeVisibleAsync();
+        await Assertions.Expect(page.GetByRole(AriaRole.Progressbar)).ToHaveAttributeAsync("aria-valuenow", "50");
+        await Assertions.Expect(page.GetByText("Source: fallback.example.", new() { Exact = true })).ToBeVisibleAsync();
+        await page.GotoAsync(new Uri(client.BaseAddress!, "/").ToString());
+        await page.GotoAsync(new Uri(client.BaseAddress!, "/settings/sources").ToString());
+        await Assertions.Expect(page.GetByText("Downloaded 50.0 MiB of 100.0 MiB.", new() { Exact = true })).ToBeVisibleAsync();
+        await page.SetViewportSizeAsync(390, 844);
+        Assert.IsTrue(await page.EvaluateAsync<bool>("document.documentElement.scrollWidth <= window.innerWidth + 1"), "Sources must fit a phone viewport.");
+        await PhaseAsync("Decompressing");
+        await Assertions.Expect(page.GetByText("Decompressing", new() { Exact = true })).ToBeVisibleAsync();
+        await PhaseAsync("Importing");
+        await Assertions.Expect(page.GetByText("Imported so far: 250 books · 1,000 formats.", new() { Exact = true })).ToBeVisibleAsync();
+        await PhaseAsync("Completed");
+        await Assertions.Expect(page.GetByRole(AriaRole.Button, new() { Name = "Refresh now", Exact = true })).ToBeEnabledAsync();
+        Assert.IsTrue(errors.IsEmpty, string.Join(Environment.NewLine, errors));
+    }
+
     [TestMethod]
     public async Task DashboardSourcesShowLiveConcurrentWorkAndReturnToIdle()
     {

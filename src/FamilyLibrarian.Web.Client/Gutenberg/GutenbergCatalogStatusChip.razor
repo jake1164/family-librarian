@@ -1,0 +1,9 @@
+@using FamilyLibrarian.Web.Client.Theme
+
+<MudChip T="string" Size="Size.Small" Color="@MediaTypeVisuals.GutenbergCatalogColor(Status)">
+    @MediaTypeVisuals.GutenbergCatalogLabel(Status)
+</MudChip>
+
+@code {
+    [Parameter, EditorRequired] public string Status { get; set; } = "NeverSynced";
+}

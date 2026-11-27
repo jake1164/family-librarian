@@ -103,6 +103,12 @@ public sealed class GutenbergCatalogSyncStateEntity
 
     public long? LastArchiveSizeBytes { get; set; }
 
+    public long DownloadedBytes { get; set; }
+
+    public string? SourceHost { get; set; }
+
+    public string? ProgressMessage { get; set; }
+
     public int BookCount { get; set; }
 
     public int FormatCount { get; set; }
