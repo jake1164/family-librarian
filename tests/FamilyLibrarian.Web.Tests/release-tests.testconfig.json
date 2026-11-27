@@ -1,0 +1,12 @@
+{
+  "mstest": {
+    "parallelism": {
+      "enabled": true,
+      "scope": "class",
+      "workers": 2
+    },
+    "timeout": {
+      "test": 180000
+    }
+  }
+}

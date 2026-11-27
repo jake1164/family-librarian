@@ -4,6 +4,7 @@
 
   <PropertyGroup>
     <IsTestProject>true</IsTestProject>
+    <EnableMicrosoftTestingExtensionsHangDump>true</EnableMicrosoftTestingExtensionsHangDump>
   </PropertyGroup>
 
   <ItemGroup>

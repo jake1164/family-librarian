@@ -51,16 +51,15 @@ public sealed class LiveUpdatesBrowserTests
         await using var context = await browser.NewContextAsync(new() { ViewportSize = new() { Width = 1280, Height = 900 } });
         var page = await context.NewPageAsync();
         await LoginAsync(page, client.BaseAddress!, FamilyLibrarianAppFactory.AdminEmail, FamilyLibrarianAppFactory.AdminPassword);
-        // Initial loading includes several sequential API calls. Start the UI assertions after the final response has arrived.
-        var initialData = await page.RunAndWaitForResponseAsync(
-            async () => { await page.GotoAsync(new Uri(client.BaseAddress!, "/admin/tasks").ToString()); },
-            response => response.Request.Method == "GET" && new Uri(response.Url).AbsolutePath == "/api/v1/admin/requests/attention");
-        await initialData.FinishedAsync();
-        Assert.AreEqual(200, initialData.Status, "The initial dashboard data request must succeed before checking its rendered state.");
+        // Do not wait for a particular response here: the page open after sign-in may still be
+        // loading, and this navigation cancels its requests. A wait can match one of those, and
+        // FinishedAsync on a cancelled response never returns. Wait for what the new page shows.
+        await page.GotoAsync(new Uri(client.BaseAddress!, "/admin/tasks").ToString());
         var panel = page.Locator("#tasks-sources-now");
         var summary = page.GetByRole(AriaRole.Button, new() { Name = "Jump to Source status", Exact = true });
         await Assertions.Expect(summary).ToBeVisibleAsync();
         await Assertions.Expect(summary).ToContainTextAsync("0 active");
+        await WaitForConnectionsAsync(factory.Services.GetRequiredService<LiveConnections>(), 1);
         await AssertCompactSummaryAsync(page, columns: 6, maximumHeight: 112);
         await page.SetViewportSizeAsync(900, 900);
         await AssertCompactSummaryAsync(page, columns: 3, maximumHeight: 216);

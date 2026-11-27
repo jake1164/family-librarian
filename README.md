@@ -383,8 +383,12 @@ this test together with the local browser regressions. The local command remains
 opt-in because a developer machine may not have Chromium installed or a free
 Compose port.
 
-Release browser execution has a ten-minute test deadline, a twelve-minute step
-limit, and a twenty-five-minute job ceiling. The workflow uploads TRX results,
+The workflow runs at most two browser test classes at once and fails any single
+test after three minutes, using
+`tests/FamilyLibrarian.Web.Tests/release-tests.testconfig.json`. Release browser
+execution also has a twenty-minute test deadline, a twenty-two-minute step limit,
+and a forty-minute job ceiling. If nothing finishes for five minutes, the test
+runner writes a hang dump. The workflow uploads TRX results, any hang dump,
 test-runner diagnostics, and Compose logs as `release-browser-diagnostics` even
 when a test fails or times out; artifacts are retained for seven days. Completed
 checks are printed as they finish so a stalled run can be distinguished from a

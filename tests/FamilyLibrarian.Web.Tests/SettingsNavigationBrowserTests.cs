@@ -1,5 +1,9 @@
+using FamilyLibrarian.Domain.Delivery;
+using FamilyLibrarian.Infrastructure.Persistence;
 using FamilyLibrarian.Web.Tests.Harness;
 using Microsoft.AspNetCore.Hosting;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Playwright;
 
 namespace FamilyLibrarian.Web.Tests;
@@ -60,6 +64,16 @@ public sealed class SettingsNavigationBrowserTests
         await using var factory = original.WithWebHostBuilder(builder => builder.UseStaticWebAssets());
         factory.UseKestrel(options => options.Listen(System.Net.IPAddress.Loopback, 0));
         using var client = factory.CreateClient();
+        // The Kindle address field is read-only until the delivery service is set up
+        // or the account already has a saved address; this account gets the latter.
+        await using (var scope = factory.Services.CreateAsyncScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            var adminId = (await db.Users.SingleAsync(user => user.Email == FamilyLibrarianAppFactory.AdminEmail)).Id;
+            db.DeliveryTargets.Add(new DeliveryTarget(
+                adminId, DeliveryTargetProvider.CwaKindleEmail, "Kindle", "admin@kindle.com", DateTimeOffset.UtcNow));
+            await db.SaveChangesAsync();
+        }
         using var playwright = await Playwright.CreateAsync();
         await using var browser = await playwright.Chromium.LaunchAsync(new()
         {

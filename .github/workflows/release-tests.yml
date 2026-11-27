@@ -30,7 +30,7 @@ jobs:
   browser:
     name: Browser regressions
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    timeout-minutes: 40
     steps:
       - uses: actions/checkout@v7
 
@@ -78,8 +78,11 @@ jobs:
           FL_E2E_FIXTURE_CERT_DIR: ${{ runner.temp }}/release-e2e-certs
         run: docker compose -f compose.yaml -f compose.release-e2e.yaml --project-name family-librarian-browser-e2e up --build --wait --wait-timeout 120
 
+      # release-tests.testconfig.json limits parallel browser classes to what a
+      # hosted runner can load in time, and fails any test that runs too long so
+      # the rest still run. The hang dump covers a stall that limit cannot end.
       - name: Test
-        timeout-minutes: 12
+        timeout-minutes: 22
         env:
           FAMILY_LIBRARIAN_LIVE_BROWSER_TESTS: "1"
           FAMILY_LIBRARIAN_SETTINGS_BROWSER_TESTS: "1"
@@ -93,7 +96,9 @@ jobs:
           FAMILY_LIBRARIAN_E2E_ADMIN_PASSWORD: Browser-E2E-CI-Only-Password1!
         run: >-
           dotnet test --project tests/FamilyLibrarian.Web.Tests/FamilyLibrarian.Web.Tests.csproj --no-build --
-          --filter "TestCategory=Release" --timeout 10m --report-trx
+          --config-file "${{ github.workspace }}/tests/FamilyLibrarian.Web.Tests/release-tests.testconfig.json"
+          --filter "TestCategory=Release" --timeout 20m --report-trx
+          --hangdump --hangdump-timeout 5m --hangdump-type Heap
           --results-directory "${{ runner.temp }}/release-test-results"
           --diagnostic --diagnostic-output-directory "${{ runner.temp }}/release-test-results"
           --output Detailed --show-stdout Failed --show-stderr Failed

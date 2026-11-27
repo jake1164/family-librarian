@@ -15,6 +15,9 @@ public sealed class AssemblyHooks
     public static async Task InitializeAsync(TestContext testContext)
     {
         ArgumentNullException.ThrowIfNull(testContext);
+        // A first page load starts the WebAssembly app, which can take well over
+        // Playwright's 5-second assertion default on a busy CI runner.
+        Microsoft.Playwright.Assertions.SetDefaultExpectTimeout(30_000);
         await PostgresFixture.StartAsync();
         if (PostgresFixture.UnavailableReason is null)
         {
