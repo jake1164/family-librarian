@@ -1,0 +1,419 @@
+@page "/welcome"
+@attribute [Authorize]
+@using FamilyLibrarian.Contracts.Setup
+@using FamilyLibrarian.Web.Client.Accounts
+@using FamilyLibrarian.Web.Client.Delivery
+@using FamilyLibrarian.Web.Client.Setup
+@inject SetupApiClient SetupApi
+@inject DeliveryTargetApiClient DeliveryTargets
+@inject NavigationManager Navigation
+@inject ISnackbar Snackbar
+
+<PageTitle>Set up your library · Family Librarian</PageTitle>
+<SettingsDraftGuard IsDirty="@KindleDirty" />
+
+@if (isLoading)
+{
+    <MudProgressCircular Indeterminate="true" aria-label="Loading your setup" />
+}
+else if (overview is null)
+{
+    <MudAlert Severity="Severity.Error">We could not load your setup. Try again in a moment.</MudAlert>
+}
+else if (pages.Count == 0)
+{
+    <MudText Typo="Typo.h4" GutterBottom="true">Nothing to set up yet</MudText>
+    <MudText Typo="Typo.body1" Class="mb-4">
+        You can start searching for books. We'll let you know here if there's something new to set up.
+    </MudText>
+    <MudButton Variant="Variant.Filled" Color="Color.Primary" Href="search">Find a book</MudButton>
+}
+else
+{
+    @if (current is >= 0 && current < pages.Count)
+    {
+        <MudText Typo="Typo.overline">Step @(current + 1) of @pages.Count</MudText>
+        <MudProgressLinear Color="Color.Primary" Class="mb-4" Value="@(100.0 * (current + 1) / pages.Count)"
+                           aria-label="Setup progress" />
+    }
+
+    @if (current < 0)
+    {
+        <MudText Typo="Typo.h4" GutterBottom="true">Welcome to the family library</MudText>
+        <MudText Typo="Typo.body1" Class="mb-2">
+            A few quick settings get books to you the way you like. It takes a few minutes, and every step is optional.
+        </MudText>
+        <ul class="pl-5 mb-4">
+            @foreach (var page in pages)
+            {
+                <li>@Title(page)</li>
+            }
+        </ul>
+        <MudStack Row="true" Spacing="2" Wrap="Wrap.Wrap">
+            <MudButton Variant="Variant.Filled" Color="Color.Primary" Disabled="@busy" OnClick="@(() => GoTo(0))">
+                Get started
+            </MudButton>
+            <MudButton Variant="Variant.Text" Disabled="@busy" OnClick="SkipEverythingAsync">Skip setup</MudButton>
+        </MudStack>
+    }
+    else if (current >= pages.Count)
+    {
+        <MudText Typo="Typo.h4" GutterBottom="true">You're all set</MudText>
+        <MudList T="string" Class="mb-3">
+            @foreach (var page in pages)
+            {
+                <MudListItem T="string" Icon="@(IsDone(page) ? Icons.Material.Filled.CheckCircle : Icons.Material.Filled.RadioButtonUnchecked)">
+                    <MudText Typo="Typo.body1">
+                        <strong>@Title(page):</strong> @Outcome(page)
+                        @if (!IsDone(page))
+                        {
+                            <span> · <MudLink Href="@SettingsPath(page)">set up later</MudLink></span>
+                        }
+                    </MudText>
+                </MudListItem>
+            }
+        </MudList>
+        @if (kindleSaved)
+        {
+            <MudText Typo="Typo.body2" Class="mb-2">
+                We can't check that Amazon accepted the sender address. You'll know it works when your first book
+                arrives on your Kindle.
+            </MudText>
+        }
+        @if (messagingConnected)
+        {
+            <MudText Typo="Typo.body2" Class="mb-2">
+                To stop messages arriving overnight, set your <MudLink Href="settings/quiet-hours">quiet hours</MudLink>.
+            </MudText>
+        }
+        <MudText Typo="Typo.body2" Class="mb-4">You can reopen this from <strong>Setup guide</strong> in the settings menu.</MudText>
+        <MudButton Variant="Variant.Filled" Color="Color.Primary" Href="search">Find a book</MudButton>
+    }
+    else
+    {
+        var page = pages[current];
+        <MudText Typo="Typo.h4" GutterBottom="true">@Title(page)</MudText>
+
+        @switch (page)
+        {
+            case SetupStepNames.Formats:
+                <FormatPreferencesPanel StateChanged="@(state => formatState = state)" />
+                break;
+
+            case SetupStepNames.Kindle:
+                <MudText Typo="Typo.body1" Class="mb-3">
+                    Books can be sent straight to your Kindle. There are two things to do in Amazon first.
+                </MudText>
+                @if (overview.Kindle is { } kindle)
+                {
+                    <KindleSetupGuide Guidance="kindle" />
+                }
+                <MudPaper Class="pa-4" Outlined="true">
+                    <MudStack Spacing="3">
+                        <MudTextField Immediate="true" T="string" @bind-Value="kindleAddress" Label="Kindle email address"
+                                      InputType="InputType.Email" Disabled="@busy" autocomplete="off" />
+                        @if (KindleAddress.Warning(kindleAddress) is { } warning)
+                        {
+                            <MudAlert Severity="Severity.Warning" Dense="true">@warning</MudAlert>
+                        }
+                        <MudCheckBox T="bool" @bind-Value="sendByDefault" Disabled="@busy"
+                                     Label="Send to my Kindle by default when I request an ebook" />
+                        @if (kindleError is not null)
+                        {
+                            <MudAlert Severity="Severity.Error">@kindleError</MudAlert>
+                        }
+                    </MudStack>
+                </MudPaper>
+                break;
+
+            case SetupStepNames.Messaging:
+                <MudText Typo="Typo.body1" Class="mb-3">
+                    @(overview.Messaging?.ChatEnabled == true
+                        ? "Ask for books and get updates by message, from your phone or computer."
+                        : "Get a message when your book is ready, and reply to quick questions.")
+                </MudText>
+                <MessagingConnectionPanel Guidance="overview.Messaging" ShowDisconnect="false"
+                                          StatusChanged="MessagingChanged" />
+                break;
+        }
+
+        <MudStack Row="true" Spacing="2" Wrap="Wrap.Wrap" Class="mt-6" AlignItems="AlignItems.Center">
+            <MudButton Variant="Variant.Text" Disabled="@(busy || Saving(page))" OnClick="@(() => GoTo(current - 1))">Back</MudButton>
+            <MudSpacer />
+            @if (!IsDone(page))
+            {
+                <MudButton Variant="Variant.Text" Disabled="@(busy || Saving(page))" OnClick="@(() => SkipAsync(page))">Skip this step</MudButton>
+            }
+            @if (page == SetupStepNames.Kindle && (!kindleSaved || KindleDirty))
+            {
+                <MudButton Variant="Variant.Filled" Color="Color.Primary"
+                           Disabled="@(busy || string.IsNullOrWhiteSpace(kindleAddress))" OnClick="SaveKindleAsync">
+                    Save and continue
+                </MudButton>
+            }
+            else
+            {
+                <MudButton Variant="Variant.Filled" Color="Color.Primary"
+                           Disabled="@(busy || !CanContinue(page))"
+                           OnClick="@(() => CompleteAsync(page))">
+                    Continue
+                </MudButton>
+            }
+        </MudStack>
+    }
+}
+
+@code {
+    private bool isLoading = true;
+    private bool busy;
+    private UserSetupResponse? overview;
+
+    // Fixed when the page opens, so steps don't move while someone is working through them.
+    private IReadOnlyList<string> pages = [];
+    // -1 is the welcome screen; pages.Count is the summary.
+    private int current = -1;
+    private FormatPanelState formatState = FormatPanelState.Busy;
+
+    private readonly HashSet<string> completed = [];
+    private readonly HashSet<string> skipped = [];
+
+    private bool kindleSaved;
+    private bool messagingConnected;
+    private string kindleAddress = string.Empty;
+    private string savedKindleAddress = string.Empty;
+    private bool sendByDefault = true;
+    private bool savedSendByDefault = true;
+    private uint? kindleVersion;
+    private string? kindleError;
+
+    private bool KindleDirty =>
+        !string.Equals(kindleAddress.Trim(), savedKindleAddress, StringComparison.Ordinal) ||
+        (kindleSaved && sendByDefault != savedSendByDefault);
+
+    protected override async Task OnInitializedAsync()
+    {
+        try
+        {
+            overview = await SetupApi.GetAsync();
+            if (overview is null)
+            {
+                return;
+            }
+
+            pages = overview.Steps.Where(step => step.IsAvailable).Select(step => step.Step).ToArray();
+            foreach (var step in overview.Steps)
+            {
+                if (step.IsCompleted)
+                {
+                    completed.Add(step.Step);
+                }
+                else if (step.IsSkipped)
+                {
+                    skipped.Add(step.Step);
+                }
+            }
+
+            messagingConnected = overview.Steps.Any(step => step.Step == SetupStepNames.Messaging && step.IsSet);
+            if (pages.Contains(SetupStepNames.Kindle) &&
+                await DeliveryTargets.GetMyKindleTargetAsync() is { } target)
+            {
+                ApplyKindle(target.Address, target.SendByDefault, target.Version);
+            }
+
+            if (!overview.WizardSeen)
+            {
+                // From here on it does not open by itself again; anything left unset becomes a reminder.
+                await SetupApi.MarkSeenAsync();
+            }
+        }
+        catch (HttpRequestException)
+        {
+            overview = null;
+        }
+        finally
+        {
+            isLoading = false;
+        }
+    }
+
+    private void GoTo(int index)
+    {
+        current = index;
+        // The panel is created again each time the step is shown, and reports for itself.
+        formatState = FormatPanelState.Busy;
+    }
+
+    // A choice still being saved must finish first: leaving now could record the step before the choice exists.
+    private bool Saving(string page) => page == SetupStepNames.Formats && formatState == FormatPanelState.Busy;
+
+    private bool CanContinue(string page) => page switch
+    {
+        SetupStepNames.Formats => formatState == FormatPanelState.Ready,
+        SetupStepNames.Messaging => messagingConnected,
+        _ => true
+    };
+
+    private static string Title(string page) => page switch
+    {
+        SetupStepNames.Formats => "Format preferences",
+        SetupStepNames.Kindle => "Kindle delivery",
+        _ => "Message the Librarian"
+    };
+
+    private static string SettingsPath(string page) => page switch
+    {
+        SetupStepNames.Formats => "settings/formats",
+        SetupStepNames.Kindle => "settings/ebook-delivery",
+        _ => "settings/matrix"
+    };
+
+    private bool IsDone(string page) => page switch
+    {
+        SetupStepNames.Formats => completed.Contains(page),
+        SetupStepNames.Kindle => kindleSaved,
+        _ => messagingConnected
+    };
+
+    private string Outcome(string page) => IsDone(page)
+        ? page switch
+        {
+            SetupStepNames.Kindle => "address saved",
+            SetupStepNames.Messaging => "connected",
+            _ => "saved"
+        }
+        : skipped.Contains(page) ? "skipped" : "not set up";
+
+    private void ApplyKindle(string address, bool byDefault, uint version)
+    {
+        kindleSaved = true;
+        kindleAddress = savedKindleAddress = address;
+        sendByDefault = savedSendByDefault = byDefault;
+        kindleVersion = version;
+    }
+
+    private void MessagingChanged(FamilyLibrarian.Contracts.Communications.MatrixLinkStatusResponse status)
+    {
+        messagingConnected = status.IsVerified;
+        StateHasChanged();
+    }
+
+    private async Task SaveKindleAsync()
+    {
+        busy = true;
+        kindleError = null;
+        try
+        {
+            var result = await DeliveryTargets.SetKindleAddressAsync(kindleAddress, kindleVersion, sendByDefault);
+            if (!result.Succeeded || result.Target is not { } target)
+            {
+                kindleError = result.Error;
+                return;
+            }
+
+            ApplyKindle(target.Address, target.SendByDefault, target.Version);
+            // If only the progress fails, the address stays saved and Continue tries the progress again.
+            if (await RecordCompletedAsync(SetupStepNames.Kindle))
+            {
+                GoTo(current + 1);
+            }
+        }
+        catch (HttpRequestException)
+        {
+            kindleError = "Your Kindle address could not be saved. Please try again.";
+        }
+        finally
+        {
+            busy = false;
+        }
+    }
+
+    private async Task CompleteAsync(string page)
+    {
+        busy = true;
+        try
+        {
+            if (await RecordCompletedAsync(page))
+            {
+                GoTo(current + 1);
+            }
+        }
+        catch (HttpRequestException)
+        {
+            Snackbar.Failed("Your progress could not be saved. Please try again.");
+        }
+        finally
+        {
+            busy = false;
+        }
+    }
+
+    private async Task<bool> RecordCompletedAsync(string page)
+    {
+        if (!await SetupApi.CompleteAsync(page))
+        {
+            Snackbar.Failed("Your progress could not be saved. Please try again.");
+            return false;
+        }
+
+        completed.Add(page);
+        skipped.Remove(page);
+        return true;
+    }
+
+    private async Task SkipAsync(string page)
+    {
+        busy = true;
+        try
+        {
+            if (await SetupApi.SkipAsync([page]))
+            {
+                skipped.Add(page);
+                // A skipped step leaves nothing half-typed behind to warn about.
+                if (page == SetupStepNames.Kindle)
+                {
+                    kindleAddress = savedKindleAddress;
+                    sendByDefault = savedSendByDefault;
+                    kindleError = null;
+                }
+
+                GoTo(current + 1);
+            }
+            else
+            {
+                Snackbar.Failed("Your progress could not be saved.");
+            }
+        }
+        catch (HttpRequestException)
+        {
+            Snackbar.Failed("Your progress could not be saved. Please try again.");
+        }
+        finally
+        {
+            busy = false;
+        }
+    }
+
+    private async Task SkipEverythingAsync()
+    {
+        busy = true;
+        try
+        {
+            if (await SetupApi.SkipAsync(pages))
+            {
+                Navigation.NavigateTo(string.Empty);
+            }
+            else
+            {
+                Snackbar.Failed("Your choice could not be saved.");
+            }
+        }
+        catch (HttpRequestException)
+        {
+            Snackbar.Failed("Your choice could not be saved. Please try again.");
+        }
+        finally
+        {
+            busy = false;
+        }
+    }
+}

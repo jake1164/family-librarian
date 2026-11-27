@@ -13,6 +13,12 @@ namespace FamilyLibrarian.Application.Requests;
 public interface IFormatReadinessService
 {
     Task<FormatReadiness> CheckAsync(RequestMediaType mediaType, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Whether the format's destination is switched on at all. Reads saved settings only, with no scanner or
+    /// destination check, so it is cheap enough for something shown on every page.
+    /// </summary>
+    Task<bool> IsOfferedAsync(RequestMediaType mediaType, CancellationToken cancellationToken);
 }
 
 /// <summary>
@@ -35,19 +41,22 @@ public sealed class FormatReadinessService(
     AudiobookshelfSettingsService audiobookshelfSettings,
     IAcquisitionBoundaryGuard boundaryGuard) : IFormatReadinessService
 {
+    public Task<bool> IsOfferedAsync(RequestMediaType mediaType, CancellationToken cancellationToken) =>
+        mediaType switch
+        {
+            RequestMediaType.Ebook => cwaSettings.IsEnabledAsync(cancellationToken),
+            RequestMediaType.Audiobook => audiobookshelfSettings.IsEnabledAsync(cancellationToken),
+            _ => throw new ArgumentOutOfRangeException(nameof(mediaType), mediaType, "Unknown request media type.")
+        };
+
     public async Task<FormatReadiness> CheckAsync(RequestMediaType mediaType, CancellationToken cancellationToken)
     {
         // Enabled is checked first: a format nobody turned on is not offered at
         // all, so it must not be reported as a scanner problem.
-        var (isEnabled, disabledReason) = mediaType switch
+        if (!await IsOfferedAsync(mediaType, cancellationToken))
         {
-            RequestMediaType.Ebook => (await cwaSettings.IsEnabledAsync(cancellationToken), "CWA is not enabled."),
-            RequestMediaType.Audiobook => (await audiobookshelfSettings.IsEnabledAsync(cancellationToken), "Audiobookshelf is not enabled."),
-            _ => throw new ArgumentOutOfRangeException(nameof(mediaType), mediaType, "Unknown request media type.")
-        };
-        if (!isEnabled)
-        {
-            return FormatReadiness.Disabled(disabledReason);
+            return FormatReadiness.Disabled(
+                mediaType == RequestMediaType.Ebook ? "CWA is not enabled." : "Audiobookshelf is not enabled.");
         }
 
         if (!await boundaryGuard.CanAcceptNewArtifactAsync(cancellationToken))

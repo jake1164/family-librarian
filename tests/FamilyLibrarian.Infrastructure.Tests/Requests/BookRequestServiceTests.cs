@@ -656,6 +656,9 @@ public sealed class BookRequestServiceTests
     /// <summary>Ready for every format unless told otherwise, so existing tests need no changes.</summary>
     private sealed class StubFormatReadinessService : IFormatReadinessService
     {
+        public Task<bool> IsOfferedAsync(RequestMediaType mediaType, CancellationToken cancellationToken) =>
+            Task.FromResult(true);
+
         private readonly HashSet<RequestMediaType> notReady = [];
 
         public StubFormatReadinessService NotReady(RequestMediaType mediaType)

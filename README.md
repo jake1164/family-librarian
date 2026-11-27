@@ -174,6 +174,13 @@ candidate, and acquires the selected whole-book ZIP into Family Librarian's
 normal quarantine, audio-validation, and approval flow before Audiobookshelf
 delivery. Both built-in sources can be disabled independently under **Sources**.
 
+New members are walked through their format preferences, Kindle delivery and
+**Message the Librarian** (optional Matrix messaging) the first time they open the
+home page; every step is optional, and only what you have set up is offered. Fill
+in the two family help cards described in [First-time
+setup](docs/06-deployment-and-recovery.md#first-time-setup-for-family-members) so
+people see the right addresses and sign-in steps.
+
 For Kindle delivery, configure **Ebook delivery**, then opt in on an ebook
 request or choose **Send to Kindle** for a book already in the library.
 **My Kindle deliveries** includes both paths, receipt confirmation, failures,

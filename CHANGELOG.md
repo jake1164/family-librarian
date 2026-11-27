@@ -5,6 +5,33 @@ All notable changes to Family Librarian are documented here. Newest release at t
 
 ---
 
+## Unreleased
+
+New family members are walked through their own settings the first time they sign in.
+
+### Setup
+
+- A **setup guide** covers format preferences, Kindle delivery and messaging. It opens once from the home page, every step can be skipped, and only what is set up is offered. **Setup guide** in the settings menu reopens it.
+- Existing members, and anyone when Kindle delivery or messaging is turned on later, get a reminder they can dismiss. Format preferences get no reminder.
+- Kindle steps show the sender address to approve, with a copy button, and open your Amazon store. **Ebook delivery** shows the same instructions and questions an address that doesn't look like a Kindle's.
+- Messaging steps offer Element with store buttons on phones and a QR code on computers, show your own sign-in instructions, and ask only for a username.
+- Two new administrator cards hold this help: **Publishing → Kindle setup help for family members** and **Communications → Message the Librarian: help for family members**. Settings backup includes them.
+
+### Changed
+
+- **Matrix chat** is now called **Message the Librarian** on members' pages and in messages. Administrator pages still say Matrix, and the `/settings/matrix` address is unchanged.
+- Members no longer see the homeserver's own error text when connecting fails.
+- Each member can send 5 connection codes in any 15 minutes, so the bot can't be used to flood someone with invitations. The page says when the limit is reached and how long to wait. Codes now come from a cryptographic random generator.
+- Someone connecting their account who replies in an encrypted conversation is now told the bot can't read it, even while chat is off.
+
+### Upgrading
+
+- One database migration adds the setup help and each member's setup progress. Existing accounts are marked as already offered the guide, so they see the reminder instead.
+- After upgrading, fill in the two new help cards. Until the Kindle sender address is entered, members are told to ask you for it.
+
+
+---
+
 ## [v1.0.0-alpha.7.1] — 2026-11-26
 
 Chat can be turned on from the web UI, personal settings only offer what is set up, and several setup and reliability problems are fixed.

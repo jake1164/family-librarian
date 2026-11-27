@@ -1,4 +1,5 @@
 using FamilyLibrarian.Domain.Accounts;
+using FamilyLibrarian.Domain.Setup;
 using Microsoft.AspNetCore.Identity;
 
 namespace FamilyLibrarian.Infrastructure.Identity;
@@ -43,6 +44,18 @@ public sealed class AppUser : IdentityUser<Guid>
     /// manual repair after upgrade.
     /// </remarks>
     public AudiobookNarrationPreference AudiobookNarrationPreference { get; set; } = AudiobookNarrationPreference.PreferHuman;
+
+    /// <summary>
+    /// When this account was first checked for unset settings; the setup wizard opens by itself only before that.
+    /// The migration that added the column marks every account that already existed as checked.
+    /// </summary>
+    public DateTimeOffset? SetupWizardSeenAtUtc { get; set; }
+
+    /// <summary>Setup steps this account finished in the wizard.</summary>
+    public SetupSteps SetupCompletedSteps { get; set; }
+
+    /// <summary>Setup steps this account skipped or whose reminder it dismissed.</summary>
+    public SetupSteps SetupSkippedSteps { get; set; }
 
     /// <summary>The formats this account's request forms start with (self-service, at <c>/settings/formats</c>).</summary>
     public DefaultRequestFormat DefaultRequestFormat { get; set; } = DefaultRequestFormat.Ebook;

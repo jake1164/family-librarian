@@ -8,6 +8,7 @@ using FamilyLibrarian.Domain.Requests;
 using FamilyLibrarian.Domain.Security;
 using FamilyLibrarian.Domain.Publishing;
 using FamilyLibrarian.Domain.Providers;
+using FamilyLibrarian.Domain.Setup;
 using FamilyLibrarian.Infrastructure.Gutenberg;
 using FamilyLibrarian.Infrastructure.Identity;
 using Microsoft.AspNetCore.Identity;
@@ -142,6 +143,10 @@ internal sealed class LiveChanges
                 case ProviderSetting:
                 case ExternalProvider:
                     changes.AdminTopics |= LiveUpdateTopics.Sources | LiveUpdateTopics.Requests;
+                    changes.SharedTopics |= LiveUpdateTopics.System;
+                    break;
+                case SetupGuidanceSettings:
+                    // Setup pages show these values to every signed-in member.
                     changes.SharedTopics |= LiveUpdateTopics.System;
                     break;
                 case ChatSettings:

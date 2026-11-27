@@ -292,6 +292,56 @@ Each external provider's own version, as declared by its manifest, appears as a
 periodic background health check (about every 15 minutes), so a provider
 upgrade shows up without any manual step.
 
+## First-time setup for family members
+
+A new member who opens the home page is offered a short **setup guide** (`/welcome`)
+for format preferences, Kindle delivery and **Message the Librarian** (the member
+name for [Matrix messaging](#matrix-messaging-message-the-librarian)). Every step
+can be skipped.
+
+- Only what is set up is offered. The format step appears when audiobooks are
+  enabled, Kindle when [Kindle delivery](#targeted-kindle-delivery) is configured,
+  and messaging when the Matrix bot connection is enabled. With nothing to offer,
+  the guide does not open.
+- It opens by itself once, and only from the home page; a link to any other page
+  goes where it says. **Setup guide** in the settings menu reopens it.
+- Afterwards, and for accounts that existed before this feature, a dismissible
+  reminder mentions Kindle delivery or messaging that is available but not set up,
+  including something you turn on later. Dismissals are saved to the account.
+
+Two cards hold what members are told. Everything in them is visible to **every
+signed-in user**, so never enter a password or registration token. Neither card
+changes how books are sent or messages delivered.
+
+**Settings → Publishing → Kindle setup help for family members**
+
+- **Kindle sender address:** the From address in CWA's email settings, which each
+  member approves in Amazon. While it is blank, members are told to ask an
+  administrator.
+- **Amazon store:** a domain such as `amazon.co.uk`, or any pasted link from the
+  store; blank means `amazon.com`. Only the form of the address is checked, not
+  whether Amazon runs that domain, so open the two links shown under the field
+  after saving. Amazon can also move its account pages.
+
+**Settings → Communications → Message the Librarian: help for family members**
+
+- **Sign-in instructions** and an optional **help link:** how a person gets a
+  messaging account and signs in. This is the place for anything specific to your
+  server, such as which single sign-on button to choose and who to ask for access.
+  Family Librarian does not create messaging accounts or grant access to them.
+- **Messaging server name:** the part after the colon in members' IDs. Blank uses
+  the bot ID's. Members then type only their username. This is not the homeserver
+  URL above, which only has to work from the container and is never shown.
+- **Web app address:** an optional browser client to offer.
+- **Walk people through installing Element X:** on by default. It adds app store
+  buttons and, on wider screens, a QR code. The code and **Open Element** button
+  use Element's `mobile.element.io` link, which sends your server name to that
+  site. Turn it off if your server cannot be used with Element X, which needs
+  Simplified Sliding Sync.
+
+Before inviting the family, walk through the guide once yourself with a new test
+account on a real phone.
+
 ## Chat assistant
 
 Chat lets signed-in members ask for books in plain language, on the web or by
@@ -309,9 +359,10 @@ For automated lab and test installations only, `Conversation__Enabled=true` with
 `Conversation__WebEnabled=true` or `Conversation__MatrixEnabled=true` presets the
 switches. These apply only until a choice is saved on the settings page.
 
-## Matrix chat notifications
+## Matrix messaging (Message the Librarian)
 
-Matrix is an optional second notification channel beside SMTP. Every notification
+Members see this feature as **Message the Librarian**; administrator pages call it
+Matrix. Matrix is an optional second notification channel beside SMTP. Every notification
 Family Librarian sends reaches a member through each channel they have set up.
 Nothing here is required; local sign-in and SMTP keep working without it.
 
@@ -331,6 +382,8 @@ Nothing here is required; local sign-in and SMTP keep working without it.
    screen at any time.
 4. To let people chat with the bot, also turn on **Matrix chat** under
    **Settings → Chat assistant**. This is a separate switch.
+5. Fill in **Message the Librarian: help for family members** on the same page; see
+   [First-time setup](#first-time-setup-for-family-members).
 
 The bot account must be able to open direct-message rooms with your members and
 receive replies, so do not restrict it to a closed room list. Use a homeserver
@@ -338,10 +391,18 @@ reachable from the Family Librarian container.
 
 ### Member setup and use
 
-Each member opens **Settings → Matrix chat** (`/settings/matrix`), enters their
-Matrix ID, and chooses **Send verification code**. The bot direct-messages a
-one-time code; replying with that code in the chat completes the link. Requesting
-a new code replaces the old one, and the page can unlink the account again.
+Each member opens **Settings → Message the Librarian** (`/settings/matrix`), or
+reaches the same steps in the setup guide. They sign in to their messaging app
+first, since a new account may not exist until then, choose **I've signed in**,
+enter their username (a full ID also works), and choose **Send my code**. The bot
+starts a conversation and sends a one-time code. Accepting that invitation and
+replying with the code completes the connection, and the page updates by itself.
+Each new code comes in a new conversation, so use the newest invitation. The bot
+only reads conversations it started, and cannot read encrypted messages. A member
+can send **5 codes in any 15 minutes**; after that the page says the limit is
+reached and how long to wait, and the newest code already received still works.
+Only sends that reach the homeserver count, and a restart clears the count.
+**Disconnect messaging** removes the connection.
 
 Once linked, notifications arrive as chat messages. A "did your book arrive?"
 question after a Kindle send can be answered by replying `yes` or `no` in chat
@@ -355,7 +416,12 @@ alerts also use this channel.
 - **Test fails:** check the homeserver URL (include `https://`), that the Bot
   Matrix ID matches the token's account, and that the token has not been logged out.
 - **No verification code arrives:** the member must accept the bot's invitation;
-  confirm the Matrix ID is spelled `@user:server`.
+  confirm the username, and the messaging server name in the help card. A new
+  account must have signed in at least once.
+- **The code gets no answer:** the reply must go in the conversation the bot
+  started (the newest one), not in a conversation the member started. If the
+  conversation is encrypted the bot says it cannot read it; if your server
+  encrypts new direct messages by default, turn that off for the bot's rooms.
 - **Replies are ignored:** replies are matched from the bot's sync loop; confirm the
   Matrix bot connection is still enabled and the application log shows no sync errors.
 
@@ -415,17 +481,23 @@ Communications SMTP settings serve a different purpose.
    says Kindle delivery isn't available: users can't add a Kindle address or
    run the sign-in test, and book pages offer no Kindle sends. An address saved
    earlier is kept and can still be edited or disabled.
-4. Use **Ebook delivery → Test service sign-in** to verify saved credentials.
+4. On the same page, fill in **Kindle setup help for family members**; see
+   [First-time setup](#first-time-setup-for-family-members).
+5. Use **Ebook delivery → Test service sign-in** to verify saved credentials.
    This does not verify send permissions, mail delivery, or on-device arrival.
    Make the first actual send with one intended recipient and one suitable book,
    then confirm it on the device before broad use.
 
 ### Recipient setup and use
 
-Find the device's Send-to-Kindle address in Amazon's Content and Devices /
-Personal Document Settings. Add the **CWA outgoing sender address** to Amazon's
-approved personal-document senders. Save the Kindle address in Family Librarian
-**Ebook delivery**, enable it, and choose the default request preference. Amazon
+The setup guide and **Ebook delivery** walk members through this, using the sender
+address and Amazon store from **Kindle setup help**. Find the device's
+Send-to-Kindle address in Amazon's Content and Devices / Personal Document
+Settings. Add the **CWA outgoing sender address** to Amazon's approved
+personal-document senders. Save the Kindle address in Family Librarian **Ebook
+delivery**, enable it, and choose the default request preference. Family Librarian
+cannot check that Amazon accepted the sender; only an arriving book shows that.
+Amazon
 lists EPUB among supported document formats; an unsupported or protected book
 may still fail. Follow [Amazon's sending instructions](https://digprjsurvey.amazon.co.uk/csad/help/node/G5WYD9SAF7PGXRNA)
 and [error guidance](https://digprjsurvey.amazon.co.uk/csad/help/node/T48rsVm3gY7KeGkKUk).
@@ -650,16 +722,16 @@ id, never from a metadata source, and opening it still requires signing in.
 Without `Interaction__PublicOrigin`, chat answers in Matrix carry no links; the
 web chat always links saved records.
 
-Each administrator links their own Matrix ID at **Settings → Matrix chat**
-(`/settings/matrix`) to receive this alert; an administrator with no verified
-link simply receives none.
+Each administrator connects their own account at **Settings → Message the
+Librarian** (`/settings/matrix`) to receive this alert; an administrator with no
+verified connection simply receives none.
 
 Any user can set quiet hours (a time zone and daily window) at **Settings →
 Quiet hours** (`/settings/quiet-hours`). Their queued email and Matrix
 notifications, and an administrator's verification alerts, wait until the window
 ends instead of being dropped. Books are still found and delivered, including
 Kindle sends, and in-app notifications are unaffected. Messages a user is waiting
-for, such as a Matrix link code or a chat reply, are not held. A
+for, such as a messaging code or a chat reply, are not held. A
 typed Matrix "yes", "no", "take" or "keep looking" only answers a message that
 has already been sent. The page is disabled until email or Matrix delivery is
 switched on.
@@ -671,8 +743,8 @@ or for a user who already has delivery history. **Settings → Format preference
 format that isn't set up are disabled. Chat requests still state their format.
 
 Until an administrator saves a homeserver and access token and enables Matrix
-under **Communications**, that page says Matrix chat isn't available and nobody
-can start a link. An existing link is kept and can still be removed.
+under **Communications**, that page says messaging isn't available and nobody
+can start a connection. An existing one is kept and can still be removed.
 
 Keep PostgreSQL credentials, bootstrap credentials, OIDC secrets, and provider
 credentials outside the repository. Provider credentials entered through the
@@ -693,9 +765,10 @@ todo, not routine output, once real provider credentials are in use.
 
 An administrator can create an encrypted settings-only archive from **Settings
 backup** in the application. It contains current integration, provider, OIDC,
-and acquisition-policy configuration, including Data Protection
+acquisition-policy and family setup-help configuration, including Data Protection
 ciphertext for the supported credentials. **Excluded:** CWA e-reader service-account
-username/password, personal Kindle targets and all delivery/receipt history.
+username/password, the Matrix bot connection, personal Kindle targets, members'
+setup progress and all delivery/receipt history.
 After import, re-enter the service credentials in Publishing settings and have
 users set up their Kindle addresses again. The service sign-in test only checks
 login; verify an intended book send separately. It does not contain accounts,

@@ -1,0 +1,34 @@
+@inject IJSRuntime JS
+
+@* A value someone has to retype elsewhere, with a copy button. The text stays selectable because browsers allow
+   clipboard access only on https or localhost. *@
+<div class="d-flex align-center flex-wrap my-1" style="gap: 0.5rem;">
+    <code class="setup-copy-value" style="font-size: 1rem; word-break: break-all;">@Value</code>
+    <MudButton Variant="Variant.Outlined" Size="Size.Small" StartIcon="@Icons.Material.Filled.ContentCopy"
+               OnClick="CopyAsync" aria-label="@($"Copy {Name}")">
+        Copy
+    </MudButton>
+    <MudText Typo="Typo.caption" role="status">@status</MudText>
+</div>
+
+@code {
+    private string? status;
+
+    [Parameter, EditorRequired] public string Value { get; set; } = string.Empty;
+
+    /// <summary>What the value is, for the button's accessible name.</summary>
+    [Parameter, EditorRequired] public string Name { get; set; } = string.Empty;
+
+    private async Task CopyAsync()
+    {
+        try
+        {
+            await JS.InvokeVoidAsync("navigator.clipboard.writeText", Value);
+            status = "Copied.";
+        }
+        catch (JSException)
+        {
+            status = "Select the text and copy it.";
+        }
+    }
+}

@@ -127,6 +127,7 @@ public static class AuditActions
     public const string ProviderInteractionTakenOver = "provider_interaction.taken_over";
 
     public const string SettingsBackupImported = "settings_backup.imported";
+    public const string SetupGuidanceChanged = "setup_guidance.changed";
 
     public const string DeliveryAttemptSubmitted = "delivery_attempt.submitted";
     public const string DeliveryAttemptFailed = "delivery_attempt.failed";
@@ -155,6 +156,7 @@ public static class AuditSubjectTypes
     public const string Oidc = "oidc";
     public const string ExternalProvider = "external_provider";
     public const string SettingsBackup = "settings_backup";
+    public const string SetupGuidance = "setup_guidance";
     public const string DeliveryAttempt = "delivery_attempt";
     public const string DeliveryTarget = "delivery_target";
     public const string ProviderInteraction = "provider_interaction";

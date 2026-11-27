@@ -1,0 +1,85 @@
+@using FamilyLibrarian.Contracts.Setup
+
+@* Getting the messaging app and signing in to it. The sign-in help is whatever the administrator wrote, so this
+   works for any way of handing out accounts. Used by the setup wizard and Message the Librarian. *@
+@if (Guidance.ShowElementHelp)
+{
+    <MudText Typo="Typo.subtitle1"><strong>Get Element</strong></MudText>
+    <MudText Typo="Typo.body2" Class="mb-2">
+        Element is the app that receives your messages. If you already have it, skip to signing in.
+    </MudText>
+
+    @* Narrow screens are phones: open or install directly. *@
+    <div class="d-flex d-md-none flex-column mb-3" style="gap: 0.5rem;">
+        @if (ElementLink is not null)
+        {
+            <MudButton Variant="Variant.Filled" Color="Color.Primary" Href="@ElementLink" Target="_blank"
+                       rel="noopener noreferrer">Open Element</MudButton>
+        }
+        <MudButton Variant="Variant.Outlined" Color="Color.Primary" Href="@AppleStoreUrl" Target="_blank"
+                   rel="noopener noreferrer">Get Element for iPhone or iPad</MudButton>
+        <MudButton Variant="Variant.Outlined" Color="Color.Primary" Href="@PlayStoreUrl" Target="_blank"
+                   rel="noopener noreferrer">Get Element for Android</MudButton>
+    </div>
+
+    @* Wider screens are usually computers: hand the phone a code to scan. *@
+    <div class="d-none d-md-flex align-center flex-wrap mb-3" style="gap: 1.5rem;">
+        @if (ElementLink is not null)
+        {
+            <QrCodeImage Text="@ElementLink" Pixels="180"
+                         Description="QR code that opens Element on a phone, or helps you install it" />
+        }
+        <div style="max-width: 22rem;">
+            @if (ElementLink is not null)
+            {
+                <MudText Typo="Typo.body2" Class="mb-2">
+                    <strong>On your phone?</strong> Point its camera at this code. If you have to install Element
+                    first, scan the code again afterwards so it picks the right server.
+                </MudText>
+            }
+            <MudText Typo="Typo.body2">
+                App stores:
+                <MudLink Href="@AppleStoreUrl" Target="_blank" rel="noopener noreferrer">iPhone or iPad</MudLink> ·
+                <MudLink Href="@PlayStoreUrl" Target="_blank" rel="noopener noreferrer">Android</MudLink>
+            </MudText>
+        </div>
+    </div>
+}
+
+@if (!string.IsNullOrWhiteSpace(Guidance.WebAppUrl))
+{
+    <MudText Typo="Typo.body2" Class="mb-3">
+        @(Guidance.ShowElementHelp ? "Prefer a computer? " : string.Empty)You can use it in your web browser:
+        <MudLink Href="@Guidance.WebAppUrl" Target="_blank" rel="noopener noreferrer">open the web app</MudLink>.
+    </MudText>
+}
+
+<MudText Typo="Typo.subtitle1"><strong>Sign in</strong></MudText>
+<MudText Typo="Typo.body2" Class="setup-sign-in-instructions" Style="white-space: pre-line; overflow-wrap: anywhere;">
+    @(string.IsNullOrWhiteSpace(Guidance.SignInInstructions) ? DefaultInstructions : Guidance.SignInInstructions)
+</MudText>
+@if (!string.IsNullOrWhiteSpace(Guidance.ServerName))
+{
+    <MudText Typo="Typo.body2" Class="mt-2">If the app asks for a server, enter:</MudText>
+    <CopyableValue Value="@Guidance.ServerName" Name="server name" />
+}
+@if (!string.IsNullOrWhiteSpace(Guidance.HelpUrl))
+{
+    <MudText Typo="Typo.body2" Class="mt-2">
+        <MudLink Href="@Guidance.HelpUrl" Target="_blank" rel="noopener noreferrer">Help with signing in</MudLink>
+    </MudText>
+}
+
+@code {
+    public const string DefaultInstructions = "Ask your library administrator how to sign in.";
+
+    private const string AppleStoreUrl = "https://apps.apple.com/app/id1631335820";
+    private const string PlayStoreUrl = "https://play.google.com/store/apps/details?id=io.element.android.x";
+
+    [Parameter, EditorRequired] public MessagingGuidanceResponse Guidance { get; set; } = null!;
+
+    // Element's own link: it opens Element X with this server chosen, or a page that helps install it.
+    private string? ElementLink => string.IsNullOrWhiteSpace(Guidance.ServerName)
+        ? null
+        : $"https://mobile.element.io/element/?account_provider={Uri.EscapeDataString(Guidance.ServerName)}";
+}

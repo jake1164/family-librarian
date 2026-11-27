@@ -1,0 +1,256 @@
+@using FamilyLibrarian.Contracts.Communications
+@using FamilyLibrarian.Contracts.Setup
+@using FamilyLibrarian.Web.Client.Communications
+@inherits LiveComponentBase
+@inject MatrixLinkApiClient MatrixLinkApi
+@inject ISnackbar Snackbar
+@inject IDialogService Dialogs
+
+@* Connecting one person's messaging account: sign in first, send a code, reply to it. The page follows along by
+   itself once the reply arrives. Used by the setup wizard and Message the Librarian. *@
+@if (isLoading)
+{
+    <MudProgressCircular Indeterminate="true" aria-label="Loading your messaging connection" />
+}
+else if (loadFailed || status is null)
+{
+    <MudAlert Severity="Severity.Error">We could not load your messaging connection.</MudAlert>
+}
+else
+{
+    @if (!status.IsAvailable)
+    {
+        <MudAlert Severity="Severity.Info" Class="mb-4">
+            Messaging the Librarian isn't available yet. An administrator needs to set it up.
+            @if (status.IsVerified)
+            {
+                <text>Your connection is kept, but no messages can be sent until then.</text>
+            }
+            <AuthorizeView Roles="Admin">
+                <MudLink Href="settings/communications">Set it up in Communications settings</MudLink>
+            </AuthorizeView>
+        </MudAlert>
+    }
+
+    @if (status.IsVerified)
+    {
+        <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="2" Class="mb-3">
+            <MudIcon Icon="@Icons.Material.Filled.CheckCircle" Color="Color.Success" />
+            <MudText Typo="Typo.h6" Style="overflow-wrap: anywhere;">Connected as @(status.Username ?? status.MatrixUserId)</MudText>
+        </MudStack>
+        @if (ShowDisconnect)
+        {
+            <MudButton Variant="Variant.Outlined" Color="Color.Error" Disabled="@busy" OnClick="DisconnectAsync">
+                Disconnect messaging
+            </MudButton>
+        }
+        @if (Guidance is not null)
+        {
+            <MudExpansionPanels Class="mt-4" Elevation="0">
+                <MudExpansionPanel Text="How to get the app and sign in">
+                    <MessagingSetupGuide Guidance="Guidance" />
+                </MudExpansionPanel>
+            </MudExpansionPanels>
+        }
+    }
+    else if (status.IsAvailable)
+    {
+        @if (Guidance is not null)
+        {
+            <MessagingSetupGuide Guidance="Guidance" />
+        }
+
+        @* Signing in has to come first: a new person's messaging account may not exist until they have. *@
+        @if (!signedIn && !status.AwaitingVerification)
+        {
+            <MudButton Class="mt-4" Variant="Variant.Filled" Color="Color.Primary" OnClick="@(() => signedIn = true)">
+                I've signed in
+            </MudButton>
+        }
+        else
+        {
+            <MudDivider Class="my-4" />
+            @if (status.AwaitingVerification)
+            {
+                <MudAlert Severity="Severity.Info" Class="mb-3">
+                    <MudText Typo="Typo.body2">
+                        We sent a code to <strong>@(status.Username ?? status.MatrixUserId)</strong>@(SenderText).
+                        In your messaging app, <strong>accept the newest invitation</strong> and reply with the code in
+                        that conversation. This page updates by itself.
+                    </MudText>
+                    <MudText Typo="Typo.body2" Class="mt-2">
+                        Don't start a new conversation: the Librarian only reads the one it started. If nothing
+                        happens, check that the conversation isn't encrypted.
+                    </MudText>
+                </MudAlert>
+            }
+
+            <MudStack Spacing="3">
+                <MudTextField Immediate="true" T="string" Value="@username" ValueChanged="UsernameChanged"
+                              Label="@UsernameLabel" Disabled="@busy"
+                              HelperText="@("Just your username, such as alice. A full ID such as @alice:example.org also works.")"
+                              autocomplete="off" autocapitalize="none" spellcheck="false" />
+
+                @if (limitMessage is not null)
+                {
+                    <MudAlert Severity="Severity.Warning" role="alert">
+                        <strong>Code limit reached.</strong> @limitMessage
+                    </MudAlert>
+                }
+
+                @if (!string.IsNullOrWhiteSpace(errorMessage))
+                {
+                    <MudAlert Severity="Severity.Error">@errorMessage</MudAlert>
+                }
+
+                <div>
+                    <MudButton Variant="@(status.AwaitingVerification ? Variant.Outlined : Variant.Filled)"
+                               Color="Color.Primary" Disabled="@busy" OnClick="SendCodeAsync">
+                        @(status.AwaitingVerification ? "Send a new code" : "Send my code")
+                    </MudButton>
+                </div>
+            </MudStack>
+        }
+    }
+}
+
+@code {
+    private bool isLoading = true;
+    private bool loadFailed;
+    private bool busy;
+    private bool signedIn;
+    private bool typed;
+    private MatrixLinkStatusResponse? status;
+    private string username = string.Empty;
+    private string? errorMessage;
+    private string? limitMessage;
+
+    [Parameter] public MessagingGuidanceResponse? Guidance { get; set; }
+
+    [Parameter] public bool ShowDisconnect { get; set; } = true;
+
+    /// <summary>Raised whenever the connection is loaded or changes.</summary>
+    [Parameter] public EventCallback<MatrixLinkStatusResponse> StatusChanged { get; set; }
+
+    private string UsernameLabel => Guidance?.ShowElementHelp == false ? "Messaging username" : "Element username";
+
+    private string SenderText => Guidance?.BotUserId is { } bot ? $" from {bot}" : string.Empty;
+
+    protected override async Task OnInitializedAsync()
+    {
+        Observe(LiveUpdateTopics.Communications, LoadAsync);
+        try
+        {
+            await LoadAsync();
+        }
+        catch (HttpRequestException)
+        {
+            loadFailed = true;
+        }
+        finally
+        {
+            isLoading = false;
+        }
+    }
+
+    private async Task LoadAsync() => await ApplyAsync(await MatrixLinkApi.GetAsync());
+
+    private async Task ApplyAsync(MatrixLinkStatusResponse? latest)
+    {
+        status = latest;
+        loadFailed = false;
+        // A refresh must not replace something the person is in the middle of typing.
+        if (!typed)
+        {
+            username = latest?.Username ?? latest?.MatrixUserId ?? string.Empty;
+        }
+
+        if (latest is not null)
+        {
+            await StatusChanged.InvokeAsync(latest);
+        }
+    }
+
+    private void UsernameChanged(string value)
+    {
+        username = value;
+        typed = true;
+    }
+
+    private async Task SendCodeAsync()
+    {
+        busy = true;
+        errorMessage = null;
+        limitMessage = null;
+
+        try
+        {
+            var result = await MatrixLinkApi.RequestLinkAsync(username);
+            if (result.Succeeded)
+            {
+                typed = false;
+                await ApplyAsync(result.Status);
+                Snackbar.Add("Code sent. Look for the invitation in your messaging app.", Severity.Success);
+                try
+                {
+                    await RefreshLiveAsync();
+                }
+                catch (HttpRequestException)
+                {
+                    // The successful response is already shown; a later live update refreshes again.
+                }
+            }
+            else if (result.LimitReached)
+            {
+                limitMessage = result.Error;
+            }
+            else
+            {
+                errorMessage = result.Error;
+            }
+        }
+        catch (HttpRequestException)
+        {
+            errorMessage = "The code could not be sent. Please try again.";
+        }
+        finally
+        {
+            busy = false;
+        }
+    }
+
+    private async Task DisconnectAsync()
+    {
+        if (!await Dialogs.ConfirmRemovalAsync("Disconnect messaging?",
+                "The Librarian stops sending you messages. To reconnect you would need a new code.", "Disconnect"))
+        {
+            return;
+        }
+
+        busy = true;
+
+        try
+        {
+            var result = await MatrixLinkApi.UnlinkAsync();
+            if (result.Succeeded)
+            {
+                typed = false;
+                signedIn = false;
+                await ApplyAsync(result.Status);
+                Snackbar.Saved("Messaging disconnected.");
+            }
+            else
+            {
+                Snackbar.Failed(result.Error ?? "That could not be disconnected.");
+            }
+        }
+        catch (HttpRequestException)
+        {
+            Snackbar.Failed("That could not be disconnected. Please try again.");
+        }
+        finally
+        {
+            busy = false;
+        }
+    }
+}

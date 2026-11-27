@@ -168,7 +168,8 @@ public sealed class MatrixInboundRouter(
         UserMatrixDestination destination, MatrixInboundMessage message, bool conversationOn, MatrixSettings settings, string accessToken,
         CancellationToken cancellationToken)
     {
-        if (!conversationOn || !destination.IsVerified || !IsLinkedSender(destination, message))
+        // Someone still connecting hears this even with chat off: otherwise their code is silently never read.
+        if (!IsLinkedSender(destination, message) || (destination.IsVerified && !conversationOn))
         {
             return;
         }
@@ -185,7 +186,7 @@ public sealed class MatrixInboundRouter(
         if (!string.Equals(destination.MatrixUserId, message.SenderUserId, StringComparison.Ordinal))
         {
             await ReplyAsync(settings, accessToken, destination.RoomId!,
-                "Only the linked Matrix account can choose a provider fallback.", cancellationToken);
+                "Only the connected account can choose a provider fallback.", cancellationToken);
             return;
         }
 
@@ -224,7 +225,7 @@ public sealed class MatrixInboundRouter(
             !string.Equals(body, destination.VerificationCode, StringComparison.OrdinalIgnoreCase))
         {
             await ReplyAsync(settings, accessToken, destination.RoomId!,
-                "That code didn't match. Request a new one from Family Librarian's account settings.", cancellationToken);
+                "That code didn't match. Send a new one from Message the Librarian in Family Librarian.", cancellationToken);
             return;
         }
 
@@ -235,7 +236,7 @@ public sealed class MatrixInboundRouter(
             new { destination.UserId }, cancellationToken);
 
         await ReplyAsync(settings, accessToken, destination.RoomId!,
-            "You're linked! Family Librarian notifications will reach you here.", cancellationToken);
+            "You're connected! The Librarian will message you here.", cancellationToken);
     }
 
     private async Task HandlePromptableReplyAsync(

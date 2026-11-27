@@ -2,7 +2,9 @@ using FamilyLibrarian.Application.Abstractions;
 using FamilyLibrarian.Application.Communications;
 using FamilyLibrarian.Application.Integrations;
 using FamilyLibrarian.Application.Publishing;
+using FamilyLibrarian.Application.Setup;
 using FamilyLibrarian.Domain.Communications;
+using FamilyLibrarian.Domain.Setup;
 
 namespace FamilyLibrarian.Infrastructure.Tests.Communications;
 
@@ -17,10 +19,100 @@ public sealed class MatrixIdentityLinkServiceTests
     {
         var context = new TestContext();
 
-        var result = await context.Service.RequestLinkAsync("not-a-matrix-id", CancellationToken.None);
+        context.ConfigureMatrix();
+
+        var result = await context.Service.RequestLinkAsync("not a username", CancellationToken.None);
 
         Assert.IsFalse(result.Succeeded);
-        StringAssert.Contains(result.Error, "Matrix ID");
+        StringAssert.Contains(result.Error, "cannot contain spaces");
+        Assert.IsNull(context.MatrixClient.LastInvited);
+    }
+
+    [TestMethod]
+    public async Task TheSixthCodeIsRefusedAsALimitAndInvitesNobody()
+    {
+        var context = new TestContext();
+        context.ConfigureMatrix();
+        // Refused input never reaches the homeserver, so it must not use up the allowance.
+        for (var attempt = 0; attempt < 10; attempt++)
+        {
+            await context.Service.RequestLinkAsync("not a username", CancellationToken.None);
+        }
+
+        for (var send = 0; send < MatrixCodeSendLimiter.MaxSends; send++)
+        {
+            var sent = await context.Service.RequestLinkAsync("friend", CancellationToken.None);
+            Assert.IsTrue(sent.Succeeded, sent.Error);
+            Assert.IsNull(sent.RetryAfter);
+        }
+
+        var code = (await context.DestinationStore.FindByUserIdAsync(UserId, CancellationToken.None))!.VerificationCode;
+        var refused = await context.Service.RequestLinkAsync("somebody-else", CancellationToken.None);
+
+        Assert.IsFalse(refused.Succeeded);
+        Assert.AreEqual(MatrixCodeSendLimiter.Window, refused.RetryAfter);
+        StringAssert.Contains(refused.Error, "which is the limit");
+        Assert.AreEqual("@friend:example.test", context.MatrixClient.LastInvited);
+        // The newest code that was sent still works.
+        var destination = (await context.DestinationStore.FindByUserIdAsync(UserId, CancellationToken.None))!;
+        Assert.AreEqual(code, destination.VerificationCode);
+        Assert.AreEqual("@friend:example.test", destination.MatrixUserId);
+        StringAssert.Matches(code, new System.Text.RegularExpressions.Regex("^[0-9]{6}$"));
+    }
+
+    [TestMethod]
+    public async Task AnIdTooLongToStoreIsRefusedBeforeAnyoneIsInvited()
+    {
+        var context = new TestContext();
+        context.ConfigureMatrix();
+
+        var result = await context.Service.RequestLinkAsync(new string('a', 250), CancellationToken.None);
+
+        Assert.IsFalse(result.Succeeded);
+        StringAssert.Contains(result.Error, "too long");
+        Assert.IsNull(context.MatrixClient.LastInvited);
+    }
+
+    [TestMethod]
+    public async Task AUsernameAloneInvitesThatAccountOnTheBotsServer()
+    {
+        var context = new TestContext();
+        context.ConfigureMatrix();
+
+        var result = await context.Service.RequestLinkAsync("Friend", CancellationToken.None);
+
+        Assert.IsTrue(result.Succeeded, result.Error);
+        Assert.AreEqual("@friend:example.test", context.MatrixClient.LastInvited);
+        Assert.AreEqual("@friend:example.test", result.Status!.MatrixUserId);
+        Assert.AreEqual("friend", result.Status.Username);
+    }
+
+    [TestMethod]
+    public async Task TheSavedServerNameWinsOverTheBotsServer()
+    {
+        var context = new TestContext();
+        context.ConfigureMatrix();
+        var guidance = await context.GuidanceStore.GetOrCreateAsync(CancellationToken.None);
+        Assert.IsNull(guidance.TrySetMessaging("chat.example.test", null, null, null, null, Now));
+
+        var result = await context.Service.RequestLinkAsync("friend", CancellationToken.None);
+
+        Assert.AreEqual("@friend:chat.example.test", context.MatrixClient.LastInvited);
+        Assert.AreEqual("friend", result.Status!.Username);
+    }
+
+    [TestMethod]
+    public async Task AFailedInvitationDoesNotRepeatTheHomeserversErrorToTheMember()
+    {
+        var context = new TestContext();
+        context.ConfigureMatrix();
+        context.MatrixClient.RoomError = "Could not reach the Matrix homeserver: matrix-internal:8008";
+
+        var result = await context.Service.RequestLinkAsync("friend", CancellationToken.None);
+
+        Assert.IsFalse(result.Succeeded);
+        StringAssert.Contains(result.Error, "Could not start a conversation");
+        Assert.IsFalse(result.Error!.Contains("matrix-internal", StringComparison.Ordinal));
     }
 
     [TestMethod]
@@ -101,13 +193,15 @@ public sealed class MatrixIdentityLinkServiceTests
         public FakeMatrixSettingsStore SettingsStore { get; } = new();
         public InMemoryUserMatrixDestinationStore DestinationStore { get; } = new();
         public FakeMatrixClient MatrixClient { get; } = new();
+        public FakeSetupGuidanceStore GuidanceStore { get; } = new();
         public MatrixIdentityLinkService Service { get; }
 
         public TestContext()
         {
             Service = new MatrixIdentityLinkService(
                 SettingsStore, DestinationStore, MatrixClient, new FakeCredentialProtector(),
-                new StubCurrentUser(UserId), new FixedClock(), new NullAuditWriter());
+                new StubCurrentUser(UserId), new FixedClock(), new NullAuditWriter(), GuidanceStore,
+                new MatrixCodeSendLimiter());
         }
 
         public void ConfigureMatrix()
@@ -117,6 +211,18 @@ public sealed class MatrixIdentityLinkServiceTests
             settings.SetAccessToken("protected-token", formatVersion: 1, actorUserId: null, Now);
             settings.SetEnabled(true, actorUserId: null, Now);
         }
+    }
+
+    private sealed class FakeSetupGuidanceStore : ISetupGuidanceStore
+    {
+        private SetupGuidanceSettings? settings;
+
+        public Task<SetupGuidanceSettings?> FindAsync(CancellationToken cancellationToken) => Task.FromResult(settings);
+
+        public Task<SetupGuidanceSettings> GetOrCreateAsync(CancellationToken cancellationToken) =>
+            Task.FromResult(settings ??= new SetupGuidanceSettings(Now));
+
+        public Task<bool> TrySaveChangesAsync(CancellationToken cancellationToken) => Task.FromResult(true);
     }
 
     private sealed class FakeMatrixSettingsStore : IMatrixSettingsStore
@@ -159,14 +265,21 @@ public sealed class MatrixIdentityLinkServiceTests
     private sealed class FakeMatrixClient : IMatrixClient
     {
         public string? LastMessageSent { get; private set; }
+        public string? LastInvited { get; private set; }
+        public string? RoomError { get; set; }
 
         public Task<ConnectionTestOutcome> TestConnectionAsync(
             MatrixSettings settings, string accessToken, CancellationToken cancellationToken) =>
             Task.FromResult(new ConnectionTestOutcome(true, "ok"));
 
         public Task<MatrixRoomResult> GetOrCreateDirectRoomAsync(
-            MatrixSettings settings, string accessToken, string matrixUserId, CancellationToken cancellationToken) =>
-            Task.FromResult(MatrixRoomResult.Success("!room:example.test"));
+            MatrixSettings settings, string accessToken, string matrixUserId, CancellationToken cancellationToken)
+        {
+            LastInvited = matrixUserId;
+            return Task.FromResult(RoomError is null
+                ? MatrixRoomResult.Success("!room:example.test")
+                : MatrixRoomResult.Failure(RoomError));
+        }
 
         public Task<SendResult> SendMessageAsync(
             MatrixSettings settings, string accessToken, string roomId, string text, CancellationToken cancellationToken)

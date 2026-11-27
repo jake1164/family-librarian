@@ -1,0 +1,105 @@
+@using FamilyLibrarian.Contracts.Setup
+@inherits LiveComponentBase
+@inject SetupApiClient SetupApi
+@inject NavigationManager Navigation
+@inject ISnackbar Snackbar
+
+@* A reminder that something available has not been set up. It never takes over the page, and dismissing it is
+   saved to the account. *@
+@if (Steps.Count > 0)
+{
+    <MudAlert Severity="Severity.Info" Class="mb-4 setup-banner">
+        <div class="d-flex align-center flex-wrap" style="gap: 0.75rem;">
+            <span>@Message</span>
+            <MudButton Variant="Variant.Filled" Color="Color.Primary" Size="Size.Small" Href="welcome">
+                @(Steps.Count == 1 ? "Set it up" : "Set them up")
+            </MudButton>
+            <MudButton Variant="Variant.Text" Size="Size.Small" Disabled="@busy" OnClick="DismissAsync">Dismiss</MudButton>
+        </div>
+    </MudAlert>
+}
+
+@code {
+    private IReadOnlyList<string> reminders = [];
+    private bool busy;
+
+    /// <summary>What to mention here: nothing on the wizard, and not a feature on its own settings page.</summary>
+    private IReadOnlyList<string> Steps => CurrentPath switch
+    {
+        "welcome" => [],
+        "settings/ebook-delivery" => reminders.Where(step => step != SetupStepNames.Kindle).ToArray(),
+        "settings/matrix" => reminders.Where(step => step != SetupStepNames.Messaging).ToArray(),
+        _ => reminders
+    };
+
+    private string CurrentPath =>
+        Navigation.ToBaseRelativePath(Navigation.Uri).Split('?', '#')[0].TrimEnd('/').ToLowerInvariant();
+
+    private string Message => (Steps.Contains(SetupStepNames.Kindle), Steps.Contains(SetupStepNames.Messaging)) switch
+    {
+        (true, true) => "You can now send books to your Kindle and message the Librarian.",
+        (true, false) => "You can now send books to your Kindle.",
+        _ => "You can now message the Librarian."
+    };
+
+    protected override async Task OnInitializedAsync()
+    {
+        Navigation.LocationChanged += OnLocationChanged;
+        Observe(LiveUpdateTopics.System | LiveUpdateTopics.Communications, LoadAsync);
+        await TryLoadAsync();
+    }
+
+    private async Task LoadAsync() => reminders = (await SetupApi.GetAsync())?.ReminderSteps ?? [];
+
+    private async Task TryLoadAsync()
+    {
+        try
+        {
+            await LoadAsync();
+        }
+        catch (HttpRequestException)
+        {
+            // A reminder that cannot be loaded is simply not shown.
+            reminders = [];
+        }
+    }
+
+    // Something may have just been set up on the page being left.
+    private void OnLocationChanged(object? sender, LocationChangedEventArgs args) =>
+        _ = InvokeAsync(async () =>
+        {
+            await TryLoadAsync();
+            StateHasChanged();
+        });
+
+    private async Task DismissAsync()
+    {
+        busy = true;
+        try
+        {
+            if (await SetupApi.SkipAsync(Steps))
+            {
+                await TryLoadAsync();
+            }
+            else
+            {
+                Snackbar.Failed("The reminder could not be dismissed.");
+            }
+        }
+        catch (HttpRequestException)
+        {
+            Snackbar.Failed("The reminder could not be dismissed.");
+        }
+        finally
+        {
+            busy = false;
+        }
+    }
+
+    public override void Dispose()
+    {
+        Navigation.LocationChanged -= OnLocationChanged;
+        base.Dispose();
+        GC.SuppressFinalize(this);
+    }
+}

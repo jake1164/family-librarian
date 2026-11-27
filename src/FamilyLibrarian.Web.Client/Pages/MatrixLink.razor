@@ -1,83 +1,27 @@
 @page "/settings/matrix"
 @attribute [Authorize]
-@using FamilyLibrarian.Contracts.Communications
-@using FamilyLibrarian.Web.Client.Communications
-@using FamilyLibrarian.Web.Client.Realtime
-@inherits LiveComponentBase
-@inject MatrixLinkApiClient MatrixLinkApi
-@inject ISnackbar Snackbar
-@inject IDialogService Dialogs
+@using FamilyLibrarian.Contracts.Setup
+@using FamilyLibrarian.Web.Client.Setup
+@inject SetupApiClient SetupApi
 
-<PageTitle>Matrix chat · Family Librarian</PageTitle>
+<PageTitle>Message the Librarian · Family Librarian</PageTitle>
 
-<MudText Typo="Typo.h4" GutterBottom="true">Matrix chat</MudText>
-<MudText Typo="Typo.body1" Class="mb-6">
-    Link your Matrix ID to receive Family Librarian notifications as chat messages,
-    in addition to email. Once linked, you can reply directly to some notifications
-    -- for example, confirming a Kindle delivery arrived with a simple "yes" or "no".
-</MudText>
+<MudText Typo="Typo.h4" GutterBottom="true">Message the Librarian</MudText>
 
 @if (isLoading)
 {
-    <MudProgressCircular Indeterminate="true" aria-label="Loading Matrix link settings" />
-}
-else if (loadFailed)
-{
-    <MudAlert Severity="Severity.Error">We could not load your Matrix link settings.</MudAlert>
+    <MudProgressCircular Indeterminate="true" aria-label="Loading Message the Librarian" />
 }
 else
 {
-    @if (status is { IsAvailable: false })
-    {
-        <MudAlert Severity="Severity.Info" Class="mb-4">
-            Matrix chat isn't available yet. An administrator needs to set it up.
-            @if (status.IsVerified)
-            {
-                <text>Your link is kept, but no messages can be sent until then.</text>
-            }
-            <AuthorizeView Roles="Admin">
-                <MudLink Href="settings/communications">Set it up in Communications settings</MudLink>
-            </AuthorizeView>
-        </MudAlert>
-    }
+    <MudText Typo="Typo.body1" Class="mb-6">
+        @(guidance?.ChatEnabled == true
+            ? "Ask for books and get updates by message, from your phone or computer."
+            : "Get a message when your book is ready, and reply to quick questions.")
+    </MudText>
 
     <MudPaper Class="pa-4" Outlined="true">
-        @if (status is { IsVerified: true })
-        {
-            <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="2" Class="mb-3">
-                <MudIcon Icon="@Icons.Material.Filled.CheckCircle" Color="Color.Success" />
-                <MudText Typo="Typo.h6">Linked to @status.MatrixUserId</MudText>
-            </MudStack>
-            <MudButton Variant="Variant.Outlined" Color="Color.Error" Disabled="@busy" OnClick="UnlinkAsync">
-                Remove link
-            </MudButton>
-        }
-        else
-        {
-            @if (status is { AwaitingVerification: true, IsAvailable: true })
-            {
-                <MudAlert Severity="Severity.Info" Class="mb-3">
-                    We sent a verification code to @status.MatrixUserId on Matrix. Reply with that
-                    code in the chat to finish linking. Requesting a new code below replaces it.
-                </MudAlert>
-            }
-
-            <MudStack Spacing="3">
-                <MudTextField Immediate="true" T="string" @bind-Value="matrixUserId" Label="Your Matrix ID" Disabled="@(busy || !CanLink)"
-                              Placeholder="@("@you:example.org")" />
-
-                @if (!string.IsNullOrWhiteSpace(errorMessage))
-                {
-                    <MudAlert Severity="Severity.Error">@errorMessage</MudAlert>
-                }
-
-                <div>
-                    <MudButton Variant="Variant.Filled" Color="Color.Primary" Disabled="@(busy || !CanLink)" OnClick="RequestLinkAsync">
-                        Send verification code
-                    </MudButton>
-                </div>
-            </MudStack>
-        }
+        <MessagingConnectionPanel Guidance="guidance" />
     </MudPaper>
 }
 
@@ -87,107 +31,22 @@ else
 
 @code {
     private bool isLoading = true;
-    private bool loadFailed;
-    private bool busy;
-    private MatrixLinkStatusResponse? status;
-    private bool CanLink => status is { IsAvailable: true };
-    private string matrixUserId = string.Empty;
-    private string? errorMessage;
-
-    protected override void OnInitialized() =>
-        Observe(LiveUpdateTopics.Communications, RefreshMatrixStatusAsync);
+    // Null while messaging isn't set up, or if it could not be read: connecting still works without the instructions.
+    private MessagingGuidanceResponse? guidance;
 
     protected override async Task OnInitializedAsync()
     {
         try
         {
-            status = await MatrixLinkApi.GetAsync();
-            matrixUserId = status?.MatrixUserId ?? matrixUserId;
+            guidance = (await SetupApi.GetAsync())?.Messaging;
         }
         catch (HttpRequestException)
         {
-            loadFailed = true;
+            guidance = null;
         }
         finally
         {
             isLoading = false;
-        }
-    }
-
-    private async Task RefreshMatrixStatusAsync()
-    {
-        var latestStatus = await MatrixLinkApi.GetAsync();
-        status = latestStatus;
-        matrixUserId = latestStatus?.MatrixUserId ?? string.Empty;
-    }
-
-    private async Task RequestLinkAsync()
-    {
-        busy = true;
-        errorMessage = null;
-
-        try
-        {
-            var result = await MatrixLinkApi.RequestLinkAsync(matrixUserId);
-            if (result.Succeeded)
-            {
-                status = result.Status;
-                try
-                {
-                    await RefreshMatrixStatusAsync();
-                }
-                catch (HttpRequestException)
-                {
-                    // Keep the successful request response; a later live update will refresh again.
-                }
-                Snackbar.Add("Verification code sent on Matrix.", Severity.Success);
-            }
-            else
-            {
-                errorMessage = result.Error;
-            }
-        }
-        catch (HttpRequestException)
-        {
-            errorMessage = "That could not be saved. Please try again.";
-        }
-        finally
-        {
-            busy = false;
-        }
-    }
-
-    private async Task UnlinkAsync()
-    {
-        if (!await Dialogs.ConfirmRemovalAsync("Remove your Matrix link?",
-                "Family Librarian stops sending you Matrix messages. You would have to link and verify again.", "Remove link"))
-        {
-            return;
-        }
-
-        busy = true;
-
-        try
-        {
-            var result = await MatrixLinkApi.UnlinkAsync();
-            if (result.Succeeded)
-            {
-                status = result.Status;
-                matrixUserId = string.Empty;
-                Snackbar.Saved("Matrix link removed.");
-            }
-            else
-            {
-                Snackbar.Failed(result.Error ?? "That could not be removed.");
-            }
-        }
-        catch (HttpRequestException)
-        {
-            Snackbar.Failed("That could not be removed. Please try again.");
-        }
-        finally
-        {
-            busy = false;
         }
     }
 }

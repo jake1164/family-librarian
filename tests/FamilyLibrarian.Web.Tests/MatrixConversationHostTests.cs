@@ -260,7 +260,7 @@ public sealed class MatrixConversationHostTests
         rig.Server.Deliver(Say(user, "424242", "$v2"));
         await PollAsync(rig);
 
-        StringAssert.Contains(rig.Server.RepliesTo(user.Room).Single(), "linked");
+        StringAssert.Contains(rig.Server.RepliesTo(user.Room).Single(), "connected");
         await using var check = rig.Factory.Services.CreateAsyncScope();
         Assert.IsTrue((await check.ServiceProvider.GetRequiredService<AppDbContext>().UserMatrixDestinations.SingleAsync(item => item.UserId == user.UserId)).IsVerified);
     }

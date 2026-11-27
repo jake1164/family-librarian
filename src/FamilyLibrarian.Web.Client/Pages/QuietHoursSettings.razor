@@ -11,10 +11,10 @@
 
 <MudText Typo="Typo.h4" GutterBottom="true">Quiet hours</MudText>
 <MudText Typo="Typo.body1" Class="mb-6">
-    During these hours Family Librarian holds your email and Matrix notifications and sends
+    During these hours Family Librarian holds your email notifications and the Librarian's messages and sends
     them when the window ends. Books are still found and delivered, including to your Kindle,
     and notifications inside the app still appear. Replies to something you just did, such as
-    a Matrix link code or a chat answer, are sent right away.
+    a messaging code or a chat answer, are sent right away.
 </MudText>
 
 @if (isLoading)
@@ -30,7 +30,7 @@ else
     @if (!isAvailable)
     {
         <MudAlert Severity="Severity.Info" Class="mb-4">
-            Email and Matrix notifications aren't available yet. An administrator needs to set one up.
+            Email and messaging aren't available yet. An administrator needs to set one up.
             <AuthorizeView Roles="Admin">
                 <MudLink Href="settings/communications">Set it up in Communications settings</MudLink>
             </AuthorizeView>

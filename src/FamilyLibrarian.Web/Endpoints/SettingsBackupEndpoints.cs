@@ -106,5 +106,6 @@ internal static class SettingsBackupEndpoints
         counts.SmtpSettings,
         counts.ProviderSettings,
         counts.OidcSettings,
-        counts.AcquisitionPolicySettings);
+        counts.AcquisitionPolicySettings,
+        counts.SetupGuidanceSettings);
 }

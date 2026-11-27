@@ -312,6 +312,19 @@ value it is given changes, so a refused save leaves it looking on.
   notification through `Snackbar.Saved` or `Snackbar.Failed`. A failure stays
   until dismissed. A page that could not load says so inline.
 
+## Names members see
+
+Pages and messages for family members call Matrix messaging **Message the
+Librarian** and talk about a "messaging app", "username" and "conversation". They
+name Element only when Element setup help is on. Administrator pages say
+**Matrix**, and note that members know it as Message the Librarian. Routes, code
+and database names keep "matrix". Do not call the feature "chat" or "alerts":
+**Chat** is the web assistant, and messaging goes both ways.
+
+Setup instructions live in `Setup/` components shared by the setup guide and the
+matching settings page, so the two cannot drift apart. Add to those components
+instead of writing the steps again in a page.
+
 ## Adding a new status or media type
 
 1. Add the color/label mapping to `MediaTypeVisuals` — not to the page.

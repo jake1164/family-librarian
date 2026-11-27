@@ -5059,6 +5059,69 @@ namespace FamilyLibrarian.Infrastructure.Persistence.Migrations
                     b.ToTable("security_scan_results", "security");
                 });
 
+            modelBuilder.Entity("FamilyLibrarian.Domain.Setup.SetupGuidanceSettings", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<string>("AmazonStoreDomain")
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)")
+                        .HasColumnName("amazon_store_domain");
+
+                    b.Property<DateTimeOffset>("CreatedAtUtc")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("created_at_utc");
+
+                    b.Property<string>("KindleSenderAddress")
+                        .HasMaxLength(320)
+                        .HasColumnType("character varying(320)")
+                        .HasColumnName("kindle_sender_address");
+
+                    b.Property<string>("MessagingHelpUrl")
+                        .HasMaxLength(512)
+                        .HasColumnType("character varying(512)")
+                        .HasColumnName("messaging_help_url");
+
+                    b.Property<string>("MessagingServerName")
+                        .HasMaxLength(255)
+                        .HasColumnType("character varying(255)")
+                        .HasColumnName("messaging_server_name");
+
+                    b.Property<string>("MessagingSignInInstructions")
+                        .HasMaxLength(1000)
+                        .HasColumnType("character varying(1000)")
+                        .HasColumnName("messaging_sign_in_instructions");
+
+                    b.Property<string>("MessagingWebAppUrl")
+                        .HasMaxLength(512)
+                        .HasColumnType("character varying(512)")
+                        .HasColumnName("messaging_web_app_url");
+
+                    b.Property<bool>("ShowElementHelp")
+                        .HasColumnType("boolean")
+                        .HasColumnName("show_element_help");
+
+                    b.Property<DateTimeOffset>("UpdatedAtUtc")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("updated_at_utc");
+
+                    b.Property<Guid?>("UpdatedByUserId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("updated_by_user_id");
+
+                    b.Property<uint>("Version")
+                        .IsConcurrencyToken()
+                        .ValueGeneratedOnAddOrUpdate()
+                        .HasColumnType("xid")
+                        .HasColumnName("xmin");
+
+                    b.HasKey("Id");
+
+                    b.ToTable("setup_guidance_settings", "communications");
+                });
+
             modelBuilder.Entity("FamilyLibrarian.Infrastructure.Gutenberg.GutenbergCatalogBookEntity", b =>
                 {
                     b.Property<long>("Id")
@@ -5432,6 +5495,18 @@ namespace FamilyLibrarian.Infrastructure.Persistence.Migrations
 
                     b.Property<string>("SecurityStamp")
                         .HasColumnType("text");
+
+                    b.Property<int>("SetupCompletedSteps")
+                        .HasColumnType("integer")
+                        .HasColumnName("setup_completed_steps");
+
+                    b.Property<int>("SetupSkippedSteps")
+                        .HasColumnType("integer")
+                        .HasColumnName("setup_skipped_steps");
+
+                    b.Property<DateTimeOffset?>("SetupWizardSeenAtUtc")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("setup_wizard_seen_at_utc");
 
                     b.Property<string>("Status")
                         .IsRequired()

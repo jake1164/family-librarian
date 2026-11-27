@@ -131,6 +131,9 @@ public sealed class FormatReadinessEndpointTests
 
     private sealed class EnabledVersusUnreadyReadinessService : IFormatReadinessService
     {
+        public async Task<bool> IsOfferedAsync(RequestMediaType mediaType, CancellationToken cancellationToken) =>
+            (await CheckAsync(mediaType, cancellationToken)).IsEnabled;
+
         public Task<FormatReadiness> CheckAsync(RequestMediaType mediaType, CancellationToken cancellationToken) =>
             Task.FromResult(mediaType == RequestMediaType.Ebook
                 ? FormatReadiness.Disabled("CWA is not enabled.")
@@ -171,6 +174,9 @@ public sealed class FormatReadinessEndpointTests
     /// <summary>Reports one given media type as not ready; every other type is ready.</summary>
     private sealed class FakeFormatReadinessService(RequestMediaType notReadyMediaType) : IFormatReadinessService
     {
+        public async Task<bool> IsOfferedAsync(RequestMediaType mediaType, CancellationToken cancellationToken) =>
+            (await CheckAsync(mediaType, cancellationToken)).IsEnabled;
+
         public Task<FormatReadiness> CheckAsync(RequestMediaType mediaType, CancellationToken cancellationToken) =>
             Task.FromResult(mediaType == notReadyMediaType
                 ? FormatReadiness.NotReady("CWA is unreachable in this test.")

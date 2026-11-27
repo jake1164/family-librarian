@@ -15,6 +15,7 @@
     <PackageReference Include="Microsoft.AspNetCore.Mvc.Testing" />
     <PackageReference Include="Microsoft.Playwright" />
     <PackageReference Include="Testcontainers.PostgreSql" />
+    <PackageReference Include="ZXing.Net" />
   </ItemGroup>
 
   <Import Project="Sdk.targets" Sdk="MSTest.Sdk" />

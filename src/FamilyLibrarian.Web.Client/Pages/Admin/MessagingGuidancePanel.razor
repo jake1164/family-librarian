@@ -1,0 +1,154 @@
+@using FamilyLibrarian.Contracts.Setup
+@using FamilyLibrarian.Web.Client.Setup
+@inject SetupApiClient SetupApi
+@inject ISnackbar Snackbar
+
+@* What family members are told while setting up Message the Librarian. The bot's connection is the card above. *@
+<SettingsDraftGuard IsDirty="@(draft.HasChanges("messaging-help", Fields))" />
+
+<MudPaper Class="pa-4 mt-4" Elevation="1">
+    <MudText Typo="Typo.h6">Message the Librarian: help for family members</MudText>
+    <MudText Typo="Typo.body2" Class="mt-2 mb-3">
+        Shown while someone connects their messaging account. Everyone who signs in to the library can see it, so
+        don't include passwords or registration tokens. Family Librarian doesn't create messaging accounts.
+    </MudText>
+
+    @if (loadFailed)
+    {
+        <MudAlert Severity="Severity.Error">We could not load the messaging setup help.</MudAlert>
+    }
+    else if (saved is null)
+    {
+        <MudProgressCircular Indeterminate="true" aria-label="Loading messaging setup help" />
+    }
+    else
+    {
+        <MudStack Spacing="3">
+            <MudTextField Immediate="true" T="string" Label="Sign-in instructions" @bind-Value="instructions"
+                          Disabled="@busy" Lines="3" Sizing="InputSizing.Auto" MaxLength="1000" Counter="1000"
+                          Placeholder="Choose your sign-in button and use your library login. If it doesn't work, ask me."
+                          HelperText="How a family member gets an account and signs in. Blank says to ask the administrator." />
+            <MudTextField Immediate="true" T="string" Label="Sign-in help link (optional)" @bind-Value="helpUrl"
+                          Disabled="@busy" Placeholder="https://help.example.org/messaging" />
+            <MudTextField Immediate="true" T="string" Label="Messaging server name" @bind-Value="serverName"
+                          Disabled="@busy" Placeholder="@(saved.SuggestedServerName ?? "example.org")"
+                          HelperText="@ServerNameHelp" />
+            <MudTextField Immediate="true" T="string" Label="Web app address (optional)" @bind-Value="webAppUrl"
+                          Disabled="@busy" Placeholder="https://element.example.org"
+                          HelperText="Offered to people who'd rather use a browser than install an app." />
+        </MudStack>
+
+        <MudStack Row="true" Spacing="2" Class="mt-4">
+            <MudButton Variant="Variant.Filled" Color="Color.Primary" Disabled="@busy" OnClick="SaveAsync">
+                Save messaging help
+            </MudButton>
+        </MudStack>
+
+        <MudDivider Class="my-4" />
+        <SettingSwitch Value="saved.ShowElementHelp" Changing="SetElementHelpAsync" Disabled="@busy"
+                       Label="Walk people through installing Element X" />
+        <MudText Typo="Typo.caption">
+            Adds app store buttons and a QR code. Turn it off if your server doesn't support Element X (it needs
+            Simplified Sliding Sync). The code and the open button use Element's website, which receives your server
+            name.
+        </MudText>
+    }
+</MudPaper>
+
+@code {
+    private readonly SettingsSnapshot draft = new();
+    private object Fields => new { serverName, instructions, helpUrl, webAppUrl };
+    private SetupGuidanceSettingsResponse? saved;
+    private bool loadFailed;
+    private bool busy;
+    private string? serverName;
+    private string? instructions;
+    private string? helpUrl;
+    private string? webAppUrl;
+
+    private string ServerNameHelp => saved?.SuggestedServerName is { } suggested
+        ? $"Leave blank to use {suggested}, from the bot's ID. People's usernames are added to this."
+        : "The part after the colon in people's IDs. People's usernames are added to this.";
+
+    protected override async Task OnInitializedAsync()
+    {
+        try
+        {
+            Apply(await SetupApi.GetGuidanceAsync(), applyFields: true);
+        }
+        catch (HttpRequestException)
+        {
+            loadFailed = true;
+        }
+    }
+
+    private void Apply(SetupGuidanceSettingsResponse? settings, bool applyFields)
+    {
+        if (settings is null)
+        {
+            return;
+        }
+
+        saved = settings;
+        if (!applyFields)
+        {
+            return;
+        }
+
+        serverName = settings.MessagingServerName;
+        instructions = settings.MessagingSignInInstructions;
+        helpUrl = settings.MessagingHelpUrl;
+        webAppUrl = settings.MessagingWebAppUrl;
+        draft.Accept("messaging-help", Fields);
+    }
+
+    private async Task SaveAsync()
+    {
+        busy = true;
+        try
+        {
+            var result = await SetupApi.SetMessagingGuidanceAsync(
+                new SetMessagingGuidanceRequest(serverName, instructions, helpUrl, webAppUrl));
+            if (result.Settings is { } settings)
+            {
+                Apply(settings, applyFields: true);
+                Snackbar.Saved("Messaging setup help saved.");
+            }
+            else
+            {
+                Snackbar.Failed(result.Error);
+            }
+        }
+        catch (HttpRequestException)
+        {
+            Snackbar.Failed("The messaging setup help could not be saved. Please try again.");
+        }
+        finally
+        {
+            busy = false;
+        }
+    }
+
+    private async Task SetElementHelpAsync(SettingSwitchChange change)
+    {
+        busy = true;
+        try
+        {
+            var result = await SetupApi.SetShowElementHelpAsync(change.Value);
+            if (result.Settings is { } settings)
+            {
+                // The switch saves on its own; text still being edited stays as typed.
+                Apply(settings, applyFields: false);
+                Snackbar.Saved(change.Value ? "Element X setup help shown." : "Element X setup help hidden.");
+            }
+            else
+            {
+                change.Refuse(result.Error);
+            }
+        }
+        finally
+        {
+            busy = false;
+        }
+    }
+}

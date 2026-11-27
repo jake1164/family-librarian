@@ -1,0 +1,54 @@
+@using FamilyLibrarian.Contracts.Setup
+
+@* The two things only the person can do in their Amazon account. Used by the setup wizard and Ebook delivery. *@
+<ol class="pl-5 mb-3">
+    <li class="mb-4">
+        <MudText Typo="Typo.subtitle1"><strong>Find your Kindle's email address</strong></MudText>
+        <MudText Typo="Typo.body2" Class="mb-2">
+            In your Amazon account, open <em>Manage Your Content and Devices</em>, then <em>Preferences</em>, then
+            <em>Personal Document Settings</em>. Each Kindle or Kindle app has its own address, usually ending in
+            @@kindle.com.
+        </MudText>
+        <div class="d-flex flex-wrap" style="gap: 0.5rem;">
+            <MudButton Variant="Variant.Filled" Color="Color.Primary" Href="@Guidance.ManageContentUrl"
+                       Target="_blank" rel="noopener noreferrer" EndIcon="@Icons.Material.Filled.OpenInNew">
+                Open my Amazon settings
+            </MudButton>
+            <MudButton Variant="Variant.Text" Color="Color.Primary" Href="@Guidance.FindAddressUrl"
+                       Target="_blank" rel="noopener noreferrer" EndIcon="@Icons.Material.Filled.OpenInNew">
+                Amazon's Send to Kindle help
+            </MudButton>
+        </div>
+    </li>
+    <li class="mb-4">
+        <MudText Typo="Typo.subtitle1"><strong>Let Amazon accept books from the library</strong></MudText>
+        @if (string.IsNullOrWhiteSpace(Guidance.SenderAddress))
+        {
+            <MudAlert Severity="Severity.Info" Dense="true">
+                Ask your library administrator which address to approve.
+            </MudAlert>
+            <AuthorizeView Roles="Admin">
+                <MudText Typo="Typo.body2" Class="mt-1">
+                    Add the sender address under
+                    <MudLink Href="settings/publishing">Publishing settings</MudLink> so everyone sees it here.
+                </MudText>
+            </AuthorizeView>
+        }
+        else
+        {
+            <MudText Typo="Typo.body2">
+                On the same Amazon page, under <em>Approved Personal Document E-mail List</em>, choose
+                <em>Add a new approved e-mail address</em> and add:
+            </MudText>
+            <CopyableValue Value="@Guidance.SenderAddress" Name="sender address" />
+            <MudText Typo="Typo.body2">Without this, Amazon rejects the books.</MudText>
+        }
+    </li>
+    <li>
+        <MudText Typo="Typo.subtitle1"><strong>Enter your Kindle's address here</strong></MudText>
+    </li>
+</ol>
+
+@code {
+    [Parameter, EditorRequired] public KindleGuidanceResponse Guidance { get; set; } = null!;
+}

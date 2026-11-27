@@ -1,0 +1,30 @@
+@using Net.Codecrete.QrCodeGenerator
+
+@* Drawn in the browser, so the address is not sent anywhere to make the picture. Always dark on white: phone
+   cameras read that reliably in both themes. *@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 @size @size" width="@Pixels" height="@Pixels"
+     role="img" aria-label="@Description" shape-rendering="crispEdges" style="max-width: 100%; height: auto;">
+    <rect width="@size" height="@size" fill="#ffffff" />
+    <path d="@path" fill="#000000" />
+</svg>
+
+@code {
+    // The quiet zone scanners need, in modules.
+    private const int Border = 4;
+
+    private string path = string.Empty;
+    private int size;
+
+    [Parameter, EditorRequired] public string Text { get; set; } = string.Empty;
+
+    [Parameter, EditorRequired] public string Description { get; set; } = string.Empty;
+
+    [Parameter] public int Pixels { get; set; } = 200;
+
+    protected override void OnParametersSet()
+    {
+        var code = QrCode.EncodeText(Text, QrCode.Ecc.Medium);
+        path = code.ToGraphicsPath(Border);
+        size = code.Size + (2 * Border);
+    }
+}

@@ -36,7 +36,8 @@ public sealed class MatrixLinkApiClient(HttpClient httpClient, AntiforgeryTokenP
                 await response.Content.ReadFromJsonAsync<MatrixLinkStatusResponse>(cancellationToken));
         }
 
-        return new MatrixLinkResult(false, await ReadErrorAsync(response, cancellationToken), null);
+        return new MatrixLinkResult(false, await ReadErrorAsync(response, cancellationToken), null,
+            response.StatusCode == System.Net.HttpStatusCode.TooManyRequests);
     }
 
     private static async Task<string> ReadErrorAsync(HttpResponseMessage response, CancellationToken cancellationToken)
@@ -57,4 +58,5 @@ public sealed class MatrixLinkApiClient(HttpClient httpClient, AntiforgeryTokenP
     private sealed record ValidationProblemPayload(Dictionary<string, string[]>? Errors);
 }
 
-public sealed record MatrixLinkResult(bool Succeeded, string? Error, MatrixLinkStatusResponse? Status);
+public sealed record MatrixLinkResult(
+    bool Succeeded, string? Error, MatrixLinkStatusResponse? Status, bool LimitReached = false);

@@ -38,6 +38,10 @@ public sealed class CatalogEvidenceMigrationTests
         ["catalog.series_entries"] = ["binding_basis", "position_state"]
     };
 
+    /// <summary>What a later migration's back-fill changes: the filled column, and the row version of the updated rows.</summary>
+    private static readonly (string Table, string[] Columns) BackfilledByLaterMigrations =
+        ("identity.users", ["setup_wizard_seen_at_utc", "xmin_"]);
+
     private static readonly string[] ExpectedIsbns = ["9780000000002", "9780000000019", "9780000000026"];
 
     private static readonly string[] ExpectedAliases = ["Het Namesake Boek", "Namesake Book: A Variant"];
@@ -48,7 +52,8 @@ public sealed class CatalogEvidenceMigrationTests
     /// Tables that a migration newer than this one drops or creates. Reversing this migration also reverses those, so they exist
     /// on one side of the reversal only and are outside what this test compares.
     /// </summary>
-    private static readonly string[] TablesChangedByLaterMigrations = ["providers.provider_catalogs", "conversation.settings"];
+    private static readonly string[] TablesChangedByLaterMigrations =
+        ["providers.provider_catalogs", "conversation.settings", "communications.setup_guidance_settings"];
 
     /// <summary>
     /// Columns that a migration newer than this one adds. Reversing this migration removes them too; reapplying restores
@@ -56,7 +61,10 @@ public sealed class CatalogEvidenceMigrationTests
     /// </summary>
     private static readonly Dictionary<string, string[]> ColumnsAddedByLaterMigrations = new()
     {
-        ["identity.users"] = ["default_request_format"]
+        ["identity.users"] =
+        [
+            "default_request_format", "setup_wizard_seen_at_utc", "setup_completed_steps", "setup_skipped_steps"
+        ]
     };
 
     [TestMethod]
@@ -111,7 +119,11 @@ public sealed class CatalogEvidenceMigrationTests
         }
 
         var after = await DumpAsync(connection);
-        AssertSameRows(before, after, "after reapply");
+        // A later migration deliberately fills this in for every account that already exists.
+        Assert.AreEqual(0L, await ScalarAsync<long>(connection,
+            "SELECT count(*) FROM identity.users WHERE setup_wizard_seen_at_utc IS NULL"));
+        AssertSameRows(
+            Strip(before, BackfilledByLaterMigrations), Strip(after, BackfilledByLaterMigrations), "after reapply");
         Assert.IsFalse(database.Database.HasPendingModelChanges(), "The migration and snapshot match the model.");
 
         // The lookup every consumer trusts is byte-for-byte what it was, and is the legacy shape we expect.
@@ -320,6 +332,24 @@ public sealed class CatalogEvidenceMigrationTests
 
         return stripped;
     }
+
+    private static Dictionary<string, List<string>> Strip(
+        Dictionary<string, List<string>> dump, (string Table, string[] Columns) removed) =>
+        dump.ToDictionary(
+            entry => entry.Key,
+            entry => entry.Key != removed.Table
+                ? entry.Value
+                : entry.Value.Select(row =>
+                {
+                    var node = JsonNode.Parse(row)!.AsObject();
+                    foreach (var column in removed.Columns)
+                    {
+                        node.Remove(column);
+                    }
+
+                    return Canonical(node.ToJsonString());
+                }).Order(StringComparer.Ordinal).ToList(),
+            StringComparer.Ordinal);
 
     private static string Canonical(string json)
     {

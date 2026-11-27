@@ -6,6 +6,7 @@ using FamilyLibrarian.Application.Publishing;
 using FamilyLibrarian.Contracts.Communications;
 using FamilyLibrarian.Contracts.Publishing;
 using FamilyLibrarian.Contracts.SettingsBackups;
+using FamilyLibrarian.Contracts.Setup;
 using FamilyLibrarian.Infrastructure.Persistence;
 using FamilyLibrarian.Web.Tests.Harness;
 using Microsoft.EntityFrameworkCore;
@@ -123,6 +124,72 @@ public sealed class SettingsBackupEndpointTests
             restoredSmtp.ProtectedPassword,
             restoredSmtp.PasswordFormatVersion);
         Assert.AreEqual(SmtpPassword, restoredSmtpPassword);
+    }
+
+    [TestMethod]
+    public async Task SetupGuidanceSurvivesAnArchiveRoundTrip()
+    {
+        await using var fixture = WebTestFixture.Require(await WebTestFixture.CreateAsync());
+        using var client = await CreateAdminClientWithTokenAsync(fixture);
+        Assert.AreEqual(HttpStatusCode.OK, (await client.PutAsJsonAsync(
+            "/api/v1/admin/setup-guidance/kindle",
+            new SetKindleGuidanceRequest("library@example.org", "amazon.co.uk"))).StatusCode);
+        Assert.AreEqual(HttpStatusCode.OK, (await client.PutAsJsonAsync(
+            "/api/v1/admin/setup-guidance/messaging", new SetMessagingGuidanceRequest(
+                "chat.example.org", "Use your library login.", "https://help.example.org/",
+                "https://web.example.org/"))).StatusCode);
+        Assert.AreEqual(HttpStatusCode.OK, (await client.PutAsJsonAsync(
+            "/api/v1/admin/setup-guidance/messaging/element-help", new SetShowElementHelpRequest(false))).StatusCode);
+        var before = await client.GetFromJsonAsync<SetupGuidanceSettingsResponse>("/api/v1/admin/setup-guidance/");
+        var archive = await ExportAsync(client);
+        await ClearGuidanceAsync(fixture);
+
+        var imported = await ImportAsync(client, archive);
+
+        Assert.AreEqual(1, imported.Counts.SetupGuidanceSettings);
+        Assert.AreEqual(before, await client.GetFromJsonAsync<SetupGuidanceSettingsResponse>(
+            "/api/v1/admin/setup-guidance/"));
+    }
+
+    [TestMethod]
+    public async Task AnArchiveWrittenBeforeSetupGuidanceStillImports()
+    {
+        await using var fixture = WebTestFixture.Require(await WebTestFixture.CreateAsync());
+        using var client = await CreateAdminClientWithTokenAsync(fixture);
+        Assert.AreEqual(HttpStatusCode.OK, (await client.PutAsJsonAsync(
+            "/api/v1/admin/publishing/cwa/",
+            new SetCwaSettingsRequest("Local", "/data/cwa-ingest", null, null, null, null, "PrivateKey", null, null, null, null))).StatusCode);
+        var old = LegacyArchive.WithoutSetupGuidance(await ExportAsync(client), Passphrase);
+        await ClearSettingsAsync(fixture);
+
+        var imported = await ImportAsync(client, old);
+
+        Assert.AreEqual(1, imported.Counts.CwaSettings);
+        Assert.AreEqual(0, imported.Counts.SetupGuidanceSettings);
+        await using var scope = fixture.Services.CreateAsyncScope();
+        Assert.IsFalse(await scope.ServiceProvider.GetRequiredService<AppDbContext>().SetupGuidanceSettings.AnyAsync());
+    }
+
+    private static async Task<byte[]> ExportAsync(HttpClient client)
+    {
+        var export = await client.PostAsJsonAsync(
+            "/api/v1/admin/settings-backup/", new CreateSettingsBackupRequest(Passphrase));
+        Assert.AreEqual(HttpStatusCode.OK, export.StatusCode);
+        return await export.Content.ReadAsByteArrayAsync();
+    }
+
+    private static async Task<SettingsBackupImportResponse> ImportAsync(HttpClient client, byte[] archive)
+    {
+        using var form = CreateArchiveForm(archive);
+        using var response = await client.PostAsync("/api/v1/admin/settings-backup/import", form);
+        Assert.AreEqual(HttpStatusCode.OK, response.StatusCode, await response.Content.ReadAsStringAsync());
+        return (await response.Content.ReadFromJsonAsync<SettingsBackupImportResponse>())!;
+    }
+
+    private static async Task ClearGuidanceAsync(WebTestFixture fixture)
+    {
+        await using var scope = fixture.Services.CreateAsyncScope();
+        await scope.ServiceProvider.GetRequiredService<AppDbContext>().SetupGuidanceSettings.ExecuteDeleteAsync();
     }
 
     private static async Task<HttpClient> CreateAdminClientWithTokenAsync(WebTestFixture fixture)

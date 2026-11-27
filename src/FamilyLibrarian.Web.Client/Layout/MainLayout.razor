@@ -68,10 +68,11 @@
                         </MudBadge>
                     </ActivatorContent>
                     <ChildContent>
+                        <MudMenuItem Href="welcome" Icon="@Icons.Material.Filled.Checklist">Setup guide</MudMenuItem>
                         <MudMenuItem Href="settings/ebook-delivery" Icon="@Icons.Material.Filled.Tablet">Ebook delivery</MudMenuItem>
                         <MudMenuItem Href="settings/formats" Icon="@Icons.Material.Filled.AutoStories">Format preferences</MudMenuItem>
                         <MudMenuItem Href="settings/acquisition-preferences" Icon="@Icons.Material.Filled.Rule">Saved acquisition choices</MudMenuItem>
-                        <MudMenuItem Href="settings/matrix" Icon="@Icons.Material.Filled.Chat">Matrix chat</MudMenuItem>
+                        <MudMenuItem Href="settings/matrix" Icon="@Icons.Material.Filled.Chat">Message the Librarian</MudMenuItem>
                         <MudMenuItem Href="settings/quiet-hours" Icon="@Icons.Material.Filled.Bedtime">Quiet hours</MudMenuItem>
                         <AuthorizeView Roles="Admin" Context="settingsAdminContext">
                             <MudDivider Class="my-1" />
@@ -217,6 +218,11 @@
     <MudMainContent Class="family-librarian-main-content">
         <LiveConnectionStatus />
         <MudContainer MaxWidth="MaxWidth.Medium" Class="mt-6">
+            <AuthorizeView Context="setupBannerContext">
+                <Authorized>
+                    <FamilyLibrarian.Web.Client.Setup.SetupBanner />
+                </Authorized>
+            </AuthorizeView>
             <CascadingValue Value="@activeAcquisitions">
                 <UnsavedChangesGuard>@Body</UnsavedChangesGuard>
             </CascadingValue>

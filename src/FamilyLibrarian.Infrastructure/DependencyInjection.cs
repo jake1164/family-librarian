@@ -21,6 +21,7 @@ using FamilyLibrarian.Application.SemanticAssessment;
 using FamilyLibrarian.Application.Publishing;
 using FamilyLibrarian.Application.Requests;
 using FamilyLibrarian.Application.Security;
+using FamilyLibrarian.Application.Setup;
 using FamilyLibrarian.Domain;
 using FamilyLibrarian.Infrastructure.Acquisition;
 using FamilyLibrarian.Infrastructure.Catalog;
@@ -41,6 +42,7 @@ using FamilyLibrarian.Infrastructure.Providers;
 using FamilyLibrarian.Infrastructure.Publishing;
 using FamilyLibrarian.Infrastructure.Security;
 using FamilyLibrarian.Infrastructure.SettingsBackups;
+using FamilyLibrarian.Infrastructure.Setup;
 using FamilyLibrarian.Infrastructure.Time;
 using System.Net.Http.Headers;
 using System.Net.Mail;
@@ -283,6 +285,10 @@ public static class DependencyInjection
         services.AddScoped<UserMatrixDestinationRepository>();
         services.AddScoped<IUserMatrixDestinationStore>(provider => provider.GetRequiredService<UserMatrixDestinationRepository>());
         services.AddScoped<IUserMatrixDestinationLookup>(provider => provider.GetRequiredService<UserMatrixDestinationRepository>());
+        services.AddScoped<ISetupGuidanceStore, SetupGuidanceStore>();
+        services.AddScoped<SetupGuidanceService>();
+        // One per host: the counts have to outlive the request that adds to them.
+        services.AddSingleton<MatrixCodeSendLimiter>();
         services.AddScoped<MatrixIdentityLinkService>();
         services.AddScoped<MatrixInboundRouter>();
 
@@ -514,6 +520,8 @@ public static class DependencyInjection
         services.AddScoped<AudiobookNarrationPreferenceService>();
         services.AddScoped<IDefaultRequestFormatStore, IdentityDefaultRequestFormatStore>();
         services.AddScoped<DefaultRequestFormatService>();
+        services.AddScoped<IUserSetupStateStore, IdentityUserSetupStateStore>();
+        services.AddScoped<UserSetupService>();
         services.AddScoped<QuietHoursPreferenceService>();
 
         services.AddHttpContextAccessor();

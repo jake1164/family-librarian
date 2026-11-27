@@ -255,8 +255,10 @@ public sealed class GutenbergRefreshTests
         await using var scope = fixture.Services.CreateAsyncScope();
         var database = scope.ServiceProvider.GetRequiredService<AppDbContext>();
         var migrations = database.Database.GetMigrations().ToArray();
-        Assert.IsTrue(migrations[^1].EndsWith("_AddGutenbergRefreshProgress", StringComparison.Ordinal));
-        await database.GetService<IMigrator>().MigrateAsync(migrations[^2]);
+        var index = Array.FindIndex(
+            migrations, name => name.EndsWith("_AddGutenbergRefreshProgress", StringComparison.Ordinal));
+        Assert.IsTrue(index > 0);
+        await database.GetService<IMigrator>().MigrateAsync(migrations[index - 1]);
         await database.Database.ExecuteSqlRawAsync("""
             INSERT INTO gutenberg.catalog_sync_states (id,active_generation_id,book_count,format_count,parse_error_count,in_progress_book_count,in_progress_format_count,status)
             VALUES ('gutenberg','11111111-1111-1111-1111-111111111111',79824,2030793,0,0,0,'Downloading')

@@ -560,7 +560,7 @@ public sealed class DeliveryAttemptService(
         (bookTitle is { } title
             ? $"Did \"{title}\" arrive on your Kindle?"
             : "Did your book arrive on your Kindle?") +
-        " Open Family Librarian's Requests page and let us know -- reply YES or NO here if you're linked on Matrix.";
+        " Open Family Librarian's Requests page and let us know. If the Librarian sent you this as a message, you can reply YES or NO.";
 
     private static string ResolveProviderId(DeliveryTargetProvider provider) => provider switch
     {

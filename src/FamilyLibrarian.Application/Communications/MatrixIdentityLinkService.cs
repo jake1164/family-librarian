@@ -1,6 +1,9 @@
+using System.Security.Cryptography;
 using FamilyLibrarian.Application.Abstractions;
 using FamilyLibrarian.Application.Integrations;
+using FamilyLibrarian.Application.Setup;
 using FamilyLibrarian.Domain.Audit;
+using FamilyLibrarian.Domain.Communications;
 
 namespace FamilyLibrarian.Application.Communications;
 
@@ -19,17 +22,24 @@ public sealed class MatrixIdentityLinkService(
     ICredentialProtector protector,
     ICurrentUser currentUser,
     IClock clock,
-    IAuditWriter audit)
+    IAuditWriter audit,
+    ISetupGuidanceStore guidanceStore,
+    MatrixCodeSendLimiter sendLimiter)
 {
     /// <summary>Shown to any signed-in user, so it names who can fix it rather than which settings are missing.</summary>
     public const string UnavailableMessage =
-        "Matrix chat isn't available yet. An administrator needs to set it up.";
+        "Messaging the Librarian isn't available yet. An administrator needs to set it up.";
+
+    private const string ConversationFailedMessage =
+        "Could not start a conversation with that username. Check that you have signed in to your messaging app " +
+        "and typed the name exactly. If it still fails, ask an administrator.";
 
     public async Task<MatrixLinkStatus?> GetStatusAsync(CancellationToken cancellationToken)
     {
         if (currentUser.UserId is not { } userId) return null;
         var destination = await destinationStore.FindByUserIdAsync(userId, cancellationToken);
-        return ToStatus(destination, IsAvailable(await settingsStore.FindAsync(cancellationToken)));
+        var matrix = await settingsStore.FindAsync(cancellationToken);
+        return ToStatus(destination, IsAvailable(matrix), await ServerNameAsync(matrix, cancellationToken));
     }
 
     public async Task<MatrixLinkResult> RequestLinkAsync(string matrixUserId, CancellationToken cancellationToken)
@@ -39,16 +49,16 @@ public sealed class MatrixIdentityLinkService(
             return MatrixLinkResult.Unauthenticated();
         }
 
-        var trimmed = matrixUserId?.Trim();
-        if (string.IsNullOrWhiteSpace(trimmed) || !IsValidMatrixId(trimmed))
-        {
-            return MatrixLinkResult.Invalid("Enter a full Matrix ID, e.g. @you:example.org.");
-        }
-
         var settings = await settingsStore.FindAsync(cancellationToken);
         if (!IsAvailable(settings))
         {
             return MatrixLinkResult.Invalid(UnavailableMessage);
+        }
+
+        var serverName = await ServerNameAsync(settings, cancellationToken);
+        if (!MatrixUserIds.TryResolve(matrixUserId, serverName, out var resolved, out var inputError))
+        {
+            return MatrixLinkResult.Invalid(inputError!);
         }
 
         var accessToken = protector.Unprotect(
@@ -56,18 +66,25 @@ public sealed class MatrixIdentityLinkService(
         if (accessToken is null)
         {
             return MatrixLinkResult.Invalid(
-                "The stored Matrix bot credential could not be decrypted. Ask an administrator to re-enter it.");
+                "The Librarian's messaging sign-in could not be read. Ask an administrator to re-enter it.");
         }
 
-        var room = await matrixClient.GetOrCreateDirectRoomAsync(settings, accessToken, trimmed, cancellationToken);
+        // Counted just before the homeserver is asked to invite anyone, so input refused above costs nothing.
+        if (!sendLimiter.TryRecord(userId, clock.UtcNow, out var wait))
+        {
+            return MatrixLinkResult.LimitReached(wait);
+        }
+
+        // The client's error text names the homeserver and its own failure, which a member cannot act on.
+        var room = await matrixClient.GetOrCreateDirectRoomAsync(settings, accessToken, resolved, cancellationToken);
         if (!room.Succeeded || room.RoomId is not { } roomId)
         {
-            return MatrixLinkResult.Invalid(room.Error ?? "Could not start a Matrix conversation with that ID.");
+            return MatrixLinkResult.Invalid(ConversationFailedMessage);
         }
 
         var code = GenerateCode();
         var destination = await destinationStore.GetOrCreateForUserAsync(userId, clock.UtcNow, cancellationToken);
-        destination.RequestVerification(trimmed, roomId, code, clock.UtcNow);
+        destination.RequestVerification(resolved, roomId, code, clock.UtcNow);
         await destinationStore.SaveChangesAsync(cancellationToken);
 
         var sendResult = await matrixClient.SendMessageAsync(
@@ -76,14 +93,15 @@ public sealed class MatrixIdentityLinkService(
             cancellationToken);
         if (!sendResult.Succeeded)
         {
-            return MatrixLinkResult.Invalid(sendResult.Error ?? "Could not send the verification code.");
+            return MatrixLinkResult.Invalid(
+                "Could not send the code. Try again, and if it still fails ask an administrator.");
         }
 
         await audit.WriteAsync(
             AuditActions.MatrixIdentityLinkRequested, AuditSubjectTypes.MatrixIdentityLink, userId.ToString(),
             new { UserId = userId }, cancellationToken);
 
-        return MatrixLinkResult.Success(ToStatus(destination, isAvailable: true));
+        return MatrixLinkResult.Success(ToStatus(destination, isAvailable: true, serverName));
     }
 
     public async Task<MatrixLinkResult> UnlinkAsync(CancellationToken cancellationToken)
@@ -94,11 +112,13 @@ public sealed class MatrixIdentityLinkService(
         }
 
         // Unlinking stays possible while Matrix is unavailable.
-        var isAvailable = IsAvailable(await settingsStore.FindAsync(cancellationToken));
+        var matrix = await settingsStore.FindAsync(cancellationToken);
+        var isAvailable = IsAvailable(matrix);
+        var serverName = await ServerNameAsync(matrix, cancellationToken);
         var destination = await destinationStore.FindByUserIdAsync(userId, cancellationToken);
         if (destination is null)
         {
-            return MatrixLinkResult.Success(ToStatus(destination, isAvailable));
+            return MatrixLinkResult.Success(ToStatus(destination, isAvailable, serverName));
         }
 
         destination.Unlink(clock.UtcNow);
@@ -107,29 +127,37 @@ public sealed class MatrixIdentityLinkService(
             AuditActions.MatrixIdentityLinkRemoved, AuditSubjectTypes.MatrixIdentityLink, userId.ToString(),
             new { UserId = userId }, cancellationToken);
 
-        return MatrixLinkResult.Success(ToStatus(destination, isAvailable));
+        return MatrixLinkResult.Success(ToStatus(destination, isAvailable, serverName));
     }
 
-    private static bool IsAvailable(Domain.Communications.MatrixSettings? settings) =>
+    private async Task<string?> ServerNameAsync(MatrixSettings? matrix, CancellationToken cancellationToken) =>
+        SetupGuidanceDefaults.EffectiveServerName(await guidanceStore.FindAsync(cancellationToken), matrix);
+
+    private static bool IsAvailable(MatrixSettings? settings) =>
         settings is { IsEnabled: true, HasAccessToken: true, HomeserverUrl: not null };
 
-    private static MatrixLinkStatus ToStatus(Domain.Communications.UserMatrixDestination? destination, bool isAvailable) =>
+    private static MatrixLinkStatus ToStatus(UserMatrixDestination? destination, bool isAvailable, string? serverName) =>
         destination is null
-            ? new MatrixLinkStatus(false, null, false, isAvailable)
+            ? new MatrixLinkStatus(false, null, false, isAvailable, null)
             : new MatrixLinkStatus(destination.IsVerified, destination.MatrixUserId,
-                destination.VerificationRequestedAtUtc is not null && !destination.IsVerified, isAvailable);
-
-    private static bool IsValidMatrixId(string value) =>
-        value.StartsWith('@') && value.Contains(':') && value.IndexOf(':') > 1 && value.IndexOf(':') < value.Length - 1;
+                destination.VerificationRequestedAtUtc is not null && !destination.IsVerified, isAvailable,
+                destination.MatrixUserId is { } id ? MatrixUserIds.DisplayName(id, serverName) : null);
 
     private static string GenerateCode() =>
-        Random.Shared.Next(0, 1_000_000).ToString("D6", System.Globalization.CultureInfo.InvariantCulture);
+        RandomNumberGenerator.GetInt32(0, 1_000_000).ToString("D6", System.Globalization.CultureInfo.InvariantCulture);
 }
 
-public sealed record MatrixLinkStatus(bool IsVerified, string? MatrixUserId, bool AwaitingVerification, bool IsAvailable);
+/// <param name="Username">The short form of <paramref name="MatrixUserId"/> to show a person.</param>
+public sealed record MatrixLinkStatus(
+    bool IsVerified, string? MatrixUserId, bool AwaitingVerification, bool IsAvailable, string? Username);
 
-public sealed record MatrixLinkResult(bool Succeeded, MatrixLinkStatus? Status, string? Error)
+/// <param name="RetryAfter">Set only when the send limit was reached.</param>
+public sealed record MatrixLinkResult(
+    bool Succeeded, MatrixLinkStatus? Status, string? Error, TimeSpan? RetryAfter = null)
 {
+    public static MatrixLinkResult LimitReached(TimeSpan wait) =>
+        new(false, null, MatrixCodeSendLimiter.LimitMessage(wait), wait);
+
     public static MatrixLinkResult Success(MatrixLinkStatus status) => new(true, status, null);
 
     public static MatrixLinkResult Invalid(string error) => new(false, null, error);

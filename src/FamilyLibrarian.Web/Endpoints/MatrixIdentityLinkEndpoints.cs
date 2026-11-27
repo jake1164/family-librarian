@@ -24,8 +24,21 @@ internal static class MatrixIdentityLinkEndpoints
     }
 
     private static async Task<IResult> RequestLinkAsync(
-        RequestMatrixLinkRequest request, MatrixIdentityLinkService service, CancellationToken cancellationToken) =>
-        ToResult(await service.RequestLinkAsync(request.MatrixUserId, cancellationToken));
+        RequestMatrixLinkRequest request, MatrixIdentityLinkService service, HttpContext context,
+        CancellationToken cancellationToken)
+    {
+        var result = await service.RequestLinkAsync(request.MatrixUserId, cancellationToken);
+        if (result.RetryAfter is not { } wait)
+        {
+            return ToResult(result);
+        }
+
+        context.Response.Headers.RetryAfter =
+            ((int)Math.Ceiling(wait.TotalSeconds)).ToString(System.Globalization.CultureInfo.InvariantCulture);
+        return Results.ValidationProblem(
+            new Dictionary<string, string[]> { ["matrixUserId"] = [result.Error!] },
+            statusCode: StatusCodes.Status429TooManyRequests);
+    }
 
     private static async Task<IResult> UnlinkAsync(
         MatrixIdentityLinkService service, CancellationToken cancellationToken) =>
@@ -39,5 +52,5 @@ internal static class MatrixIdentityLinkEndpoints
         Results.ValidationProblem(new Dictionary<string, string[]> { ["matrixUserId"] = [message] });
 
     private static MatrixLinkStatusResponse ToResponse(MatrixLinkStatus status) =>
-        new(status.IsVerified, status.MatrixUserId, status.AwaitingVerification, status.IsAvailable);
+        new(status.IsVerified, status.MatrixUserId, status.AwaitingVerification, status.IsAvailable, status.Username);
 }

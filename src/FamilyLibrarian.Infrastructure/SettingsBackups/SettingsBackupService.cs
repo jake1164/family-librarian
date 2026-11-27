@@ -13,6 +13,7 @@ using FamilyLibrarian.Domain.Communications;
 using FamilyLibrarian.Domain.Policy;
 using FamilyLibrarian.Domain.Providers;
 using FamilyLibrarian.Domain.Publishing;
+using FamilyLibrarian.Domain.Setup;
 using FamilyLibrarian.Infrastructure.Persistence;
 using Microsoft.EntityFrameworkCore;
 using Org.BouncyCastle.Crypto.Generators;
@@ -64,7 +65,8 @@ public sealed class SettingsBackupService(
             (await database.ProviderSettings.AsNoTracking().OrderBy(setting => setting.ProviderId).ToArrayAsync(cancellationToken))
                 .Select(ToProviderDocument).ToArray(),
             ToOidcDocument(await database.OidcSettings.AsNoTracking().FirstOrDefaultAsync(cancellationToken)),
-            ToPolicyDocument(await database.AcquisitionPolicySettings.AsNoTracking().FirstOrDefaultAsync(cancellationToken)));
+            ToPolicyDocument(await database.AcquisitionPolicySettings.AsNoTracking().FirstOrDefaultAsync(cancellationToken)),
+            ToGuidanceDocument(await database.SetupGuidanceSettings.AsNoTracking().FirstOrDefaultAsync(cancellationToken)));
 
         var migrations = await database.Database.GetAppliedMigrationsAsync(cancellationToken);
         var payload = new SettingsArchivePayload(
@@ -78,7 +80,10 @@ public sealed class SettingsBackupService(
                 // unprotecting every stored credential before it writes anything.
                 null,
                 null,
-                ["CwaSettings", "AudiobookshelfSettings", "SmtpSettings", "ProviderSettings", "OidcSettings", "AcquisitionPolicySettings"]),
+                [
+                    "CwaSettings", "AudiobookshelfSettings", "SmtpSettings", "ProviderSettings", "OidcSettings",
+                    "AcquisitionPolicySettings", "SetupGuidanceSettings"
+                ]),
             document);
 
         var plaintext = JsonSerializer.SerializeToUtf8Bytes(payload, JsonOptions);
@@ -312,6 +317,7 @@ public sealed class SettingsBackupService(
         if (await database.ProviderSettings.AnyAsync(cancellationToken)) existing.Add("ProviderSettings");
         if (await database.OidcSettings.AnyAsync(cancellationToken)) existing.Add("OidcSettings");
         if (await database.AcquisitionPolicySettings.AnyAsync(cancellationToken)) existing.Add("AcquisitionPolicySettings");
+        if (await database.SetupGuidanceSettings.AnyAsync(cancellationToken)) existing.Add("SetupGuidanceSettings");
         return existing;
     }
 
@@ -364,6 +370,25 @@ public sealed class SettingsBackupService(
         foreach (var provider in document.ProviderSettings) database.ProviderSettings.Add(CreateProvider(provider));
         if (document.Oidc is { } oidc) database.OidcSettings.Add(CreateOidc(oidc));
         if (document.AcquisitionPolicy is { } policy) database.AcquisitionPolicySettings.Add(CreatePolicy(policy));
+        if (document.SetupGuidance is { } guidance) database.SetupGuidanceSettings.Add(CreateGuidance(guidance));
+    }
+
+    // Imported values pass the same checks as values typed on the settings pages.
+    private SetupGuidanceSettings CreateGuidance(SetupGuidanceDocument source)
+    {
+        var settings = new SetupGuidanceSettings(clock.UtcNow);
+        var error =
+            settings.TrySetKindle(source.KindleSenderAddress, source.AmazonStoreDomain, null, clock.UtcNow) ??
+            settings.TrySetMessaging(
+                source.MessagingServerName, source.MessagingSignInInstructions, source.MessagingHelpUrl,
+                source.MessagingWebAppUrl, null, clock.UtcNow);
+        if (error is not null)
+        {
+            throw new SettingsBackupException($"The settings archive has setup guidance that is not valid. {error}");
+        }
+
+        settings.SetShowElementHelp(source.ShowElementHelp, null, clock.UtcNow);
+        return settings;
     }
 
     private CwaSettings CreateCwa(CwaSettingsDocument source)
@@ -514,7 +539,13 @@ public sealed class SettingsBackupService(
         document.Smtp is null ? 0 : 1,
         document.ProviderSettings.Count,
         document.Oidc is null ? 0 : 1,
-        document.AcquisitionPolicy is null ? 0 : 1);
+        document.AcquisitionPolicy is null ? 0 : 1,
+        document.SetupGuidance is null ? 0 : 1);
+
+    private static SetupGuidanceDocument? ToGuidanceDocument(SetupGuidanceSettings? settings) => settings is null ? null : new(
+        settings.KindleSenderAddress, settings.AmazonStoreDomain, settings.MessagingServerName,
+        settings.MessagingSignInInstructions, settings.MessagingHelpUrl, settings.MessagingWebAppUrl,
+        settings.ShowElementHelp);
 
     private static CwaSettingsDocument? ToCwaDocument(CwaSettings? settings) => settings is null ? null : new(
         settings.IsEnabled, settings.TransportMode.ToString(), settings.LocalIngestPath, settings.SftpHost, settings.SftpPort,
@@ -577,7 +608,8 @@ public sealed record SettingsBackupCounts(
     int SmtpSettings,
     int ProviderSettings,
     int OidcSettings,
-    int AcquisitionPolicySettings);
+    int AcquisitionPolicySettings,
+    int SetupGuidanceSettings);
 
 internal sealed record SettingsArchive(SettingsArchiveHeader Header, string Ciphertext, string Tag);
 
@@ -610,7 +642,18 @@ internal sealed record SettingsDocument(
     SmtpSettingsDocument? Smtp,
     IReadOnlyList<ProviderSettingDocument> ProviderSettings,
     OidcSettingsDocument? Oidc,
-    AcquisitionPolicySettingsDocument? AcquisitionPolicy);
+    AcquisitionPolicySettingsDocument? AcquisitionPolicy,
+    // Absent from archives written before this section existed.
+    SetupGuidanceDocument? SetupGuidance = null);
+
+internal sealed record SetupGuidanceDocument(
+    string? KindleSenderAddress,
+    string? AmazonStoreDomain,
+    string? MessagingServerName,
+    string? MessagingSignInInstructions,
+    string? MessagingHelpUrl,
+    string? MessagingWebAppUrl,
+    bool ShowElementHelp);
 
 internal sealed record SecretDocument(string ProtectedValue, int FormatVersion, string? Hint);
 

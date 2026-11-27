@@ -335,6 +335,7 @@ app.MapDeliveryTargetEndpoints();
 app.MapAudiobookNarrationPreferenceEndpoints();
 app.MapDefaultRequestFormatEndpoints();
 app.MapQuietHoursEndpoints();
+app.MapSetupEndpoints();
 app.MapSecurityQueueEndpoints();
 app.MapLiveUpdatesEndpoints();
 app.MapInvitationEndpoints();

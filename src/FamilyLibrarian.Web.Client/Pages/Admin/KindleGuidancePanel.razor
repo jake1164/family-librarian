@@ -1,0 +1,113 @@
+@using FamilyLibrarian.Contracts.Setup
+@using FamilyLibrarian.Web.Client.Setup
+@inject SetupApiClient SetupApi
+@inject ISnackbar Snackbar
+
+@* What family members are told while setting up Kindle delivery. It changes nothing about how books are sent. *@
+<SettingsDraftGuard IsDirty="@(draft.HasChanges("kindle-help", Fields))" />
+
+<MudPaper Class="pa-4 mt-6" Elevation="1">
+    <MudText Typo="Typo.h6">Kindle setup help for family members</MudText>
+    <MudText Typo="Typo.body2" Class="mt-2 mb-3">
+        Shown in the setup guide and on Ebook delivery. This doesn't change how books are sent.
+    </MudText>
+
+    @if (loadFailed)
+    {
+        <MudAlert Severity="Severity.Error">We could not load the Kindle setup help.</MudAlert>
+    }
+    else if (saved is null)
+    {
+        <MudProgressCircular Indeterminate="true" aria-label="Loading Kindle setup help" />
+    }
+    else
+    {
+        @if (string.IsNullOrWhiteSpace(saved.KindleSenderAddress))
+        {
+            <MudAlert Severity="Severity.Warning" Dense="true" Class="mb-3">
+                Without a sender address, family members are told to ask you which address to approve.
+            </MudAlert>
+        }
+        <MudStack Spacing="3">
+            <MudTextField Immediate="true" T="string" Label="Kindle sender address" @bind-Value="sender" Disabled="@busy"
+                          HelperText="The From address in CWA's email settings. Family members approve it in Amazon."
+                          autocomplete="off" />
+            <MudTextField Immediate="true" T="string" Label="Amazon store" @bind-Value="store" Disabled="@busy"
+                          Placeholder="amazon.com"
+                          HelperText="A domain such as amazon.co.uk, or any link from the store. Blank uses amazon.com. Only the form is checked, so open the links below after saving." />
+        </MudStack>
+
+        <MudStack Row="true" Spacing="2" Class="mt-4" Wrap="Wrap.Wrap" AlignItems="AlignItems.Center">
+            <MudButton Variant="Variant.Filled" Color="Color.Primary" Disabled="@busy" OnClick="SaveAsync">
+                Save Kindle help
+            </MudButton>
+        </MudStack>
+
+        <MudText Typo="Typo.body2" Class="mt-4">
+            Check that the links for <strong>@saved.EffectiveAmazonStoreDomain</strong> open the right pages:
+            <MudLink Href="@saved.ManageContentUrl" Target="_blank" rel="noopener noreferrer">account settings</MudLink> ·
+            <MudLink Href="@saved.FindKindleAddressUrl" Target="_blank" rel="noopener noreferrer">Send to Kindle help</MudLink>
+        </MudText>
+    }
+</MudPaper>
+
+@code {
+    private readonly SettingsSnapshot draft = new();
+    private object Fields => new { sender, store };
+    private SetupGuidanceSettingsResponse? saved;
+    private bool loadFailed;
+    private bool busy;
+    private string? sender;
+    private string? store;
+
+    protected override async Task OnInitializedAsync()
+    {
+        try
+        {
+            Apply(await SetupApi.GetGuidanceAsync());
+        }
+        catch (HttpRequestException)
+        {
+            loadFailed = true;
+        }
+    }
+
+    private void Apply(SetupGuidanceSettingsResponse? settings)
+    {
+        if (settings is null)
+        {
+            return;
+        }
+
+        saved = settings;
+        sender = settings.KindleSenderAddress;
+        store = settings.AmazonStoreDomain;
+        draft.Accept("kindle-help", Fields);
+    }
+
+    private async Task SaveAsync()
+    {
+        busy = true;
+        try
+        {
+            var result = await SetupApi.SetKindleGuidanceAsync(new SetKindleGuidanceRequest(sender, store));
+            if (result.Settings is { } settings)
+            {
+                Apply(settings);
+                Snackbar.Saved("Kindle setup help saved.");
+            }
+            else
+            {
+                Snackbar.Failed(result.Error);
+            }
+        }
+        catch (HttpRequestException)
+        {
+            Snackbar.Failed("The Kindle setup help could not be saved. Please try again.");
+        }
+        finally
+        {
+            busy = false;
+        }
+    }
+}

@@ -1,4 +1,8 @@
 @page "/"
+@implements IDisposable
+@using FamilyLibrarian.Web.Client.Setup
+@inject SetupApiClient SetupApi
+@inject NavigationManager Navigation
 
 <PageTitle>Family Librarian</PageTitle>
 
@@ -22,3 +26,68 @@
         </NotAuthorized>
     </AuthorizeView>
 </MudStack>
+
+@code {
+    private bool leftPage;
+    private IDisposable? departureWatch;
+
+    [CascadingParameter] private Task<AuthenticationState>? Authentication { get; set; }
+
+    // A click takes a moment to apply, and until then the address still says this page. Opening the wizard in that
+    // moment would replace the click, so leaving counts from when it starts.
+    protected override void OnAfterRender(bool firstRender)
+    {
+        if (firstRender)
+        {
+            departureWatch = Navigation.RegisterLocationChangingHandler(context =>
+            {
+                if (RelativePath(Navigation.ToAbsoluteUri(context.TargetLocation).AbsoluteUri).Length != 0)
+                {
+                    leftPage = true;
+                }
+
+                return ValueTask.CompletedTask;
+            });
+        }
+    }
+
+    // The setup wizard opens by itself only from here, so a link to any other page goes where it says.
+    protected override async Task OnInitializedAsync()
+    {
+        if (Authentication is null || (await Authentication).User.Identity?.IsAuthenticated != true)
+        {
+            return;
+        }
+
+        try
+        {
+            var setup = await SetupApi.GetAsync();
+            if (setup is null || setup.WizardSeen || !StillHere())
+            {
+                return;
+            }
+
+            // Recorded before the wizard opens, so leaving it half way cannot make it open again. With nothing to
+            // offer today, anything that becomes available later is mentioned by the reminder instead.
+            if (await SetupApi.MarkSeenAsync() && setup.ShouldOpenWizard && StillHere())
+            {
+                Navigation.NavigateTo("welcome", replace: true);
+            }
+        }
+        catch (HttpRequestException)
+        {
+            // The home page works without this; it is checked again on the next visit.
+        }
+    }
+
+    // The person may have gone somewhere else while something loaded; leave them there.
+    private bool StillHere() => !leftPage && RelativePath(Navigation.Uri).Length == 0;
+
+    private string RelativePath(string uri) => Navigation.ToBaseRelativePath(uri).Split('?', '#')[0];
+
+    public void Dispose()
+    {
+        leftPage = true;
+        departureWatch?.Dispose();
+    }
+}

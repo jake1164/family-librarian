@@ -50,7 +50,27 @@ public sealed class MatrixInboundRouterTests
             CancellationToken.None);
 
         Assert.IsTrue(destination.IsVerified);
-        StringAssert.Contains(context.MatrixClient.LastReply, "linked");
+        StringAssert.Contains(context.MatrixClient.LastReply, "connected");
+    }
+
+    [TestMethod]
+    public async Task SomeoneStillConnectingIsToldAnEncryptedMessageCannotBeRead()
+    {
+        var context = new TestContext();
+        context.ConfigureMatrix();
+        var destination = context.SeedPendingDestination();
+
+        await context.Router.HandleMessageAsync(
+            new MatrixInboundMessage(destination.RoomId!, "@stranger:example.test", string.Empty, IsEncrypted: true),
+            CancellationToken.None);
+        Assert.IsNull(context.MatrixClient.LastReply, "Only the account being connected is answered.");
+
+        await context.Router.HandleMessageAsync(
+            new MatrixInboundMessage(destination.RoomId!, destination.MatrixUserId!, string.Empty, IsEncrypted: true),
+            CancellationToken.None);
+
+        StringAssert.Contains(context.MatrixClient.LastReply, "can't read encrypted messages");
+        Assert.IsFalse(destination.IsVerified);
     }
 
     [TestMethod]

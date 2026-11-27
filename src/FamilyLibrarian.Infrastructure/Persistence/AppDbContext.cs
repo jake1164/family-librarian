@@ -20,6 +20,7 @@ using FamilyLibrarian.Domain.Publishing;
 using FamilyLibrarian.Domain.Requests;
 using FamilyLibrarian.Domain.Evidence;
 using FamilyLibrarian.Domain.Security;
+using FamilyLibrarian.Domain.Setup;
 using Microsoft.AspNetCore.DataProtection.EntityFrameworkCore;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.Identity.EntityFrameworkCore;
@@ -156,6 +157,8 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options)
 
     public DbSet<AcquisitionPolicySettings> AcquisitionPolicySettings => Set<AcquisitionPolicySettings>();
 
+    public DbSet<SetupGuidanceSettings> SetupGuidanceSettings => Set<SetupGuidanceSettings>();
+
     public DbSet<OidcSettings> OidcSettings => Set<OidcSettings>();
 
     public DbSet<ExternalProvider> ExternalProviders => Set<ExternalProvider>();
@@ -198,6 +201,11 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options)
                 .HasColumnName("default_request_format")
                 .HasConversion<string>()
                 .HasMaxLength(32);
+            entity.Property(user => user.SetupWizardSeenAtUtc)
+                .HasColumnName("setup_wizard_seen_at_utc")
+                .HasColumnType("timestamp with time zone");
+            entity.Property(user => user.SetupCompletedSteps).HasColumnName("setup_completed_steps");
+            entity.Property(user => user.SetupSkippedSteps).HasColumnName("setup_skipped_steps");
             entity.Property(user => user.QuietHoursTimeZoneId).HasColumnName("quiet_hours_time_zone_id").HasMaxLength(64);
             entity.Property(user => user.QuietHoursStartMinute).HasColumnName("quiet_hours_start_minute");
             entity.Property(user => user.QuietHoursEndMinute).HasColumnName("quiet_hours_end_minute");
@@ -354,6 +362,33 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options)
             entity.Property(settings => settings.LastTestSucceeded).HasColumnName("last_test_succeeded");
             entity.Property(settings => settings.LastTestMessage).HasColumnName("last_test_message").HasMaxLength(512);
             entity.Property(settings => settings.LastSyncToken).HasColumnName("last_sync_token").HasMaxLength(1_024);
+            entity.Property(settings => settings.UpdatedByUserId).HasColumnName("updated_by_user_id");
+            entity.Property(settings => settings.CreatedAtUtc).HasColumnName("created_at_utc")
+                .HasColumnType("timestamp with time zone");
+            entity.Property(settings => settings.UpdatedAtUtc).HasColumnName("updated_at_utc")
+                .HasColumnType("timestamp with time zone");
+            entity.Property(settings => settings.Version).HasColumnName("xmin").IsRowVersion();
+        });
+
+        builder.Entity<SetupGuidanceSettings>(entity =>
+        {
+            entity.ToTable("setup_guidance_settings", "communications");
+            entity.HasKey(settings => settings.Id);
+            entity.Property(settings => settings.Id).HasColumnName("id").ValueGeneratedNever();
+            entity.Property(settings => settings.KindleSenderAddress).HasColumnName("kindle_sender_address")
+                .HasMaxLength(Domain.Setup.SetupGuidanceSettings.MaxEmailLength);
+            entity.Property(settings => settings.AmazonStoreDomain).HasColumnName("amazon_store_domain")
+                .HasMaxLength(Domain.Setup.SetupGuidanceSettings.MaxStoreDomainLength);
+            entity.Property(settings => settings.MessagingServerName).HasColumnName("messaging_server_name")
+                .HasMaxLength(Domain.Setup.SetupGuidanceSettings.MaxServerNameLength);
+            entity.Property(settings => settings.MessagingSignInInstructions)
+                .HasColumnName("messaging_sign_in_instructions")
+                .HasMaxLength(Domain.Setup.SetupGuidanceSettings.MaxInstructionsLength);
+            entity.Property(settings => settings.MessagingHelpUrl).HasColumnName("messaging_help_url")
+                .HasMaxLength(Domain.Setup.SetupGuidanceSettings.MaxUrlLength);
+            entity.Property(settings => settings.MessagingWebAppUrl).HasColumnName("messaging_web_app_url")
+                .HasMaxLength(Domain.Setup.SetupGuidanceSettings.MaxUrlLength);
+            entity.Property(settings => settings.ShowElementHelp).HasColumnName("show_element_help");
             entity.Property(settings => settings.UpdatedByUserId).HasColumnName("updated_by_user_id");
             entity.Property(settings => settings.CreatedAtUtc).HasColumnName("created_at_utc")
                 .HasColumnType("timestamp with time zone");

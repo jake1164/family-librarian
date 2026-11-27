@@ -1,7 +1,9 @@
 @page "/settings/ebook-delivery"
 @attribute [Authorize]
 @using FamilyLibrarian.Web.Client.Delivery
+@using FamilyLibrarian.Web.Client.Setup
 @inject DeliveryTargetApiClient DeliveryTargets
+@inject SetupApiClient SetupApi
 @inject ISnackbar Snackbar
 
 <PageTitle>Ebook delivery · Family Librarian</PageTitle>
@@ -34,6 +36,15 @@ else
         </MudAlert>
     }
 
+    @if (guidance is not null)
+    {
+        <MudExpansionPanels Class="mb-4">
+            <MudExpansionPanel Text="How to set up your Kindle" @key="hadTargetAtLoad" Expanded="!hadTargetAtLoad">
+                <KindleSetupGuide Guidance="guidance" />
+            </MudExpansionPanel>
+        </MudExpansionPanels>
+    }
+
     <MudPaper Class="pa-4" Outlined="true">
         @if (hasTarget)
         {
@@ -51,7 +62,11 @@ else
                           @bind-Value="address"
                           Label="Kindle email address"
                           Disabled="@(busy || !CanEdit)"
-                          HelperText="Find this under Manage Your Content and Devices -> Devices in your Amazon account." />
+                          HelperText="@("Your Kindle's own address, usually ending in @kindle.com.")" />
+            @if (KindleAddress.Warning(address) is { } addressWarning)
+            {
+                <MudAlert Severity="Severity.Warning" Dense="true">@addressWarning</MudAlert>
+            }
 
             <div>
                 <MudCheckBox T="bool"
@@ -105,6 +120,9 @@ else
     private bool testBusy;
     private (bool Succeeded, string Message)? testResult;
     private bool hasTarget;
+    private bool hadTargetAtLoad;
+    // Null while delivery isn't set up, or if it could not be read: the page works without the instructions.
+    private FamilyLibrarian.Contracts.Setup.KindleGuidanceResponse? guidance;
     // Null means the lookup failed: controls that need the service stay disabled
     // without claiming it isn't set up.
     private bool? isAvailable;
@@ -121,7 +139,9 @@ else
         {
             var target = await DeliveryTargets.GetMyKindleTargetAsync();
             ApplyTarget(target);
+            hadTargetAtLoad = hasTarget;
             isAvailable = await DeliveryTargets.IsKindleDeliveryAvailableAsync();
+            guidance = (await SetupApi.GetAsync())?.Kindle;
         }
         catch (HttpRequestException)
         {

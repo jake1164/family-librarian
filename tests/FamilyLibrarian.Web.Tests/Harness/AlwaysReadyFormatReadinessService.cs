@@ -16,6 +16,9 @@ namespace FamilyLibrarian.Web.Tests.Harness;
 /// </remarks>
 internal sealed class AlwaysReadyFormatReadinessService : IFormatReadinessService
 {
+    public Task<bool> IsOfferedAsync(RequestMediaType mediaType, CancellationToken cancellationToken) =>
+        Task.FromResult(true);
+
     public Task<FormatReadiness> CheckAsync(RequestMediaType mediaType, CancellationToken cancellationToken) =>
         Task.FromResult(FormatReadiness.Ready);
 }

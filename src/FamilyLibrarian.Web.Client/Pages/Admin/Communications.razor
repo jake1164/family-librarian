@@ -18,7 +18,7 @@
 <MudText Typo="Typo.body1" Class="mb-4">
     Configure optional outbound providers. A notification is sent through every
     provider a household member has enabled and linked -- SMTP by their account
-    email, Matrix once they link their own Matrix ID under their personal settings.
+    email, Matrix once they connect under <em>Message the Librarian</em> in their settings.
 </MudText>
 
 @if (loadFailed)
@@ -142,6 +142,7 @@ else
         <MudText Typo="Typo.body2" Class="mt-3 mb-3">
             A dedicated Matrix account for the bot, with an access token (Settings ->
             Help &amp; About -> Advanced in Element, or your homeserver's admin API).
+            Members know this as <strong>Message the Librarian</strong>.
             The connection carries messages both ways: notifications, replies and chat.
             Turning it on uses the saved settings, testing them first if needed.
         </MudText>
@@ -210,6 +211,8 @@ else
         }
     </MudPaper>
 }
+
+<MessagingGuidancePanel />
 
 @code {
     private readonly SettingsSnapshot draft = new();

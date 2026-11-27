@@ -9,7 +9,8 @@ public sealed record SettingsBackupCountsResponse(
     int SmtpSettings,
     int ProviderSettings,
     int OidcSettings,
-    int AcquisitionPolicySettings);
+    int AcquisitionPolicySettings,
+    int SetupGuidanceSettings);
 
 public sealed record SettingsBackupPreviewResponse(
     DateTimeOffset CreatedUtc,
