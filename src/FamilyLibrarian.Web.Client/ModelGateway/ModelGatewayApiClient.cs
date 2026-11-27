@@ -52,11 +52,17 @@ public sealed class ModelGatewayApiClient(HttpClient httpClient, AntiforgeryToke
     public Task<ModelGatewayCallResult<ModelGatewaySettingsResponse>> SetEnabledAsync(bool enabled, CancellationToken cancellationToken = default) =>
         SendAsync<ModelGatewaySettingsResponse>(HttpMethod.Put, $"{BasePath}/enabled", new SetModelGatewayEnabledRequest(enabled), cancellationToken);
 
+    public Task<ModelGatewayCallResult<ModelGatewaySettingsResponse>> SetRoleEnabledAsync(string role, bool enabled, CancellationToken cancellationToken = default) =>
+        SendAsync<ModelGatewaySettingsResponse>(HttpMethod.Put, $"{BasePath}/roles/{Uri.EscapeDataString(role)}/enabled", new SetModelRoleEnabledRequest(enabled), cancellationToken);
+
+    public Task<ModelGatewayCallResult<ModelGatewaySettingsResponse>> SetPermissionsAsync(SetModelGatewayPermissionsRequest request, CancellationToken cancellationToken = default) =>
+        SendAsync<ModelGatewaySettingsResponse>(HttpMethod.Put, $"{BasePath}/permissions", request, cancellationToken);
+
+    public Task<ModelGatewayCallResult<DecisionCaptureSettingsResponse>> SetCaptureSwitchesAsync(SetDecisionCaptureSwitchesRequest request, CancellationToken cancellationToken = default) =>
+        SendAsync<DecisionCaptureSettingsResponse>(HttpMethod.Put, $"{BasePath}/capture/switches", request, cancellationToken);
+
     public Task<ModelGatewayCallResult<ModelGatewaySettingsResponse>> ResolveConnectionAsync(string keep, CancellationToken cancellationToken = default) =>
         SendAsync<ModelGatewaySettingsResponse>(HttpMethod.Post, $"{BasePath}/connection/resolve", new ResolveModelConnectionRequest(keep), cancellationToken);
-
-    public Task<ModelGatewayCallResult<ModelGatewaySettingsResponse>> SetApiKeyAsync(string apiKey, CancellationToken cancellationToken = default) =>
-        SendAsync<ModelGatewaySettingsResponse>(HttpMethod.Put, $"{BasePath}/api-key", new SetModelGatewayApiKeyRequest(apiKey), cancellationToken);
 
     public Task<ModelGatewayCallResult<ModelGatewaySettingsResponse>> ClearApiKeyAsync(CancellationToken cancellationToken = default) =>
         SendAsync<ModelGatewaySettingsResponse>(HttpMethod.Delete, $"{BasePath}/api-key", null, cancellationToken);

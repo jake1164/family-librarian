@@ -284,7 +284,7 @@ An administrator opens **Settings → Chat assistant** (`/settings/chat`) and tu
 on **Web chat**, **Matrix chat**, or both. The change applies to the next message
 without a restart, and **Chat** appears in the menu while web chat is on.
 
-- Matrix chat also needs the Matrix connection below, and each member needs to
+- Matrix chat also needs the Matrix bot connection below, and each member needs to
   link their own Matrix ID.
 - Chat works without AI. Setting up AI models does not turn chat on.
 
@@ -303,14 +303,17 @@ Nothing here is required; local sign-in and SMTP keep working without it.
 1. Create a dedicated Matrix account for Family Librarian on your homeserver
    (not a person's own account) and generate an access token for it, for example
    in Element under **Settings → Help & About → Advanced**.
-2. Open **Settings → Communications** and fill in the **Matrix** card: the
-   homeserver URL (for example `https://matrix.example.org`), the bot's Matrix ID,
+2. Open **Settings → Communications** and fill in the **Matrix bot connection**
+   card: the homeserver URL (for example `https://matrix.example.org`), the bot's Matrix ID,
    and the access token. The token is encrypted at rest like the SMTP password and
    is never shown again; leave the field blank to keep the stored one.
-3. Choose **Test Matrix connection**. It confirms the bot can authenticate and
-   does not message anyone. A saved configuration must connect successfully
-   before it can be enabled.
-4. Turn the card's switch on.
+3. Choose **Save settings**, then turn the card's switch on. If the saved
+   settings have not passed a connection test, turning the switch on runs one
+   first; it only signs the bot in and does not message anyone. If it fails, the
+   switch stays off and shows why. **Test Matrix connection** checks the values on
+   screen at any time.
+4. To let people chat with the bot, also turn on **Matrix chat** under
+   **Settings → Chat assistant**. This is a separate switch.
 
 The bot account must be able to open direct-message rooms with your members and
 receive replies, so do not restrict it to a closed room list. Use a homeserver
@@ -337,7 +340,7 @@ alerts also use this channel.
 - **No verification code arrives:** the member must accept the bot's invitation;
   confirm the Matrix ID is spelled `@user:server`.
 - **Replies are ignored:** replies are matched from the bot's sync loop; confirm the
-  Matrix card is still enabled and the application log shows no sync errors.
+  Matrix bot connection is still enabled and the application log shows no sync errors.
 
 ## Hardcover metadata provider
 

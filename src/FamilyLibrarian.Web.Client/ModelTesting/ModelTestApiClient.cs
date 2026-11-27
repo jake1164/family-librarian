@@ -20,6 +20,9 @@ public sealed class ModelTestApiClient(HttpClient httpClient, AntiforgeryTokenPr
     public Task<ModelTestCallResult<ModelTestSettingsResponse>> SetEnabledAsync(bool enabled, CancellationToken cancellationToken = default) =>
         SendAsync<ModelTestSettingsResponse>(HttpMethod.Put, $"{BasePath}/enabled", new SetModelTestEnabledRequest(enabled), cancellationToken);
 
+    public Task<ModelTestCallResult<ModelTestSettingsResponse>> SetAllowCloudAsync(bool allow, CancellationToken cancellationToken = default) =>
+        SendAsync<ModelTestSettingsResponse>(HttpMethod.Put, $"{BasePath}/allow-cloud", new SetModelTestCloudRequest(allow), cancellationToken);
+
     public Task<ModelTestCallResult<ModelTestReportResponse>> RunAsync(RunModelTestRequest request, CancellationToken cancellationToken = default) =>
         SendAsync<ModelTestReportResponse>(HttpMethod.Post, $"{BasePath}/run", request, cancellationToken);
 

@@ -393,13 +393,13 @@ else
             var outcome = await action();
             if (!outcome.Succeeded)
             {
-                Snackbar.Add(outcome.Error ?? "That action could not be completed.", Severity.Error);
+                Snackbar.Failed(outcome.Error ?? "That action could not be completed.");
             }
             shouldReload = true;
         }
         catch (HttpRequestException)
         {
-            Snackbar.Add("That action could not be completed. Please try again.", Severity.Error);
+            Snackbar.Failed("That action could not be completed. Please try again.");
         }
         finally
         {

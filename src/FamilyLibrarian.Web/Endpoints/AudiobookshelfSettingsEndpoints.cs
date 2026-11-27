@@ -54,18 +54,22 @@ internal static class AudiobookshelfSettingsEndpoints
         ToAudiobookshelfResult(await service.ClearApiTokenAsync(cancellationToken));
 
     /// <summary>
-    /// Tests and records against the currently *saved* configuration — unlike
-    /// CWA, Audiobookshelf has no unsaved-credential discovery step (e.g. an
-    /// SSH host-key prompt) that needs a non-persisting draft test first, so
-    /// this is the only test entry point and it is the one that lets
-    /// <c>LastTestSucceeded</c> become true for the format-readiness gate.
+    /// With values, tests what is in the administrator's form without saving it (the result counts only when those are
+    /// the saved values). With no body or an empty one, tests and records the saved configuration, as the health check does.
     /// </summary>
     private static async Task<IResult> TestAudiobookshelfConnectionAsync(
+        TestAudiobookshelfRequest? request,
         AudiobookshelfSettingsService service,
         CancellationToken cancellationToken)
     {
-        var result = await service.TestConnectionAsync(cancellationToken);
-        return Results.Ok(new PublishingConnectionTestResponse(result.Outcome.Succeeded, result.Outcome.Message));
+        var testSaved = request is null || (string.IsNullOrWhiteSpace(request.BaseUrl) &&
+            string.IsNullOrWhiteSpace(request.LibraryId) && string.IsNullOrWhiteSpace(request.FolderId) &&
+            string.IsNullOrWhiteSpace(request.ApiToken));
+        var outcome = testSaved
+            ? (await service.TestConnectionAsync(cancellationToken)).Outcome
+            : await service.TestConfigurationAsync(
+                request!.BaseUrl, request.LibraryId, request.FolderId, request.ApiToken, cancellationToken);
+        return Results.Ok(new PublishingConnectionTestResponse(outcome.Succeeded, outcome.Message));
     }
 
     private static async Task<IResult> DiscoverAudiobookshelfLibrariesAsync(

@@ -54,6 +54,69 @@ public sealed class SettingsNavigationBrowserTests
     }
 
     [TestMethod]
+    public async Task ARefusedSwitchStaysOffAndARiskyOneSavesOnlyAfterConfirmation()
+    {
+        if (Environment.GetEnvironmentVariable("FAMILY_LIBRARIAN_SETTINGS_BROWSER_TESTS") != "1")
+            Assert.Inconclusive("Set FAMILY_LIBRARIAN_SETTINGS_BROWSER_TESTS=1 for the isolated settings navigation browser regression.");
+        await using var fixture = await WebTestFixture.CreateAsync();
+        var available = WebTestFixture.Require(fixture);
+        await using var original = new FamilyLibrarianAppFactory(available.ConnectionString);
+        await using var factory = original.WithWebHostBuilder(builder => builder.UseStaticWebAssets());
+        factory.UseKestrel(options => options.Listen(System.Net.IPAddress.Loopback, 0));
+        using var client = factory.CreateClient();
+        using var playwright = await Playwright.CreateAsync();
+        await using var browser = await playwright.Chromium.LaunchAsync(new()
+        {
+            Headless = true,
+            ExecutablePath = Environment.GetEnvironmentVariable("FAMILY_LIBRARIAN_E2E_CHROMIUM_EXECUTABLE")
+        });
+        var page = await browser.NewPageAsync();
+        page.SetDefaultTimeout(15000);
+        await page.GotoAsync(new Uri(client.BaseAddress!, "/login").ToString());
+        await page.GetByLabel("Email", new() { Exact = true }).FillAsync(FamilyLibrarianAppFactory.AdminEmail);
+        await page.GetByLabel("Password", new() { Exact = true }).FillAsync(FamilyLibrarianAppFactory.AdminPassword);
+        await page.GetByRole(AriaRole.Button, new() { Name = "Sign in", Exact = true }).ClickAsync();
+        await page.WaitForURLAsync(url => new Uri(url).AbsolutePath == "/");
+
+        // Nothing is set up, so the host refuses. The switch must not be left looking on, which is what happened before.
+        await page.GotoAsync(new Uri(client.BaseAddress!, "/settings/communications").ToString());
+        var matrix = page.GetByLabel("Matrix bot connection", new() { Exact = true });
+        await matrix.ClickAsync();
+        await Assertions.Expect(page.GetByText("A Matrix homeserver URL is required.", new() { Exact = true })).ToBeVisibleAsync();
+        await Assertions.Expect(matrix).Not.ToBeCheckedAsync();
+        await page.ReloadAsync();
+        await Assertions.Expect(matrix).Not.ToBeCheckedAsync();
+
+        // A destination that cannot be turned on opens its settings, so what needs fixing is on screen.
+        await page.GotoAsync(new Uri(client.BaseAddress!, "/settings/publishing").ToString());
+        var cwa = page.GetByLabel("CWA", new() { Exact = true });
+        await cwa.ClickAsync();
+        await Assertions.Expect(page.GetByLabel("Local ingest directory", new() { Exact = true })).ToBeVisibleAsync();
+        await Assertions.Expect(cwa).Not.ToBeCheckedAsync();
+
+        // A permission asks first. Cancelling saves nothing; accepting saves at once, with no Save button.
+        await page.GotoAsync(new Uri(client.BaseAddress!, "/admin/model-gateway").ToString());
+        var release = page.GetByLabel("Allow AI validation to release narrowly eligible identity holds", new() { Exact = true });
+        await release.ClickAsync();
+        await page.GetByRole(AriaRole.Button, new() { Name = "Cancel", Exact = true }).ClickAsync();
+        await Assertions.Expect(release).Not.ToBeCheckedAsync();
+        await release.ClickAsync();
+        await page.GetByRole(AriaRole.Button, new() { Name = "Allow release", Exact = true }).ClickAsync();
+        // The switch shows the click while saving, so wait for the host to confirm before reloading.
+        await Assertions.Expect(page.GetByText("Releasing identity holds turned on.", new() { Exact = true })).ToBeVisibleAsync();
+        await Assertions.Expect(release).ToBeEnabledAsync();
+        await Assertions.Expect(release).ToBeCheckedAsync();
+        await page.ReloadAsync();
+        await Assertions.Expect(release).ToBeCheckedAsync();
+        await release.ClickAsync();
+        await Assertions.Expect(page.GetByText("Releasing identity holds turned off.", new() { Exact = true })).ToBeVisibleAsync();
+        await Assertions.Expect(release).ToBeEnabledAsync();
+        await Assertions.Expect(release).Not.ToBeCheckedAsync();
+        await page.ReloadAsync();
+        await Assertions.Expect(release).Not.ToBeCheckedAsync();
+    }
+
+    [TestMethod]
     public async Task SettingsEditsWarnOnInternalBackAndReloadAndSuccessfulSavesClearOnlyTheirOwnSection()
     {
         if (Environment.GetEnvironmentVariable("FAMILY_LIBRARIAN_SETTINGS_BROWSER_TESTS") != "1")
@@ -110,7 +173,7 @@ public sealed class SettingsNavigationBrowserTests
         {
             await page.GotoAsync(new Uri(client.BaseAddress!, path).ToString());
             if (path == "/settings/publishing")
-                await page.GetByLabel("Disabled", new() { Exact = true }).First.ClickAsync();
+                await page.GetByLabel("CWA", new() { Exact = true }).ClickAsync(); // refused until set up, which opens its settings
             var field = page.GetByLabel(label, new() { Exact = true });
             var before = await field.InputValueAsync();
             await field.FillAsync("unsaved-edit");
@@ -161,7 +224,7 @@ public sealed class SettingsNavigationBrowserTests
         Assert.AreEqual("beforeunload", dialogs.Last());
         await Assertions.Expect(page.GetByLabel("Button label", new() { Exact = true })).ToHaveValueAsync("Unsaved sign-in");
 
-        // A failed save keeps the draft protected; a successful save leaves a different credential draft protected.
+        // A failed save keeps the draft protected; a successful save stores everything typed, the secret included.
         await page.RouteAsync("**/api/v1/admin/authentication/oidc/", route => route.FulfillAsync(new()
         {
             Status = 400, ContentType = "application/problem+json", Body = "{\"errors\":{\"settings\":[\"Test rejection\"]}}"
@@ -179,14 +242,11 @@ public sealed class SettingsNavigationBrowserTests
         await page.GetByRole(AriaRole.Button, new() { Name = "Save settings", Exact = true }).ClickAsync();
         Assert.AreEqual(200, (await savedResponse).Status);
         await Assertions.Expect(page.GetByRole(AriaRole.Button, new() { Name = "Save settings", Exact = true })).ToBeEnabledAsync();
-        dialogCount = dialogs.Count;
-        await home.ClickAsync();
-        Assert.AreEqual(dialogCount + 1, dialogs.Count);
-        await page.GetByLabel("Replace client secret", new() { Exact = true }).FillAsync(string.Empty);
+        await Assertions.Expect(page.GetByLabel("Replace client secret", new() { Exact = true })).ToHaveValueAsync(string.Empty);
         dialogCount = dialogs.Count;
         await home.ClickAsync();
         await page.WaitForURLAsync(url => new Uri(url).AbsolutePath == "/");
-        Assert.AreEqual(dialogCount, dialogs.Count, "Successful settings save plus empty credential draft is clean.");
+        Assert.AreEqual(dialogCount, dialogs.Count, "A successful save leaves nothing unsaved.");
 
         await page.GotoAsync(new Uri(client.BaseAddress!, "/settings/authentication").ToString());
         await page.GetByLabel("Button label", new() { Exact = true }).FillAsync("Discard this change");

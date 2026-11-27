@@ -4,6 +4,7 @@
 @inject AccountsApiClient AccountsApi
 @inject IJSRuntime JS
 @inject ISnackbar Snackbar
+@inject IDialogService Dialogs
 
 @* The role attribute is UX only. Every endpoint behind this page independently
    requires the Admin policy and an anti-forgery token. *@
@@ -366,8 +367,16 @@
                 account.Id,
                 enabled ? ActiveStatus : DisabledStatus)).Error);
 
-    private Task SetAdminAsync(FamilyAccountResponse account, bool isAdmin) =>
-        RunAsync(async () => (await AccountsApi.SetAdminAsync(account.Id, isAdmin)).Error);
+    private async Task SetAdminAsync(FamilyAccountResponse account, bool isAdmin)
+    {
+        if (!isAdmin && !await Dialogs.ConfirmRemovalAsync("Remove administrator?",
+                $"{account.Email} will no longer be able to manage Family Librarian.", "Remove administrator"))
+        {
+            return;
+        }
+
+        await RunAsync(async () => (await AccountsApi.SetAdminAsync(account.Id, isAdmin)).Error);
+    }
 
     private void StartResetPassword(FamilyAccountResponse account)
     {
@@ -471,8 +480,15 @@
         RunAsync(async () =>
             (await AccountsApi.SetAccountKindleEnabledAsync(account.Id, enabled, kindle.Version)).Error);
 
-    private Task RevokeAsync(InvitationResponse invitation) =>
-        RunAsync(async () => (await AccountsApi.RevokeInvitationAsync(invitation.Id)).Error);
+    private async Task RevokeAsync(InvitationResponse invitation)
+    {
+        if (!await Dialogs.ConfirmRemovalAsync("Withdraw this invitation?", "Its link stops working.", "Withdraw"))
+        {
+            return;
+        }
+
+        await RunAsync(async () => (await AccountsApi.RevokeInvitationAsync(invitation.Id)).Error);
+    }
 
     private Task RegenerateAsync(InvitationResponse invitation) =>
         RunAsync(async () =>

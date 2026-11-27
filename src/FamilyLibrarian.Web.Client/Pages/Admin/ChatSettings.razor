@@ -32,8 +32,8 @@
                     <MudText Typo="Typo.h6">Web chat is @(settings.WebEnabled ? "on" : "off")</MudText>
                     <MudText Typo="Typo.body2">Adds a Chat page to the menu for everyone who is signed in.</MudText>
                 </div>
-                <MudSwitch T="bool" Value="settings.WebEnabled" ValueChanged="SetWebAsync" Color="Color.Primary" Disabled="@busy"
-                           Label="@(settings.WebEnabled ? "Enabled" : "Disabled")" Class="flex-shrink-0" aria-label="Web chat" />
+                <SettingSwitch Value="settings.WebEnabled" Changing="SetWebAsync" Disabled="@busy" AlignEnd="true" Class="flex-shrink-0"
+                               Label="@(settings.WebEnabled ? "Enabled" : "Disabled")" aria-label="Web chat" />
             </MudStack>
             @if (settings.WebEnabled)
             {
@@ -50,13 +50,13 @@
                         Matrix ID under <MudLink Href="settings/matrix">Matrix chat</MudLink> in the settings menu.
                     </MudText>
                 </div>
-                <MudSwitch T="bool" Value="settings.MatrixEnabled" ValueChanged="SetMatrixAsync" Color="Color.Primary" Disabled="@busy"
-                           Label="@(settings.MatrixEnabled ? "Enabled" : "Disabled")" Class="flex-shrink-0" aria-label="Matrix chat" />
+                <SettingSwitch Value="settings.MatrixEnabled" Changing="SetMatrixAsync" Disabled="@busy" AlignEnd="true" Class="flex-shrink-0"
+                               Label="@(settings.MatrixEnabled ? "Enabled" : "Disabled")" aria-label="Matrix chat" />
             </MudStack>
             @if (!settings.MatrixConnectionReady)
             {
                 <MudAlert Severity="@(settings.MatrixEnabled ? Severity.Warning : Severity.Info)" Class="mt-3">
-                    The Matrix connection isn't set up and enabled, so Matrix chat can't answer yet. Set it up in
+                    The Matrix bot connection isn't set up and enabled, so Matrix chat can't answer yet. Set it up in
                     <MudLink Href="settings/communications">Communications</MudLink>.
                 </MudAlert>
             }
@@ -85,31 +85,26 @@
         }
     }
 
-    private Task SetWebAsync(bool enabled) =>
-        SaveAsync(new SetChatSettingsRequest(WebEnabled: enabled), $"Web chat turned {(enabled ? "on" : "off")}.");
+    private Task SetWebAsync(SettingSwitchChange change) =>
+        SaveAsync(change, new SetChatSettingsRequest(WebEnabled: change.Value), "Web chat");
 
-    private Task SetMatrixAsync(bool enabled) =>
-        SaveAsync(new SetChatSettingsRequest(MatrixEnabled: enabled), $"Matrix chat turned {(enabled ? "on" : "off")}.");
+    private Task SetMatrixAsync(SettingSwitchChange change) =>
+        SaveAsync(change, new SetChatSettingsRequest(MatrixEnabled: change.Value), "Matrix chat");
 
-    // The switches show only what the host returned, so a refused or failed save leaves them as they really are.
-    private async Task SaveAsync(SetChatSettingsRequest change, string successMessage)
+    private async Task SaveAsync(SettingSwitchChange change, SetChatSettingsRequest request, string name)
     {
         busy = true;
         try
         {
-            var saved = await Api.SaveAsync(change);
+            var saved = await Api.SaveAsync(request);
             if (saved is null)
             {
-                Snackbar.Add("That change could not be saved.", Severity.Error);
+                change.Refuse("That change could not be saved.");
                 return;
             }
 
             settings = saved;
-            Snackbar.Add(successMessage, Severity.Success);
-        }
-        catch (HttpRequestException)
-        {
-            Snackbar.Add("We couldn't reach Family Librarian. Try again.", Severity.Error);
+            Snackbar.Saved($"{name} turned {(change.Value ? "on" : "off")}.");
         }
         finally
         {

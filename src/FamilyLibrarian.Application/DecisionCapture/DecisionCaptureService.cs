@@ -72,6 +72,28 @@ public sealed class DecisionCaptureService(
         return DecisionCaptureResult.Success<DecisionCaptureSettingsView>(after);
     }
 
+    /// <summary>Changes the switches that are given. The limits stay as saved, so nothing becomes due for removal.</summary>
+    public async Task<DecisionCaptureResult<DecisionCaptureSettingsView>> SetSwitchesAsync(
+        bool? decisionCapture, bool? chatCapture, CancellationToken cancellationToken)
+    {
+        if (!IsAdministrator())
+        {
+            return DecisionCaptureResult.NotAllowed<DecisionCaptureSettingsView>();
+        }
+
+        var settings = await settingsStore.GetOrCreateAsync(cancellationToken);
+        var before = ToView(settings);
+        settings.ConfigureDecisionCapture(
+            decisionCapture ?? before.DecisionCaptureEnabled, chatCapture ?? before.ChatCaptureEnabled, before.Limits,
+            currentUser.UserId, clock.UtcNow);
+        await settingsStore.SaveChangesAsync(cancellationToken);
+        var after = ToView(settings);
+        await audit.WriteAsync(
+            AuditActions.DecisionCaptureSettingsChanged, AuditSubjectTypes.ModelGateway, SubjectId,
+            new { Before = before, After = after }, cancellationToken);
+        return DecisionCaptureResult.Success<DecisionCaptureSettingsView>(after);
+    }
+
     /// <summary>How many records the next retention pass would remove if these limits were saved. A count only; nothing changes.</summary>
     public async Task<DecisionCaptureResult<DecisionCaptureRetentionCounts>> PreviewAsync(
         DecisionCaptureLimits limits, CancellationToken cancellationToken)

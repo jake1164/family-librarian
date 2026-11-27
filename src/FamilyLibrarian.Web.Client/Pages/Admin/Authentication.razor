@@ -5,9 +5,10 @@
 @using Microsoft.AspNetCore.Authorization
 @inject OidcSettingsApiClient OidcApi
 @inject ISnackbar Snackbar
+@inject IDialogService Dialogs
 
 <PageTitle>Authentication | Family Librarian</PageTitle>
-<SettingsDraftGuard IsDirty="@(draft.HasChanges("settings", SettingsFields) || !string.IsNullOrEmpty(clientSecretDraft))" />
+<SettingsDraftGuard IsDirty="@(IsDirty)" />
 
 <MudText Typo="Typo.h4" GutterBottom="true">Authentication</MudText>
 <MudText Typo="Typo.body1" Class="mb-6">
@@ -33,13 +34,8 @@ else
         <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="2">
             <MudText Typo="Typo.h6">OpenID Connect</MudText>
             <MudSpacer />
-            <MudSwitch T="bool"
-                       @key="@("oidc:" + switchGeneration)"
-                       Value="settings.IsEnabled"
-                       ValueChanged="@(enabled => SetEnabledAsync(enabled))"
-                       Color="Color.Primary"
-                       Disabled="@busy"
-                       Label="@(settings.IsEnabled ? "Enabled" : "Disabled")" />
+            <SettingSwitch Value="settings.IsEnabled" Changing="SetEnabledAsync" Disabled="@busy" AlignEnd="true"
+                           Label="@(settings.IsEnabled ? "Enabled" : "Disabled")" aria-label="OpenID Connect" />
         </MudStack>
 
         <MudDivider Class="my-3" />
@@ -70,12 +66,8 @@ else
         </MudText>
         <MudStack Row="true" Spacing="2">
             <MudTextField Immediate="true" T="string" @bind-Value="clientSecretDraft" Label="Replace client secret"
-                          InputType="InputType.Password" Disabled="@busy" Class="flex-grow-1" />
-            <MudButton Variant="Variant.Filled"
-                       Disabled="@(busy || string.IsNullOrWhiteSpace(clientSecretDraft))"
-                       OnClick="SaveClientSecretAsync">
-                Save secret
-            </MudButton>
+                          InputType="InputType.Password" Disabled="@busy" Class="flex-grow-1"
+                          HelperText="@(string.IsNullOrWhiteSpace(clientSecretDraft) ? null : "Not saved yet -- click Save settings.")" />
             @if (settings.HasClientSecret)
             {
                 <MudButton Variant="Variant.Outlined" Color="Color.Error" Disabled="@busy" OnClick="ClearClientSecretAsync">
@@ -92,7 +84,7 @@ else
         <MudDivider Class="my-3" />
         <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="3">
             <MudButton Variant="Variant.Outlined" Disabled="@busy" OnClick="TestAsync">Test connection</MudButton>
-            @if (settings.LastTestedAtUtc is not null)
+            @if (testResult is null && settings.LastTestedAtUtc is not null)
             {
                 <MudText Typo="Typo.body2">
                     <MudIcon Icon="@(settings.LastTestSucceeded == true ? Icons.Material.Filled.CheckCircle : Icons.Material.Filled.Error)"
@@ -102,6 +94,13 @@ else
                 </MudText>
             }
         </MudStack>
+
+        @if (testResult is not null)
+        {
+            <MudAlert Severity="@(testResult.Succeeded ? Severity.Success : Severity.Warning)" Dense="true" Class="mt-3" role="status">
+                @testResult.Message
+            </MudAlert>
+        }
 
         @if (lastTestEndpoints is not null)
         {
@@ -122,17 +121,14 @@ else
             Disabling local sign-in leaves it working for one break-glass account only —
             the administrator created when this deployment was first started.
         </MudText>
-        <MudSwitch T="bool"
-                   @key="@("local-login:" + switchGeneration)"
-                   Value="settings.LocalLoginDisabled"
-                   ValueChanged="@(disabled => SetLocalLoginDisabledAsync(disabled))"
-                   Color="Color.Warning"
-                   Disabled="@(busy || settings.LastTestSucceeded != true)"
-                   Label="@(settings.LocalLoginDisabled ? "Local sign-in disabled" : "Local sign-in enabled")" />
-        @if (settings.LastTestSucceeded != true)
-        {
-            <MudText Typo="Typo.caption">A successful connection test is required first.</MudText>
-        }
+        <SettingSwitch Value="settings.LocalLoginDisabled" Changing="SetLocalLoginDisabledAsync" Color="Color.Warning" Disabled="@busy"
+                       WorkingText="@(settings.LastTestSucceeded == true ? "Saving…" : "Testing the sign-in server…")"
+                       ConfirmTitle="Disable local sign-in?" ConfirmYes="Disable local sign-in"
+                       ConfirmOn="Everyone except the emergency administrator account will have to sign in through your identity provider. Check that signing in that way works first: the connection test only confirms the server can be reached."
+                       Label="@(settings.LocalLoginDisabled ? "Local sign-in disabled" : "Local sign-in enabled")" />
+        <MudText Typo="Typo.caption">
+            Disabling it first tests the saved issuer URL if that has not passed a test yet.
+        </MudText>
     </MudPaper>
 }
 
@@ -142,8 +138,8 @@ else
     private OidcSettingsResponse? settings;
     private bool loadFailed;
     private bool busy;
-    private int switchGeneration;
     private OidcConnectionTestResponse? lastTestEndpoints;
+    private OidcConnectionTestResponse? testResult;
 
     private string? displayName;
     private string? authority;
@@ -153,6 +149,8 @@ else
     private string? adminClaimName = "groups";
     private string? adminClaimValues;
     private string? clientSecretDraft;
+
+    private bool IsDirty => draft.HasChanges("settings", SettingsFields) || !string.IsNullOrEmpty(clientSecretDraft);
 
     protected override Task OnInitializedAsync() => LoadAsync();
 
@@ -186,30 +184,95 @@ else
         draft.Accept("settings", SettingsFields);
     }
 
-    private Task SetEnabledAsync(bool enabled) => RunAsync(() => OidcApi.SetEnabledAsync(enabled));
+    private Task SetEnabledAsync(SettingSwitchChange change) => SwitchAsync(
+        change, () => OidcApi.SetEnabledAsync(change.Value),
+        change.Value ? "OpenID Connect enabled." : "OpenID Connect disabled.");
 
-    private Task SaveSettingsAsync() => RunAsync(() => OidcApi.SetSettingsAsync(new SetOidcSettingsRequest(
-        displayName ?? "Sign in with SSO", authority, clientId, scopes, matchClaimName,
-        adminClaimName, adminClaimValues)), applyFields: true);
+    private Task SetLocalLoginDisabledAsync(SettingSwitchChange change) => SwitchAsync(
+        change, () => OidcApi.SetLocalLoginDisabledAsync(change.Value),
+        change.Value ? "Local sign-in disabled." : "Local sign-in enabled.");
 
-    private async Task SaveClientSecretAsync()
+    private async Task SwitchAsync(SettingSwitchChange change, Func<Task<OidcResult>> action, string successMessage)
     {
-        if (string.IsNullOrWhiteSpace(clientSecretDraft))
+        if (change.Value && IsDirty)
+        {
+            change.Refuse("Save settings first. This uses the saved settings.");
+            return;
+        }
+
+        busy = true;
+        try
+        {
+            var result = await action();
+            if (!result.Succeeded)
+            {
+                change.Refuse(result.Error);
+                settings = await OidcApi.GetAsync();
+                return;
+            }
+
+            settings = result.Settings;
+            Snackbar.Saved(successMessage);
+        }
+        finally
+        {
+            busy = false;
+        }
+    }
+
+    private async Task SaveSettingsAsync()
+    {
+        busy = true;
+        try
+        {
+            var result = await OidcApi.SetSettingsAsync(new SetOidcSettingsRequest(
+                displayName ?? "Sign in with SSO", authority, clientId, scopes, matchClaimName,
+                adminClaimName, adminClaimValues, clientSecretDraft));
+            if (!result.Succeeded)
+            {
+                Snackbar.Failed(result.Error);
+                return;
+            }
+
+            // The secret is dropped from the page as soon as the host has it.
+            clientSecretDraft = null;
+            settings = result.Settings;
+            ApplyFields(settings);
+            Snackbar.Saved("Authentication settings saved.");
+        }
+        finally
+        {
+            busy = false;
+        }
+    }
+
+    private async Task ClearClientSecretAsync()
+    {
+        if (!await Dialogs.ConfirmRemovalAsync("Remove client secret?",
+                "The stored secret is deleted. Single sign-on stops working until you enter one again."))
         {
             return;
         }
 
-        if (await RunAsync(() => OidcApi.SetClientSecretAsync(clientSecretDraft)))
+        busy = true;
+        try
         {
-            clientSecretDraft = null;
-            Snackbar.Add("Saved the OIDC client secret.", Severity.Success);
+            var result = await OidcApi.ClearClientSecretAsync();
+            if (!result.Succeeded)
+            {
+                Snackbar.Failed(result.Error);
+                return;
+            }
+
+            // Anything typed and not yet saved stays in the form.
+            settings = result.Settings;
+            Snackbar.Saved("Client secret removed.");
+        }
+        finally
+        {
+            busy = false;
         }
     }
-
-    private Task ClearClientSecretAsync() => RunAsync(() => OidcApi.ClearClientSecretAsync());
-
-    private Task SetLocalLoginDisabledAsync(bool disabled) =>
-        RunAsync(() => OidcApi.SetLocalLoginDisabledAsync(disabled));
 
     private async Task TestAsync()
     {
@@ -219,58 +282,18 @@ else
             var result = await OidcApi.TestAsync(authority);
             if (result is null)
             {
-                Snackbar.Add("The connection test could not be run.", Severity.Error);
+                Snackbar.Failed("The connection test could not be run.");
                 return;
             }
 
             lastTestEndpoints = result.Succeeded ? result : null;
-            if (settings is not null)
-            {
-                settings = settings with
-                {
-                    LastTestedAtUtc = DateTimeOffset.UtcNow,
-                    LastTestSucceeded = result.Succeeded,
-                    LastTestMessage = result.Message,
-                };
-            }
-
-            Snackbar.Add(result.Message, result.Succeeded ? Severity.Success : Severity.Warning);
+            testResult = result;
+            // The host records the result only when the tested URL is the saved one, so ask it what is recorded.
+            settings = await OidcApi.GetAsync();
         }
         finally
         {
             busy = false;
-        }
-    }
-
-    private async Task<bool> RunAsync(Func<Task<OidcResult>> action, bool applyFields = false)
-    {
-        busy = true;
-        try
-        {
-            var result = await action();
-            if (!result.Succeeded)
-            {
-                Snackbar.Add(result.Error ?? "That change could not be saved.", Severity.Error);
-                return false;
-            }
-
-            // Only re-sync the editable fields (display name, authority, client ID,
-            // scopes, claim mapping) after an action that actually saved them
-            // (SaveSettingsAsync). Other actions -- enabling, saving/clearing the
-            // client secret, disabling local login -- must not clobber unsaved
-            // edits sitting in those fields with the persisted values.
-            settings = result.Settings;
-            if (applyFields)
-            {
-                ApplyFields(settings);
-            }
-
-            return true;
-        }
-        finally
-        {
-            busy = false;
-            switchGeneration++;
         }
     }
 }

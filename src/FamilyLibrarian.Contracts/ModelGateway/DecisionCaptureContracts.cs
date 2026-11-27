@@ -19,6 +19,9 @@ public sealed record DecisionCaptureSettingsResponse(
 
 public sealed record SaveDecisionCaptureSettingsRequest(bool DecisionCaptureEnabled, bool ChatCaptureEnabled, DecisionCaptureLimitsDto? Limits);
 
+/// <summary>Changes the saving switches that are given and leaves the other one, and the limits, as they are.</summary>
+public sealed record SetDecisionCaptureSwitchesRequest(bool? DecisionCaptureEnabled = null, bool? ChatCaptureEnabled = null);
+
 /// <summary>How many records the next retention pass would remove under the limits asked about. Counts only.</summary>
 public sealed record DecisionCaptureRetentionPreviewResponse(int Snapshots, int Calls, int Findings, int Total);
 

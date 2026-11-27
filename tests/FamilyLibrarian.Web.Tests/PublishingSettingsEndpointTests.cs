@@ -185,15 +185,8 @@ public sealed class PublishingSettingsEndpointTests
             "/api/v1/admin/publishing/cwa/sftp-host-key", new TrustSftpHostKeyRequest(fingerprint));
         Assert.AreEqual(HttpStatusCode.OK, trust.StatusCode);
 
-        // Trusting the host key alone still is not enough -- enabling also requires
-        // a passing connection test for the saved configuration (docs/01 §12.1.1).
-        var enableBeforeTest = await client.PutAsJsonAsync(
-            "/api/v1/admin/publishing/cwa/enabled", new SetPublishingEnabledRequest(true));
-        Assert.AreEqual(HttpStatusCode.BadRequest, enableBeforeTest.StatusCode);
-
-        var test = await client.PostAsJsonAsync("/api/v1/admin/publishing/cwa/test", new { });
-        Assert.AreEqual(HttpStatusCode.OK, test.StatusCode);
-
+        // With the host key trusted, enabling runs the required connection test of the saved
+        // configuration itself (docs/01 §12.1.1) and records it.
         var enableAfterTrust = await client.PutAsJsonAsync(
             "/api/v1/admin/publishing/cwa/enabled", new SetPublishingEnabledRequest(true));
         Assert.AreEqual(HttpStatusCode.OK, enableAfterTrust.StatusCode);
@@ -202,6 +195,7 @@ public sealed class PublishingSettingsEndpointTests
         Assert.IsNotNull(settings);
         Assert.AreEqual(fingerprint, settings.SftpHostKeyFingerprint);
         Assert.IsNotNull(settings.SftpHostKeyTrustedAtUtc);
+        Assert.AreEqual(true, settings.LastTestSucceeded);
     }
 
     [TestMethod]

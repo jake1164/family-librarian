@@ -102,6 +102,12 @@ public sealed class ModelTestSettings
         Touch(actorUserId, updatedAtUtc);
     }
 
+    public void SetAllowCloud(bool allow, Guid? actorUserId, DateTimeOffset updatedAtUtc)
+    {
+        AllowCloud = allow;
+        Touch(actorUserId, updatedAtUtc);
+    }
+
     public void SetEnabled(bool isEnabled, Guid? actorUserId, DateTimeOffset updatedAtUtc)
     {
         IsEnabled = isEnabled;

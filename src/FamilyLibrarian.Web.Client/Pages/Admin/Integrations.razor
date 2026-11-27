@@ -7,6 +7,7 @@
    component's type name. *@
 @inject MetadataIntegrationsApiClient IntegrationsApi
 @inject ISnackbar Snackbar
+@inject IDialogService Dialogs
 
 <PageTitle>Metadata providers | Family Librarian</PageTitle>
 <SettingsDraftGuard IsDirty="@(HasUnsavedChanges)" />
@@ -57,20 +58,10 @@ else
 
                     <MudSpacer />
 
-                    @* Keyed on a generation counter, not just ProviderId: MudSwitch flips
-                       its own checked-state immediately on click, before the round trip
-                       resolves. When the server rejects the change (or, for Remove key,
-                       flips a value it wasn't watching), the value it's bound to can end
-                       up unchanged or unnoticed from its perspective, and it never syncs
-                       back. Forcing a fresh instance after every attempt — success or
-                       failure — is what actually guarantees it reflects the true state. *@
-                    <MudSwitch T="bool"
-                               @key="@($"{provider.ProviderId}:{SwitchGeneration(provider.ProviderId)}")"
-                               Value="provider.IsEnabled"
-                               ValueChanged="@(enabled => SetEnabledAsync(provider, enabled))"
-                               Color="Color.Primary"
-                               Disabled="@(provider.IsExternallyManaged || busyProviderId is not null)"
-                               Label="@(provider.IsEnabled ? "Enabled" : "Disabled")" />
+                    <SettingSwitch Value="provider.IsEnabled" AlignEnd="true"
+                                   Changing="@(change => SetEnabledAsync(provider, change))"
+                                   Disabled="@(provider.IsExternallyManaged || busyProviderId is not null)"
+                                   Label="@(provider.IsEnabled ? "Enabled" : "Disabled")" aria-label="@provider.DisplayName" />
                 </MudStack>
 
                 @if (provider.IsExternallyManaged)
@@ -180,6 +171,13 @@ else
                         }
                     </MudStack>
 
+                    @if (testResults.TryGetValue(provider.ProviderId, out var testResult))
+                    {
+                        <MudAlert Severity="@(testResult.Succeeded ? Severity.Success : Severity.Warning)" Dense="true" Class="mt-2" role="status">
+                            @testResult.Message
+                        </MudAlert>
+                    }
+
                     @if (needsSetup)
                     {
                         <MudText Typo="Typo.caption" Class="mt-2">
@@ -196,19 +194,14 @@ else
     private bool HasUnsavedChanges => credentialDrafts.Values.Any(value => !string.IsNullOrEmpty(value));
     private IReadOnlyList<ProviderStatusResponse>? providers;
     private readonly Dictionary<string, string?> credentialDrafts = new(StringComparer.OrdinalIgnoreCase);
-    // Bumped after every enable/credential attempt (see RunAsync), win or lose, so
-    // the @key on each provider's MudSwitch forces a fresh instance rather than
-    // risking stale optimistic checked-state from a prior click.
-    private readonly Dictionary<string, int> switchGenerations = new(StringComparer.OrdinalIgnoreCase);
     // Providers whose detail section is showing even though they're not
     // Enabled — set when flipping the switch on an unconfigured provider reveals
     // its key field instead of calling the API (see SetEnabledAsync), and
     // cleared again once the provider is actually switched off for real.
     private readonly HashSet<string> expandedSetup = new(StringComparer.OrdinalIgnoreCase);
     private string? busyProviderId;
+    private readonly Dictionary<string, (bool Succeeded, string? Message)> testResults = new(StringComparer.OrdinalIgnoreCase);
     private bool loadFailed;
-
-    private int SwitchGeneration(string providerId) => switchGenerations.GetValueOrDefault(providerId);
 
     private void Expand(string providerId) => expandedSetup.Add(providerId);
     private void Collapse(string providerId) => expandedSetup.Remove(providerId);
@@ -234,22 +227,26 @@ else
     private static bool NeedsSetup(ProviderStatusResponse provider) =>
         provider.RequiresCredential && !provider.IsExternallyManaged && !provider.HasStoredCredential;
 
-    private async Task SetEnabledAsync(ProviderStatusResponse provider, bool enabled)
+    private async Task SetEnabledAsync(ProviderStatusResponse provider, SettingSwitchChange change)
     {
-        if (enabled && NeedsSetup(provider))
+        if (change.Value && NeedsSetup(provider))
         {
-            // The server will refuse to enable a provider with no stored key, so
-            // there's nothing to gain from the round trip. Flipping the switch
-            // here instead reveals the key field — the switch doubles as the
-            // only "let me configure this" control there is. Bumping the
-            // generation forces MudSwitch to re-mount at its real (still off)
-            // value, undoing the optimistic flip it already rendered on click.
+            // The server would refuse without a key, so open the key field and say so.
             Expand(provider.ProviderId);
-            switchGenerations[provider.ProviderId] = SwitchGeneration(provider.ProviderId) + 1;
+            change.Refuse("Save an API key first. The key field is open below.");
             return;
         }
 
-        if (await RunAsync(provider, () => IntegrationsApi.SetEnabledAsync(provider.ProviderId, enabled)) && !enabled)
+        var (saved, error) = await RunAsync(provider, () => IntegrationsApi.SetEnabledAsync(provider.ProviderId, change.Value));
+        if (!saved)
+        {
+            Expand(provider.ProviderId);
+            change.Refuse(error);
+            return;
+        }
+
+        Snackbar.Saved($"{provider.DisplayName} {(change.Value ? "enabled" : "disabled")}.");
+        if (!change.Value)
         {
             // Once switched off, the detail section should actually collapse
             // rather than stay open because an earlier attempt to configure it
@@ -266,24 +263,39 @@ else
             return;
         }
 
-        var saved = await RunAsync(
+        var (saved, error) = await RunAsync(
             provider,
             () => IntegrationsApi.SetCredentialAsync(provider.ProviderId, credential));
 
-        if (saved)
+        if (!saved)
+        {
+            Snackbar.Failed(error);
+        }
+        else
         {
             // Drop the plaintext from the component as soon as the host has it,
             // so it does not linger in the rendered field or component state.
             credentialDrafts[provider.ProviderId] = null;
-            Snackbar.Add($"Saved the {provider.DisplayName} API key.", Severity.Success);
+            Snackbar.Saved($"Saved the {provider.DisplayName} API key.");
         }
     }
 
     private async Task ClearCredentialAsync(ProviderStatusResponse provider)
     {
-        if (await RunAsync(provider, () => IntegrationsApi.ClearCredentialAsync(provider.ProviderId)))
+        if (!await Dialogs.ConfirmRemovalAsync($"Remove the {provider.DisplayName} API key?",
+                "The stored key is deleted. A provider that needs a key is switched off."))
         {
-            Snackbar.Add($"Removed the {provider.DisplayName} API key.", Severity.Success);
+            return;
+        }
+
+        var (saved, error) = await RunAsync(provider, () => IntegrationsApi.ClearCredentialAsync(provider.ProviderId));
+        if (saved)
+        {
+            Snackbar.Saved($"Removed the {provider.DisplayName} API key.");
+        }
+        else
+        {
+            Snackbar.Failed(error);
         }
     }
 
@@ -300,12 +312,12 @@ else
                 credentialDrafts.GetValueOrDefault(provider.ProviderId));
             if (result is null)
             {
-                Snackbar.Add("The connection test could not be run.", Severity.Error);
+                Snackbar.Failed("The connection test could not be run.");
                 return;
             }
 
             Replace(result.Provider);
-            Snackbar.Add(result.Message, result.Succeeded ? Severity.Success : Severity.Warning);
+            testResults[provider.ProviderId] = (result.Succeeded, result.Message);
         }
         finally
         {
@@ -313,7 +325,7 @@ else
         }
     }
 
-    private async Task<bool> RunAsync(
+    private async Task<(bool Saved, string? Error)> RunAsync(
         ProviderStatusResponse provider,
         Func<Task<MetadataIntegrationsResult>> action)
     {
@@ -323,8 +335,7 @@ else
             var result = await action();
             if (!result.Succeeded)
             {
-                Snackbar.Add(result.Error ?? "That change could not be saved.", Severity.Error);
-                return false;
+                return (false, result.Error);
             }
 
             if (result.Provider is not null)
@@ -332,12 +343,11 @@ else
                 Replace(result.Provider);
             }
 
-            return true;
+            return (true, null);
         }
         finally
         {
             busyProviderId = null;
-            switchGenerations[provider.ProviderId] = SwitchGeneration(provider.ProviderId) + 1;
         }
     }
 

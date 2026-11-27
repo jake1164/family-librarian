@@ -65,13 +65,33 @@ public sealed class ModelGatewayForm
         return false;
     }
 
-    public SaveModelGatewaySettingsRequest ToRequest() => new(
+    /// <summary>
+    /// Takes the host's state of the switches, which save on their own, without touching anything else typed on the page.
+    /// A later "Save settings" therefore sends the switches as they are saved.
+    /// </summary>
+    public void AcceptSwitches(ModelGatewaySettingsResponse value)
+    {
+        ArgumentNullException.ThrowIfNull(value);
+        var host = new ModelGatewayForm();
+        host.Load(value);
+        AllowCloud = host.AllowCloud;
+        AllowCloudExcerpts = host.AllowCloudExcerpts;
+        AllowModelHoldRelease = host.AllowModelHoldRelease;
+        foreach (var role in Roles)
+        {
+            role.IsEnabled = host.Roles.FirstOrDefault(saved => saved.Role == role.Role)?.IsEnabled ?? false;
+        }
+
+        savedSnapshot = host.savedSnapshot;
+    }
+
+    public SaveModelGatewaySettingsRequest ToRequest(string? apiKey = null) => new(
         Endpoint ?? string.Empty, AllowCloud,
         [.. Roles.Select(role => new ModelRoleDto(role.Role, role.IsEnabled, role.Placement, role.LocalModel, role.CloudModel, role.Reasoning))],
         new ModelLimitsDto(
             Limits.TimeoutSeconds, Limits.MaxInputCharacters, Limits.MaxOutputTokens, Limits.MaxConcurrentCalls,
             Limits.Interactive.ToDto(), Limits.Background.ToDto(), Limits.CloudDailyRequests, Limits.CloudDailyTokens),
-        AllowCloud && AllowCloudExcerpts, AllowModelHoldRelease);
+        AllowCloud && AllowCloudExcerpts, AllowModelHoldRelease, string.IsNullOrWhiteSpace(apiKey) ? null : apiKey);
 
     private string Snapshot() => JsonSerializer.Serialize(ToRequest());
 

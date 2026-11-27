@@ -20,7 +20,8 @@ public sealed record SetSmtpSettingsRequest(
     string SecurityMode,
     string? Username,
     string? FromAddress,
-    string? FromName);
+    string? FromName,
+    string? Password = null);
 
 public sealed record SetSmtpEnabledRequest(bool Enabled);
 

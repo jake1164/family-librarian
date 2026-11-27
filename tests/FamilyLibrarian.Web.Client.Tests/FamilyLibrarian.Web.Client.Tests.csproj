@@ -8,6 +8,7 @@
 
   <ItemGroup>
     <Using Include="Microsoft.VisualStudio.TestTools.UnitTesting" />
+    <PackageReference Include="bunit" />
     <ProjectReference Include="../../src/FamilyLibrarian.Web.Client/FamilyLibrarian.Web.Client.csproj" />
     <ProjectReference Include="../../src/FamilyLibrarian.Domain/FamilyLibrarian.Domain.csproj" />
   </ItemGroup>

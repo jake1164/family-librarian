@@ -12,44 +12,118 @@ public sealed class SmtpSettingsServiceTests
     private static readonly DateTimeOffset Now = new(2026, 8, 30, 12, 0, 0, TimeSpan.Zero);
 
     [TestMethod]
-    public async Task SmtpCannotBeEnabledUntilTheSavedConfigurationPassesATest()
+    public async Task TurningOnWithNoRecordedTestSendsOneToTheAdministratorAndEnables()
     {
         var context = new TestContext();
         await context.ConfigureAsync();
 
-        var beforeTest = await context.Service.SetEnabledAsync(true, CancellationToken.None);
-        Assert.IsFalse(beforeTest.Succeeded);
-        StringAssert.Contains(beforeTest.Error, "successful test email");
+        var enabled = await context.Service.SetEnabledAsync(true, "admin@example.test", CancellationToken.None);
 
-        var test = await context.Service.SendTestAsync(
-            "admin@example.test", "smtp.example.test", 587, SmtpSecurityMode.StartTls, "mailer", null,
-            "library@example.test", "Family Librarian", CancellationToken.None);
-        Assert.IsTrue(test.Succeeded);
-        Assert.IsTrue(test.Outcome!.Succeeded);
-        Assert.AreEqual("admin@example.test", context.Sender.LastRecipientAddress);
-
-        var enabled = await context.Service.SetEnabledAsync(true, CancellationToken.None);
         Assert.IsTrue(enabled.Succeeded);
         Assert.IsTrue(enabled.Status!.IsEnabled);
+        Assert.AreEqual(1, context.Sender.Sends);
+        Assert.AreEqual("admin@example.test", context.Sender.LastRecipientAddress);
+        Assert.AreEqual(true, enabled.Status.LastTestSucceeded);
     }
 
     [TestMethod]
-    public async Task ChangingTheSavedSettingsInvalidatesTheLastSuccessfulTest()
+    public async Task EmailStaysOffWhenTheTurnOnTestFails()
     {
         var context = new TestContext();
         await context.ConfigureAsync();
-        await context.Service.SendTestAsync(
-            "admin@example.test", "smtp.example.test", 587, SmtpSecurityMode.StartTls, "mailer", null,
-            "library@example.test", "Family Librarian", CancellationToken.None);
-        await context.Service.SetEnabledAsync(true, CancellationToken.None);
+        context.Sender.NextOutcome = new ConnectionTestOutcome(false, "The server refused the password.");
+
+        var enabled = await context.Service.SetEnabledAsync(true, "admin@example.test", CancellationToken.None);
+
+        Assert.IsFalse(enabled.Succeeded);
+        StringAssert.Contains(enabled.Error, "Email stayed off");
+        StringAssert.Contains(enabled.Error, "The server refused the password.");
+        Assert.IsFalse(context.Store.Current!.IsEnabled);
+        Assert.AreEqual(false, context.Store.Current.LastTestSucceeded);
+    }
+
+    [TestMethod]
+    public async Task TurningOnWithoutAnAddressToTestIsRefusedWithoutSending()
+    {
+        var context = new TestContext();
+        await context.ConfigureAsync();
+
+        var enabled = await context.Service.SetEnabledAsync(true, null, CancellationToken.None);
+
+        Assert.IsFalse(enabled.Succeeded);
+        StringAssert.Contains(enabled.Error, "Send a test email below");
+        Assert.AreEqual(0, context.Sender.Sends);
+    }
+
+    [TestMethod]
+    public async Task ARecordedPassIsNotRepeatedAndSavingNewSettingsMeansTestingAgain()
+    {
+        var context = new TestContext();
+        await context.ConfigureAsync();
+        await context.Service.SetEnabledAsync(true, "admin@example.test", CancellationToken.None);
+        await context.Service.SetEnabledAsync(false, null, CancellationToken.None);
+
+        await context.Service.SetEnabledAsync(true, "admin@example.test", CancellationToken.None);
+        Assert.AreEqual(1, context.Sender.Sends, "The saved settings had already passed.");
 
         await context.Service.SetSettingsAsync(
             "smtp.other.example.test", 587, SmtpSecurityMode.StartTls, "mailer",
+            "library@example.test", "Family Librarian", null, CancellationToken.None);
+        await context.Service.SetEnabledAsync(false, null, CancellationToken.None);
+        await context.Service.SetEnabledAsync(true, "admin@example.test", CancellationToken.None);
+
+        Assert.AreEqual(2, context.Sender.Sends);
+    }
+
+    [TestMethod]
+    [DataRow("smtp.other.example.test", null)]
+    [DataRow("smtp.example.test", "a-different-password")]
+    public async Task TestingUnsavedValuesIsNotRecordedAgainstTheSavedSettings(string host, string? password)
+    {
+        var context = new TestContext();
+        await context.ConfigureAsync();
+
+        var test = await context.Service.SendTestAsync(
+            "admin@example.test", host, 587, SmtpSecurityMode.StartTls, "mailer", password,
             "library@example.test", "Family Librarian", CancellationToken.None);
 
-        var enabled = await context.Service.SetEnabledAsync(true, CancellationToken.None);
+        Assert.IsTrue(test.Outcome!.Succeeded);
+        StringAssert.Contains(test.Outcome.Message, "not saved yet");
+        Assert.IsNull(context.Store.Current!.LastTestSucceeded);
+
+        // So turning email on still has to try the settings that are actually saved.
+        context.Sender.NextOutcome = new ConnectionTestOutcome(false, "The saved settings do not work.");
+        var enabled = await context.Service.SetEnabledAsync(true, "admin@example.test", CancellationToken.None);
         Assert.IsFalse(enabled.Succeeded);
-        StringAssert.Contains(enabled.Error, "successful test email");
+    }
+
+    [TestMethod]
+    public async Task TestingTheSavedValuesIsRecorded()
+    {
+        var context = new TestContext();
+        await context.ConfigureAsync();
+
+        var test = await context.Service.SendTestAsync(
+            "admin@example.test", "smtp.example.test", 587, SmtpSecurityMode.StartTls, "mailer", "super-secret",
+            "library@example.test", "Family Librarian", CancellationToken.None);
+
+        Assert.AreEqual(true, test.Status!.LastTestSucceeded);
+    }
+
+    [TestMethod]
+    public async Task SavingSettingsStoresATypedPasswordAndABlankOneKeepsIt()
+    {
+        var context = new TestContext();
+
+        await context.Service.SetSettingsAsync(
+            "smtp.example.test", 587, SmtpSecurityMode.StartTls, "mailer",
+            "library@example.test", null, " typed-password ", CancellationToken.None);
+        Assert.AreEqual("typed-password", context.Store.Current!.ProtectedPassword);
+
+        await context.Service.SetSettingsAsync(
+            "smtp.example.test", 587, SmtpSecurityMode.StartTls, "mailer",
+            "library@example.test", null, "  ", CancellationToken.None);
+        Assert.AreEqual("typed-password", context.Store.Current.ProtectedPassword);
     }
 
     [TestMethod]
@@ -58,7 +132,7 @@ public sealed class SmtpSettingsServiceTests
         var context = new TestContext();
         await context.Service.SetSettingsAsync(
             "smtp.example.test", 587, SmtpSecurityMode.StartTls, "mailer",
-            "library@example.test", null, CancellationToken.None);
+            "library@example.test", null, null, CancellationToken.None);
 
         var test = await context.Service.SendTestAsync(
             "admin@example.test", "smtp.example.test", 587, SmtpSecurityMode.StartTls, "mailer", null,
@@ -117,7 +191,7 @@ public sealed class SmtpSettingsServiceTests
         {
             await Service.SetSettingsAsync(
                 "smtp.example.test", 587, SmtpSecurityMode.StartTls, "mailer",
-                "library@example.test", "Family Librarian", CancellationToken.None);
+                "library@example.test", "Family Librarian", null, CancellationToken.None);
             await Service.SetPasswordAsync("super-secret", CancellationToken.None);
         }
     }
@@ -125,6 +199,8 @@ public sealed class SmtpSettingsServiceTests
     private sealed class FakeSmtpSettingsStore : ISmtpSettingsStore
     {
         private SmtpSettings? settings;
+
+        public SmtpSettings? Current => settings;
 
         public Task<SmtpSettings?> FindAsync(CancellationToken cancellationToken) => Task.FromResult(settings);
 
@@ -138,11 +214,16 @@ public sealed class SmtpSettingsServiceTests
     {
         public string? LastRecipientAddress { get; private set; }
 
+        public int Sends { get; private set; }
+
+        public ConnectionTestOutcome NextOutcome { get; set; } = new(true, "Accepted.");
+
         public Task<ConnectionTestOutcome> SendTestAsync(
             SmtpSettings settings, string recipientAddress, CancellationToken cancellationToken)
         {
             LastRecipientAddress = recipientAddress;
-            return Task.FromResult(new ConnectionTestOutcome(true, "Accepted."));
+            Sends++;
+            return Task.FromResult(NextOutcome);
         }
     }
 

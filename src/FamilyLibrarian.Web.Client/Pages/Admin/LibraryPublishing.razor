@@ -228,13 +228,13 @@ else
             var succeeded = await PublishingApi.RecheckLibraryImportAsync(id);
             if (!succeeded)
             {
-                Snackbar.Add("That recheck could not be completed.", Severity.Error);
+                Snackbar.Failed("That recheck could not be completed.");
                 return;
             }
         }
         catch (HttpRequestException)
         {
-            Snackbar.Add("That recheck could not be completed. Please try again.", Severity.Error);
+            Snackbar.Failed("That recheck could not be completed. Please try again.");
             return;
         }
         finally
@@ -253,13 +253,13 @@ else
             var succeeded = await PublishingApi.RecheckDeliveryAsync(id);
             if (!succeeded)
             {
-                Snackbar.Add("That recheck could not be completed.", Severity.Error);
+                Snackbar.Failed("That recheck could not be completed.");
                 return;
             }
         }
         catch (HttpRequestException)
         {
-            Snackbar.Add("That recheck could not be completed. Please try again.", Severity.Error);
+            Snackbar.Failed("That recheck could not be completed. Please try again.");
             return;
         }
         finally
@@ -278,13 +278,13 @@ else
             var succeeded = await PublishingApi.RetryDeliveryAttemptAsync(id, confirmPossibleDuplicate: confirmPossibleDuplicate);
             if (!succeeded)
             {
-                Snackbar.Add("That retry could not be sent.", Severity.Error);
+                Snackbar.Failed("That retry could not be sent.");
                 return;
             }
         }
         catch (HttpRequestException)
         {
-            Snackbar.Add("That retry could not be sent. Please try again.", Severity.Error);
+            Snackbar.Failed("That retry could not be sent. Please try again.");
             return;
         }
         finally

@@ -180,7 +180,7 @@ public sealed class StorageInsightEndpointTests
     private static async Task<string> RenderPageAsync(Func<HttpResponseMessage> respond)
     {
         var http = new HttpClient(new StubHandler(respond)) { BaseAddress = new Uri("http://localhost/") };
-        await using var services = new ServiceCollection().AddLogging().AddMudServices().AddSingleton<IJSRuntime, NoJs>()
+        await using var services = new ServiceCollection().AddLogging().AddMudServices().AddSingleton<IJSRuntime, NoJs>().AddSingleton<NavigationManager, StaticNavigationManager>()
             .AddSingleton(new StorageApiClient(http, new AntiforgeryTokenProvider(http))).AddSingleton(new AntiforgeryTokenProvider(http)).BuildServiceProvider();
         await using var renderer = new HtmlRenderer(services, NullLoggerFactory.Instance);
         return await renderer.Dispatcher.InvokeAsync(async () =>

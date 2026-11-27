@@ -29,6 +29,8 @@ internal static class ModelGatewayEndpoints
         group.MapPost("/models/probe", ProbeModelsAsync);
         group.MapPut("/", SaveAsync);
         group.MapPut("/enabled", SetEnabledAsync);
+        group.MapPut("/roles/{role}/enabled", SetRoleEnabledAsync);
+        group.MapPut("/permissions", SetPermissionsAsync);
         group.MapPut("/api-key", SetApiKeyAsync);
         group.MapDelete("/api-key", ClearApiKeyAsync);
 
@@ -37,6 +39,7 @@ internal static class ModelGatewayEndpoints
         var capture = group.MapGroup("/capture");
         capture.MapGet("/", GetCaptureAsync);
         capture.MapPut("/", SaveCaptureAsync);
+        capture.MapPut("/switches", SetCaptureSwitchesAsync);
         capture.MapPost("/preview", PreviewCaptureAsync);
         capture.MapGet("/insight", CaptureInsightAsync);
         capture.MapPost("/purge", PurgeCaptureAsync);
@@ -159,7 +162,7 @@ internal static class ModelGatewayEndpoints
         }
 
         var limits = request.Limits is null ? null : ToLimits(request.Limits);
-        return ToResult(await service.SaveAsync(new SaveModelGatewaySettings(request.EndpointUrl, request.AllowCloud, roles, limits, request.AllowCloudExcerpts, request.AllowModelHoldRelease), cancellationToken));
+        return ToResult(await service.SaveAsync(new SaveModelGatewaySettings(request.EndpointUrl, request.AllowCloud, roles, limits, request.AllowCloudExcerpts, request.AllowModelHoldRelease, request.ApiKey), cancellationToken));
     }
 
     private static async Task<IResult> UsageAsync(
@@ -307,6 +310,42 @@ internal static class ModelGatewayEndpoints
     private static async Task<IResult> SetEnabledAsync(
         SetModelGatewayEnabledRequest request, ModelGatewaySettingsService service, CancellationToken cancellationToken) =>
         ToResult(await service.SetEnabledAsync(request.Enabled, cancellationToken));
+
+    private static async Task<IResult> SetRoleEnabledAsync(
+        string role, SetModelRoleEnabledRequest request, ModelGatewaySettingsService service, CancellationToken cancellationToken)
+    {
+        if (!Enum.TryParse<ModelRole>(role, ignoreCase: false, out var parsed) || !Enum.IsDefined(parsed) || parsed.ToString() != role)
+        {
+            return Results.ValidationProblem(new Dictionary<string, string[]> { ["role"] = ["Choose a known AI role."] });
+        }
+
+        return ToResult(await service.SetRoleEnabledAsync(parsed, request.Enabled, cancellationToken));
+    }
+
+    private static async Task<IResult> SetPermissionsAsync(
+        SetModelGatewayPermissionsRequest request, ModelGatewaySettingsService service, CancellationToken cancellationToken)
+    {
+        if (request is { AllowCloud: null, AllowCloudExcerpts: null, AllowModelHoldRelease: null })
+        {
+            return Results.ValidationProblem(new Dictionary<string, string[]> { ["permissions"] = ["Send at least one permission to change."] });
+        }
+
+        return ToResult(await service.SetPermissionsAsync(
+            request.AllowCloud, request.AllowCloudExcerpts, request.AllowModelHoldRelease, cancellationToken));
+    }
+
+    private static async Task<IResult> SetCaptureSwitchesAsync(
+        SetDecisionCaptureSwitchesRequest request, DecisionCaptureService service, CancellationToken cancellationToken)
+    {
+        if (request is { DecisionCaptureEnabled: null, ChatCaptureEnabled: null })
+        {
+            return CaptureProblem("Send at least one switch to change.");
+        }
+
+        return CaptureResult(
+            await service.SetSwitchesAsync(request.DecisionCaptureEnabled, request.ChatCaptureEnabled, cancellationToken),
+            ToCaptureResponse);
+    }
 
     private static async Task<IResult> SetApiKeyAsync(
         SetModelGatewayApiKeyRequest request, ModelGatewaySettingsService service, CancellationToken cancellationToken) =>

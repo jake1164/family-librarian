@@ -131,6 +131,35 @@ public sealed class ModelGatewayFormTests
     }
 
     [TestMethod]
+    public void ASavedSwitchIsTakenWithoutLosingOrAcceptingTypedEdits()
+    {
+        var form = new ModelGatewayForm();
+        var before = Settings(isEnabled: true);
+        form.Load(before);
+        form.Limits.TimeoutSeconds = 60;
+
+        form.AcceptSwitches(before with { AllowModelHoldRelease = true });
+
+        Assert.IsTrue(form.AllowModelHoldRelease);
+        Assert.AreEqual(60, form.Limits.TimeoutSeconds);
+        Assert.IsTrue(form.HasUnsavedChanges, "The typed limit is still unsaved.");
+        Assert.IsTrue(form.ToRequest().AllowModelHoldRelease!.Value, "Save settings sends the switch as it is saved.");
+
+        form.Limits.TimeoutSeconds = before.Limits.TimeoutSeconds;
+        Assert.IsFalse(form.HasUnsavedChanges, "A saved switch is not an unsaved edit.");
+    }
+
+    [TestMethod]
+    public void ATypedApiKeyTravelsWithTheSaveRequestAndABlankOneDoesNot()
+    {
+        var form = new ModelGatewayForm();
+        form.Load(Settings(isEnabled: true));
+
+        Assert.AreEqual("typed-key", form.ToRequest("typed-key").ApiKey);
+        Assert.IsNull(form.ToRequest("  ").ApiKey);
+    }
+
+    [TestMethod]
     public void CloudExcerptsAreNeverRequestedWithoutCloudUse()
     {
         var form = new ModelGatewayForm();

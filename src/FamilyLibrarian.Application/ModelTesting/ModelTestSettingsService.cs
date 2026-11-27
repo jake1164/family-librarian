@@ -112,6 +112,22 @@ public sealed class ModelTestSettingsService(
         return ModelTestSettingsResult.Success(ToView(settings));
     }
 
+    /// <summary>Allows or forbids testing a cloud model, on its own.</summary>
+    public async Task<ModelTestSettingsResult> SetAllowCloudAsync(bool allow, CancellationToken cancellationToken)
+    {
+        if (!IsAdministrator())
+        {
+            return ModelTestSettingsResult.NotAllowed();
+        }
+
+        var settings = await store.GetOrCreateAsync(cancellationToken);
+        settings.SetAllowCloud(allow, currentUser.UserId, clock.UtcNow);
+        await store.SaveChangesAsync(cancellationToken);
+        await audit.WriteAsync(
+            AuditActions.ModelTestSettingsChanged, AuditSubjectTypes.ModelTest, SubjectId, new { AllowCloud = allow }, cancellationToken);
+        return ModelTestSettingsResult.Success(ToView(settings));
+    }
+
     internal static ModelTestSettingsView ToView(ModelTestSettings? settings) => settings is null
         ? new ModelTestSettingsView(false, null, null, null, false, ModelTestSettings.DefaultTimeoutSeconds, ModelTestSettings.DefaultMaxOutputTokens)
         : new ModelTestSettingsView(

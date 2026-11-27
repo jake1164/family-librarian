@@ -11,6 +11,7 @@
 @inject AdminRequestsApiClient AdminRequests
 @inject GutenbergCatalogApiClient GutenbergCatalog
 @inject ISnackbar Snackbar
+@inject IDialogService Dialogs
 
 <PageTitle>Sources | Family Librarian</PageTitle>
 <SettingsDraftGuard IsDirty="@(HasUnsavedChanges)" />
@@ -41,10 +42,10 @@
             <MudPaper Outlined="true" Class="pa-3 mb-2">
                 <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="2">
                     <MudText Typo="Typo.subtitle1" Class="flex-grow-1">@source.DisplayName</MudText>
-                    <MudSwitch T="bool" @key="@($"builtin-source:{source.ProviderId}:{BuiltInSourceGeneration(source.ProviderId)}")"
-                               Value="source.IsEnabled" ValueChanged="@(enabled => SetBuiltInSourceEnabledAsync(source, enabled))"
-                               Color="Color.Primary" Disabled="@(builtInSourcesBusy || source.IsExternallyManaged)"
-                               Label="@(source.IsEnabled ? "Enabled" : "Disabled")" />
+                    <SettingSwitch Value="source.IsEnabled" AlignEnd="true"
+                                   Changing="@(change => SetBuiltInSourceEnabledAsync(source, change))"
+                                   Disabled="@(builtInSourcesBusy || source.IsExternallyManaged)"
+                                   Label="@(source.IsEnabled ? "Enabled" : "Disabled")" aria-label="@source.DisplayName" />
                 </MudStack>
                 <MudText Typo="Typo.body2" Class="mt-2">
                     @if (source.ProviderId == "gutendex")
@@ -264,9 +265,9 @@
                 <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="2">
                     <MudText Typo="Typo.h6" Class="flex-grow-1">@provider.DisplayName</MudText>
                     <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined">@provider.ProviderId</MudChip>
-                    <MudSwitch T="bool" Value="provider.IsEnabled" Disabled="@providersBusy"
-                               ValueChanged="@(enabled => SetProviderEnabledAsync(provider.Id, enabled))"
-                               Color="Color.Primary" Label="@(provider.IsEnabled ? "Enabled" : "Disabled")" />
+                    <SettingSwitch Value="provider.IsEnabled" AlignEnd="true" Disabled="@providersBusy"
+                                   Changing="@(change => SetProviderEnabledAsync(provider.Id, change))"
+                                   Label="@(provider.IsEnabled ? "Enabled" : "Disabled")" aria-label="@provider.DisplayName" />
                 </MudStack>
 
                 @if (configurationIssue is not null)
@@ -297,8 +298,7 @@
                     provider's reachability on its own fixed interval regardless of this setting, including when
                     set to Manual.
                 </MudText>
-                <MudSelect T="string" Label="Recheck schedule" Value="provider.RecheckSchedule"
-                           ValueChanged="@(value => SetProviderRecheckScheduleAsync(provider.Id, value))"
+                <MudSelect T="string" Label="Recheck schedule" @bind-Value="GetDraft(provider).Schedule"
                            Disabled="@(providersBusy || !provider.IsEnabled)" Class="mb-2">
                     <MudSelectItem T="string" Value="@("Manual")">Manual — do not retry automatically</MudSelectItem>
                     <MudSelectItem T="string" Value="@("Daily")">Daily</MudSelectItem>
@@ -309,18 +309,17 @@
                     <MudText Typo="Typo.caption">Enable this source to allow its selected recheck schedule to run.</MudText>
                 }
 
-                <MudNumericField T="int" Value="provider.AutomaticAttemptLimit" Disabled="@providersBusy"
-                                 Min="1" Max="10" Step="1" Immediate="false"
-                                 Label="Candidates to try before asking a librarian"
-                                 ValueChanged="@(limit => SetProviderAutomaticAttemptLimitAsync(provider.Id, limit))" />
-                <MudSelect T="string" Label="Download confidence" @bind-Value="GetConfidenceDraft(provider).Level"
+                <MudNumericField T="int" @bind-Value="GetDraft(provider).AttemptLimit" Disabled="@providersBusy"
+                                 Min="1" Max="10" Step="1" Immediate="true"
+                                 Label="Candidates to try before asking a librarian" />
+                <MudSelect T="string" Label="Download confidence" @bind-Value="GetDraft(provider).Level"
                            Disabled="providersBusy" Class="mt-2 mb-2">
                     @foreach (var level in ConfidenceLevels)
                     {
                         <MudSelectItem T="string" Value="@level">@ConfidenceLabel(level) — @ConfidenceDescription(level)</MudSelectItem>
                     }
                 </MudSelect>
-                <MudSelect T="string" Label="Ebook confidence override" @bind-Value="GetConfidenceDraft(provider).Ebook"
+                <MudSelect T="string" Label="Ebook confidence override" @bind-Value="GetDraft(provider).Ebook"
                            Disabled="providersBusy" Class="mb-2">
                     <MudSelectItem T="string" Value="@("Inherit")">Use source confidence</MudSelectItem>
                     @foreach (var level in ConfidenceLevels)
@@ -328,7 +327,7 @@
                         <MudSelectItem T="string" Value="@level">@ConfidenceLabel(level) — @ConfidenceDescription(level)</MudSelectItem>
                     }
                 </MudSelect>
-                <MudSelect T="string" Label="Audiobook confidence override" @bind-Value="GetConfidenceDraft(provider).Audiobook"
+                <MudSelect T="string" Label="Audiobook confidence override" @bind-Value="GetDraft(provider).Audiobook"
                            Disabled="providersBusy" Class="mb-2">
                     <MudSelectItem T="string" Value="@("Inherit")">Use source confidence</MudSelectItem>
                     @foreach (var level in ConfidenceLevels)
@@ -336,9 +335,6 @@
                         <MudSelectItem T="string" Value="@level">@ConfidenceLabel(level) — @ConfidenceDescription(level)</MudSelectItem>
                     }
                 </MudSelect>
-                <MudButton OnClick="@(() => SaveConfidenceAsync(provider))" Disabled="providersBusy" Variant="Variant.Outlined">
-                    Save confidence
-                </MudButton>
                 <MudText Typo="Typo.body2" Class="mb-2">
                     When an automatically downloaded copy fails its post-download checks — malware, a malformed
                     file, or content that turns out not to be the requested book — FL rules that copy out and tries
@@ -352,14 +348,9 @@
                     managed in the provider's own admin page, linked below when the provider offers one.
                 </MudText>
 
-                <MudStack Row="true" Spacing="2" Class="mt-2">
-                    <MudTextField Immediate="true" T="string" Label="Base URL" Value="@baseUrlDrafts.GetValueOrDefault(provider.Id, provider.BaseUrl)" Disabled="@providersBusy" Class="flex-grow-1"
-                                  ValueChanged="@(value => baseUrlDrafts[provider.Id] = value)" />
-                    <MudButton Variant="Variant.Outlined" Disabled="@providersBusy"
-                               OnClick="@(() => SaveDetailsAsync(provider))">
-                        Save URL
-                    </MudButton>
-                </MudStack>
+                <MudTextField Immediate="true" T="string" Label="Base URL" Class="mt-2" Disabled="@providersBusy"
+                              Value="@baseUrlDrafts.GetValueOrDefault(provider.Id, provider.BaseUrl)"
+                              ValueChanged="@(value => baseUrlDrafts[provider.Id] = value)" />
 
                 <MudDivider Class="my-2" />
                 <MudText Typo="Typo.subtitle2">API key</MudText>
@@ -372,16 +363,23 @@
                     <MudTextField Immediate="true" T="string" Value="@GetApiKeyDraft(provider.Id)"
                                   ValueChanged="@(value => apiKeyDrafts[provider.Id] = value)" Label="Replace API key"
                                   InputType="InputType.Password" Disabled="@providersBusy" Class="flex-grow-1" />
-                    <MudButton Variant="Variant.Filled" Disabled="@(providersBusy || string.IsNullOrWhiteSpace(GetApiKeyDraft(provider.Id)))"
-                               OnClick="@(() => SaveApiKeyAsync(provider.Id))">
-                        Save key
-                    </MudButton>
                     @if (provider.HasApiKey)
                     {
                         <MudButton Variant="Variant.Outlined" Color="Color.Error" Disabled="@providersBusy"
-                                   OnClick="@(() => ClearApiKeyAsync(provider.Id))">
+                                   OnClick="@(() => ClearApiKeyAsync(provider))">
                             Remove
                         </MudButton>
+                    }
+                </MudStack>
+
+                <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="3" Class="mt-3">
+                    <MudButton Variant="Variant.Filled" Color="Color.Primary" Disabled="@providersBusy"
+                               OnClick="@(() => SaveProviderAsync(provider))">
+                        Save settings
+                    </MudButton>
+                    @if (IsCardDirty(provider))
+                    {
+                        <MudText Typo="Typo.caption" role="status">You have unsaved changes to this source.</MudText>
                     }
                 </MudStack>
 
@@ -391,10 +389,14 @@
                         Test connection
                     </MudButton>
                     <MudButton Variant="Variant.Outlined" Color="Color.Error" Disabled="@providersBusy"
-                               OnClick="@(() => RemoveProviderAsync(provider.Id))">
+                               OnClick="@(() => RemoveProviderAsync(provider))">
                         Remove provider
                     </MudButton>
                 </MudStack>
+                @if (IsCardDirty(provider))
+                {
+                    <MudText Typo="Typo.caption">Test connection checks the saved settings. Save your changes first.</MudText>
+                }
 
                 @if (provider.LastTestedAtUtc is not null)
                 {
@@ -492,30 +494,49 @@
 </MudPaper>
 
 @code {
-    private bool HasUnsavedChanges => apiKeyDrafts.Values.Any(value => !string.IsNullOrEmpty(value)) ||
-        !string.IsNullOrEmpty(newProviderId) ||
+    private bool HasUnsavedChanges => !string.IsNullOrEmpty(newProviderId) ||
         !string.IsNullOrEmpty(newProviderDisplayName) || !string.IsNullOrEmpty(newProviderBaseUrl) ||
-        providers?.Any(provider =>
-            (baseUrlDrafts.TryGetValue(provider.Id, out var url) && url != provider.BaseUrl) ||
-            (confidenceDrafts.TryGetValue(provider.Id, out var confidence) &&
-                (confidence.Level != provider.ConfidenceLevel || confidence.Ebook != (provider.EbookConfidenceLevel ?? "Inherit") ||
-                    confidence.Audiobook != (provider.AudiobookConfidenceLevel ?? "Inherit")))) == true;
+        providers?.Any(IsCardDirty) == true;
+
+    /// <summary>Whether anything on one source's card differs from what is saved.</summary>
+    private bool IsCardDirty(ExternalProviderResponse provider) =>
+        !string.IsNullOrEmpty(GetApiKeyDraft(provider.Id)) ||
+        (baseUrlDrafts.TryGetValue(provider.Id, out var url) && url != provider.BaseUrl) ||
+        // Compared with what the draft was started from, so a change made elsewhere is not mistaken for an edit here.
+        (providerDrafts.TryGetValue(provider.Id, out var draft) && !draft.Matches(draftSources[provider.Id]));
 
     private IReadOnlyList<ExternalProviderResponse>? providers;
     private static readonly string[] ConfidenceLevels = ["Strict", "Standard", "Liberal", "SuggestOnly"];
-    private readonly Dictionary<Guid, ConfidenceDraft> confidenceDrafts = [];
+    private readonly Dictionary<Guid, ProviderDraft> providerDrafts = [];
 
-    private sealed class ConfidenceDraft(ExternalProviderResponse provider)
+    private sealed class ProviderDraft(ExternalProviderResponse provider)
     {
         public string Level { get; set; } = provider.ConfidenceLevel;
         public string Ebook { get; set; } = provider.EbookConfidenceLevel ?? "Inherit";
         public string Audiobook { get; set; } = provider.AudiobookConfidenceLevel ?? "Inherit";
+        public string Schedule { get; set; } = provider.RecheckSchedule;
+        public int AttemptLimit { get; set; } = provider.AutomaticAttemptLimit;
+
+        public bool ConfidenceMatches(ExternalProviderResponse saved) =>
+            Level == saved.ConfidenceLevel && Ebook == (saved.EbookConfidenceLevel ?? "Inherit") &&
+            Audiobook == (saved.AudiobookConfidenceLevel ?? "Inherit");
+
+        public bool Matches(ExternalProviderResponse saved) =>
+            ConfidenceMatches(saved) && Schedule == saved.RecheckSchedule && AttemptLimit == saved.AutomaticAttemptLimit;
     }
 
-    private ConfidenceDraft GetConfidenceDraft(ExternalProviderResponse provider)
+    // A card nobody has edited follows the host, so a change made elsewhere shows up on the next live update.
+    private readonly Dictionary<Guid, ExternalProviderResponse> draftSources = [];
+
+    private ProviderDraft GetDraft(ExternalProviderResponse provider)
     {
-        if (!confidenceDrafts.TryGetValue(provider.Id, out var draft))
-            confidenceDrafts[provider.Id] = draft = new(provider);
+        if (!providerDrafts.TryGetValue(provider.Id, out var draft) ||
+            (!ReferenceEquals(draftSources[provider.Id], provider) && draft.Matches(draftSources[provider.Id])))
+        {
+            providerDrafts[provider.Id] = draft = new(provider);
+        }
+
+        draftSources[provider.Id] = provider;
         return draft;
     }
 
@@ -530,25 +551,68 @@
         _ => string.Empty
     };
 
-    private async Task SaveConfidenceAsync(ExternalProviderResponse provider)
+    /// <summary>
+    /// Saves everything changed on one source's card. Each part has its own host route, so they are saved in turn;
+    /// the first refusal stops there and leaves the rest of the typed values on the card.
+    /// </summary>
+    private async Task SaveProviderAsync(ExternalProviderResponse provider)
     {
+        var draft = GetDraft(provider);
+        var baseUrl = baseUrlDrafts.GetValueOrDefault(provider.Id, provider.BaseUrl);
+        var key = GetApiKeyDraft(provider.Id);
+        var steps = new List<Func<Task<ExternalProviderResult>>>();
+        if (baseUrl != provider.BaseUrl)
+        {
+            steps.Add(() => Api.SetProviderDetailsAsync(provider.Id, provider.DisplayName, baseUrl));
+        }
+
+        if (!string.IsNullOrWhiteSpace(key))
+        {
+            steps.Add(() => Api.SetProviderApiKeyAsync(provider.Id, key));
+        }
+
+        if (!draft.ConfidenceMatches(provider))
+        {
+            steps.Add(() => Api.SetProviderConfidenceLevelAsync(provider.Id, draft.Level,
+                draft.Ebook == "Inherit" ? null : draft.Ebook, draft.Audiobook == "Inherit" ? null : draft.Audiobook));
+        }
+
+        if (draft.Schedule != provider.RecheckSchedule)
+        {
+            steps.Add(() => Api.SetProviderRecheckScheduleAsync(provider.Id, draft.Schedule));
+        }
+
+        if (draft.AttemptLimit != provider.AutomaticAttemptLimit)
+        {
+            steps.Add(() => Api.SetProviderAutomaticAttemptLimitAsync(provider.Id, draft.AttemptLimit));
+        }
+
         providersBusy = true;
         try
         {
-            var draft = GetConfidenceDraft(provider);
-            var result = await Api.SetProviderConfidenceLevelAsync(provider.Id, draft.Level,
-                draft.Ebook == "Inherit" ? null : draft.Ebook, draft.Audiobook == "Inherit" ? null : draft.Audiobook);
-            if (!result.Succeeded)
+            foreach (var step in steps)
             {
-                Snackbar.Add(result.Error ?? "Confidence could not be saved.", Severity.Error);
-                return;
+                var result = await step();
+                if (!result.Succeeded)
+                {
+                    Snackbar.Failed(result.Error);
+                    await LoadProvidersAsync();
+                    return;
+                }
             }
-            confidenceDrafts.Remove(provider.Id);
+
+            apiKeyDrafts.Remove(provider.Id);
+            baseUrlDrafts.Remove(provider.Id);
+            providerDrafts.Remove(provider.Id);
             await LoadProvidersAsync();
-            Snackbar.Add("Download confidence saved.", Severity.Success);
+            Snackbar.Saved($"Saved the settings for {provider.DisplayName}.");
         }
-        finally { providersBusy = false; }
+        finally
+        {
+            providersBusy = false;
+        }
     }
+
     private bool providersBusy;
     private string? newProviderId;
     private string? newProviderDisplayName;
@@ -558,7 +622,6 @@
     private IReadOnlyList<ProviderStatusResponse>? builtInSources;
     private bool sourceLoadFailed;
     private bool builtInSourcesBusy;
-    private readonly Dictionary<string, int> builtInSourceGenerations = new(StringComparer.OrdinalIgnoreCase);
     private AdminRequestAttentionResponse? attention;
     private GutenbergCatalogStatusResponse? gutenbergCatalogStatus;
     private bool gutenbergCatalogBusy;
@@ -585,9 +648,6 @@
     }
 
     private string? GetApiKeyDraft(Guid id) => apiKeyDrafts.GetValueOrDefault(id);
-
-    private int BuiltInSourceGeneration(string providerId) =>
-        builtInSourceGenerations.GetValueOrDefault(providerId);
 
     private AdminProviderIssueResponse? ProviderIssueFor(string providerId, string issueKind) =>
         attention?.ProviderIssues.FirstOrDefault(issue =>
@@ -801,7 +861,7 @@
             var result = await GutenbergCatalog.RefreshAsync();
             if (!result.Succeeded)
             {
-                Snackbar.Add(result.Error ?? "The Project Gutenberg catalogue could not be refreshed.", Severity.Error);
+                Snackbar.Failed(result.Error ?? "The Project Gutenberg catalogue could not be refreshed.");
                 await LoadGutenbergCatalogStatusAsync();
                 return;
             }
@@ -812,7 +872,7 @@
         }
         catch (HttpRequestException)
         {
-            Snackbar.Add("The Project Gutenberg catalogue could not be refreshed.", Severity.Error);
+            Snackbar.Failed("The Project Gutenberg catalogue could not be refreshed.");
             await LoadGutenbergCatalogStatusAsync();
         }
         finally
@@ -840,7 +900,7 @@
 
             if (!result.Succeeded)
             {
-                Snackbar.Add(result.Error ?? "The local Project Gutenberg catalogue could not be deleted.", Severity.Error);
+                Snackbar.Failed(result.Error ?? "The local Project Gutenberg catalogue could not be deleted.");
                 await LoadGutenbergCatalogStatusAsync();
                 return;
             }
@@ -853,7 +913,7 @@
         {
             if (!isDisposed)
             {
-                Snackbar.Add("The local Project Gutenberg catalogue could not be deleted.", Severity.Error);
+                Snackbar.Failed("The local Project Gutenberg catalogue could not be deleted.");
                 await LoadGutenbergCatalogStatusAsync();
             }
         }
@@ -876,15 +936,15 @@
     private static bool IsGutenbergCatalogOperationStatus(string? status) => status is
         "CheckingUpdates" or "Downloading" or "Parsing" or "Importing" or "Retrying" or "Purging";
 
-    private async Task SetBuiltInSourceEnabledAsync(ProviderStatusResponse source, bool enabled)
+    private async Task SetBuiltInSourceEnabledAsync(ProviderStatusResponse source, SettingSwitchChange change)
     {
         builtInSourcesBusy = true;
         try
         {
-            var result = await BuiltInSourcesApi.SetEnabledAsync(source.ProviderId, enabled);
+            var result = await BuiltInSourcesApi.SetEnabledAsync(source.ProviderId, change.Value);
             if (!result.Succeeded)
             {
-                Snackbar.Add(result.Error ?? "That change could not be saved.", Severity.Error);
+                change.Refuse(result.Error);
                 return;
             }
 
@@ -893,11 +953,12 @@
             {
                 gutenbergCatalogPurgeConfirmation = false;
             }
+
+            Snackbar.Saved($"{source.DisplayName} {(change.Value ? "enabled" : "disabled")}.");
         }
         finally
         {
             builtInSourcesBusy = false;
-            builtInSourceGenerations[source.ProviderId] = BuiltInSourceGeneration(source.ProviderId) + 1;
         }
     }
 
@@ -918,7 +979,7 @@
             var result = await Api.CreateProviderAsync(newProviderId!, newProviderDisplayName!, newProviderBaseUrl!);
             if (!result.Succeeded)
             {
-                Snackbar.Add(result.Error ?? "That provider could not be registered.", Severity.Error);
+                Snackbar.Failed(result.Error ?? "That provider could not be registered.");
                 return;
             }
 
@@ -933,18 +994,22 @@
         }
     }
 
-    private async Task SetProviderEnabledAsync(Guid id, bool enabled)
+    private async Task SetProviderEnabledAsync(Guid id, SettingSwitchChange change)
     {
         providersBusy = true;
         try
         {
-            var result = await Api.SetProviderEnabledAsync(id, enabled);
+            var result = await Api.SetProviderEnabledAsync(id, change.Value);
             if (!result.Succeeded)
             {
-                Snackbar.Add(result.Error ?? "That change could not be saved.", Severity.Error);
+                change.Refuse(result.Error);
             }
 
             await LoadProvidersAsync();
+            if (result.Succeeded)
+            {
+                Snackbar.Saved(change.Value ? "Source enabled." : "Source disabled.");
+            }
         }
         finally
         {
@@ -952,73 +1017,9 @@
         }
     }
 
-    private async Task SetProviderRecheckScheduleAsync(Guid id, string schedule)
+    private async Task ClearApiKeyAsync(ExternalProviderResponse provider)
     {
-        providersBusy = true;
-        try
-        {
-            var result = await Api.SetProviderRecheckScheduleAsync(id, schedule);
-            if (!result.Succeeded)
-            {
-                Snackbar.Add(result.Error ?? "That change could not be saved.", Severity.Error);
-                return;
-            }
-
-            await LoadProvidersAsync();
-        }
-        finally
-        {
-            providersBusy = false;
-        }
-    }
-
-    private async Task SetProviderAutomaticAttemptLimitAsync(Guid id, int limit)
-    {
-        providersBusy = true;
-        try
-        {
-            var result = await Api.SetProviderAutomaticAttemptLimitAsync(id, limit);
-            if (!result.Succeeded)
-            {
-                Snackbar.Add(result.Error ?? "That change could not be saved.", Severity.Error);
-                return;
-            }
-
-            await LoadProvidersAsync();
-        }
-        finally
-        {
-            providersBusy = false;
-        }
-    }
-
-    private async Task SaveDetailsAsync(ExternalProviderResponse provider)
-    {
-        var baseUrl = baseUrlDrafts.GetValueOrDefault(provider.Id, provider.BaseUrl);
-        providersBusy = true;
-        try
-        {
-            var result = await Api.SetProviderDetailsAsync(provider.Id, provider.DisplayName, baseUrl);
-            if (!result.Succeeded)
-            {
-                Snackbar.Add(result.Error ?? "That change could not be saved.", Severity.Error);
-                return;
-            }
-
-            baseUrlDrafts.Remove(provider.Id);
-            Snackbar.Add("Saved.", Severity.Success);
-            await LoadProvidersAsync();
-        }
-        finally
-        {
-            providersBusy = false;
-        }
-    }
-
-    private async Task SaveApiKeyAsync(Guid id)
-    {
-        var key = GetApiKeyDraft(id);
-        if (string.IsNullOrWhiteSpace(key))
+        if (!await Dialogs.ConfirmRemovalAsync($"Remove the API key for {provider.DisplayName}?", "The stored key is deleted."))
         {
             return;
         }
@@ -1026,30 +1027,15 @@
         providersBusy = true;
         try
         {
-            var result = await Api.SetProviderApiKeyAsync(id, key);
+            var result = await Api.ClearProviderApiKeyAsync(provider.Id);
             if (!result.Succeeded)
             {
-                Snackbar.Add(result.Error ?? "That change could not be saved.", Severity.Error);
+                Snackbar.Failed(result.Error);
                 return;
             }
 
-            apiKeyDrafts[id] = null;
-            Snackbar.Add("Saved the API key.", Severity.Success);
             await LoadProvidersAsync();
-        }
-        finally
-        {
-            providersBusy = false;
-        }
-    }
-
-    private async Task ClearApiKeyAsync(Guid id)
-    {
-        providersBusy = true;
-        try
-        {
-            await Api.ClearProviderApiKeyAsync(id);
-            await LoadProvidersAsync();
+            Snackbar.Saved("API key removed.");
         }
         finally
         {
@@ -1065,15 +1051,12 @@
             var result = await Api.TestProviderAsync(id);
             if (!result.Succeeded)
             {
-                Snackbar.Add(result.Error ?? "The connection test could not be run.", Severity.Error);
+                Snackbar.Failed(result.Error ?? "The connection test could not be run.");
                 return;
             }
 
+            // The result is recorded and shown on the card, beside the button.
             await LoadProvidersAsync();
-            var updated = providers?.FirstOrDefault(p => p.Id == id);
-            Snackbar.Add(
-                updated?.LastTestMessage ?? "Tested.",
-                updated?.LastTestSucceeded == true ? Severity.Success : Severity.Warning);
         }
         finally
         {
@@ -1081,18 +1064,29 @@
         }
     }
 
-    private async Task RemoveProviderAsync(Guid id)
+    private async Task RemoveProviderAsync(ExternalProviderResponse provider)
     {
+        if (!await Dialogs.ConfirmRemovalAsync($"Remove {provider.DisplayName}?",
+                "This removes the source and its stored settings and key. Family Librarian stops searching it.",
+                "Remove provider"))
+        {
+            return;
+        }
+
         providersBusy = true;
         try
         {
-            if (await Api.RemoveProviderAsync(id))
+            if (await Api.RemoveProviderAsync(provider.Id))
             {
+                providerDrafts.Remove(provider.Id);
+                apiKeyDrafts.Remove(provider.Id);
+                baseUrlDrafts.Remove(provider.Id);
                 await LoadProvidersAsync();
+                Snackbar.Saved($"Removed {provider.DisplayName}.");
             }
             else
             {
-                Snackbar.Add("That provider could not be removed.", Severity.Error);
+                Snackbar.Failed("That provider could not be removed.");
             }
         }
         finally
@@ -1100,6 +1094,5 @@
             providersBusy = false;
         }
     }
-
 
 }

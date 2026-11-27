@@ -21,9 +21,6 @@ public sealed class OidcSettingsApiClient(HttpClient httpClient, AntiforgeryToke
     public Task<OidcResult> SetSettingsAsync(SetOidcSettingsRequest request, CancellationToken cancellationToken = default) =>
         SendAsync(HttpMethod.Put, $"{BasePath}/", request, cancellationToken);
 
-    public Task<OidcResult> SetClientSecretAsync(string clientSecret, CancellationToken cancellationToken = default) =>
-        SendAsync(HttpMethod.Put, $"{BasePath}/client-secret", new SetOidcClientSecretRequest(clientSecret), cancellationToken);
-
     public Task<OidcResult> ClearClientSecretAsync(CancellationToken cancellationToken = default) =>
         SendAsync<object>(HttpMethod.Delete, $"{BasePath}/client-secret", null, cancellationToken);
 

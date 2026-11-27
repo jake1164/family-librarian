@@ -7,6 +7,7 @@
 @inject CwaSettingsApiClient CwaApi
 @inject AudiobookshelfSettingsApiClient AudiobookshelfApi
 @inject ISnackbar Snackbar
+@inject IDialogService Dialogs
 
 <PageTitle>Publishing settings | Family Librarian</PageTitle>
 <SettingsDraftGuard IsDirty="@(HasUnsavedChanges)" />
@@ -54,19 +55,25 @@ else
 
             <MudSpacer />
 
-            <MudSwitch T="bool" @key="@("cwa:" + cwaSwitchGeneration)" Value="cwa.IsEnabled"
-                       ValueChanged="@(enabled => SetCwaEnabledAsync(enabled))" Color="Color.Primary" Disabled="@cwaBusy"
-                       Label="@(cwa.IsEnabled ? "Enabled" : "Disabled")" />
+            <SettingSwitch Value="cwa.IsEnabled" Changing="SetCwaEnabledAsync" Disabled="@cwaBusy" AlignEnd="true"
+                           WorkingText="@(cwa.LastTestSucceeded == true ? "Saving…" : "Testing the connection…")"
+                           Label="@(cwa.IsEnabled ? "Enabled" : "Disabled")" aria-label="CWA" />
         </MudStack>
 
         @if (!cwaExpanded)
         {
             <MudText Typo="Typo.body2" Class="mt-3 mb-3">
                 Publish approved ebooks straight into CWA's library, over a local path or SFTP,
-                with an optional OPDS connection to verify imports.
+                with an OPDS connection to verify imports.
             </MudText>
         }
-        else
+        @if (!cwa.IsEnabled)
+        {
+            <MudButton Variant="Variant.Text" Color="Color.Primary" OnClick="@(() => ToggleSetup("cwa"))">
+                @(cwaExpanded ? "Hide CWA settings" : "Show CWA settings")
+            </MudButton>
+        }
+        @if (cwaExpanded)
         {
         <MudDivider Class="my-3" />
 
@@ -224,12 +231,11 @@ else
         </MudPaper>
 
         <MudPaper Outlined="true" Class="pa-4 mt-4">
-            <MudText Typo="Typo.h6" GutterBottom="true">Confirm saved configuration</MudText>
+            <MudText Typo="Typo.h6" GutterBottom="true">Test saved settings</MudText>
             <MudText Typo="Typo.body2" Class="mb-3">
-                Enabling CWA requires a passing test of the delivery and OPDS settings you just
-                saved above — unlike the two tests above, this one is recorded, and is what
-                actually unlocks the Enabled switch. Save delivery and OPDS settings first; this
-                test checks what is currently saved, not this form's unsaved values.
+                Checks the saved delivery and OPDS settings together and records the result. You do
+                not have to run it first: turning CWA on runs it for you when the saved settings have
+                not passed yet. It does not use unsaved values in this form.
             </MudText>
             <MudButton Variant="Variant.Filled" Color="Color.Primary" Disabled="@cwaBusy"
                        OnClick="TestCwaConnectionAsync">Test saved connection</MudButton>
@@ -262,16 +268,10 @@ else if (audiobookshelf is null)
 }
 else
 {
-    // Audiobookshelf has no server-side gate blocking Enabled without a
-    // configuration (unlike CWA), but the shape here mirrors CWA closely enough
-    // that leaving it always expanded while CWA collapses would read as
-    // inconsistent on the same page. "Configured" is a UI-only judgment call:
-    // enough to actually run a search — base URL, library, and a token.
+    // Enough to run a connection test: base URL, library, and a token.
     var audiobookshelfNeedsSetup = string.IsNullOrWhiteSpace(audiobookshelf.BaseUrl) ||
         string.IsNullOrWhiteSpace(audiobookshelf.LibraryId) || !audiobookshelf.HasApiToken;
-    // Unlike CWA, nothing blocks enabling Audiobookshelf while unconfigured, so
-    // the switch alone (no interception needed) is enough to drive this.
-    var audiobookshelfExpanded = audiobookshelf.IsEnabled;
+    var audiobookshelfExpanded = audiobookshelf.IsEnabled || expandedSetup.Contains("audiobookshelf");
 
     <MudPaper Class="pa-4 mb-6" Elevation="1">
         <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="2">
@@ -287,7 +287,9 @@ else
                 <MudChip T="string" Size="Size.Small" Color="@AudiobookshelfHealthColor">@AudiobookshelfHealthLabel</MudChip>
             }
             <MudSpacer />
-            <MudSwitch T="bool" @key="@("abs:" + audiobookshelfSwitchGeneration)" Value="audiobookshelf.IsEnabled" ValueChanged="@(enabled => SetAudiobookshelfEnabledAsync(enabled))" Color="Color.Primary" Disabled="@audiobookshelfBusy" Label="@(audiobookshelf.IsEnabled ? "Enabled" : "Disabled")" />
+            <SettingSwitch Value="audiobookshelf.IsEnabled" Changing="SetAudiobookshelfEnabledAsync" Disabled="@audiobookshelfBusy" AlignEnd="true"
+                           WorkingText="@(audiobookshelf.LastTestSucceeded == true ? "Saving…" : "Testing the connection…")"
+                           Label="@(audiobookshelf.IsEnabled ? "Enabled" : "Disabled")" aria-label="Audiobookshelf" />
         </MudStack>
 
         @if (!audiobookshelfExpanded)
@@ -296,7 +298,13 @@ else
                 Publish approved audiobooks into an Audiobookshelf library and folder.
             </MudText>
         }
-        else
+        @if (!audiobookshelf.IsEnabled)
+        {
+            <MudButton Variant="Variant.Text" Color="Color.Primary" OnClick="@(() => ToggleSetup("audiobookshelf"))">
+                @(audiobookshelfExpanded ? "Hide Audiobookshelf settings" : "Show Audiobookshelf settings")
+            </MudButton>
+        }
+        @if (audiobookshelfExpanded)
         {
         <MudDivider Class="my-3" />
         <MudText Typo="Typo.body2" Class="mb-2">
@@ -313,7 +321,6 @@ else
             <MudText Typo="Typo.body2">@(audiobookshelf.HasApiToken ? $"A token ending in {audiobookshelf.ApiTokenHint} was saved {audiobookshelf.ApiTokenSetAtUtc?.ToLocalTime().ToString("f")}." : "No token is stored yet.")</MudText>
             <MudStack Row="true" Spacing="2">
                 <MudTextField Immediate="true" T="string" @bind-Value="audiobookshelfApiTokenDraft" Label="Replace API token" InputType="InputType.Password" Disabled="@audiobookshelfBusy" Class="flex-grow-1" />
-                <MudButton Variant="Variant.Filled" Disabled="@(audiobookshelfBusy || string.IsNullOrWhiteSpace(audiobookshelfApiTokenDraft))" OnClick="SaveAudiobookshelfApiTokenAsync">Save token</MudButton>
                 @if (audiobookshelf.HasApiToken) { <MudButton Variant="Variant.Outlined" Color="Color.Error" Disabled="@audiobookshelfBusy" OnClick="ClearAudiobookshelfApiTokenAsync">Remove</MudButton> }
             </MudStack>
 
@@ -349,8 +356,8 @@ else
         <MudDivider Class="my-3" />
         <MudText Typo="Typo.body2" Class="mb-2">
             Test checks the base URL, library ID, folder ID, and API token currently in this form (a stored token is
-            used if the token field above is blank) without saving them. Save settings also saves a token typed into
-            the field above; use Save token to store a token without changing the other fields.
+            used if the token field above is blank) without saving them. The result is recorded only when those values
+            are the saved ones. Save settings also saves a token typed above.
         </MudText>
         <MudButton Variant="Variant.Outlined" Disabled="@audiobookshelfBusy" OnClick="TestAudiobookshelfAsync">Test connection</MudButton>
         @if (audiobookshelfTestResult is not null)
@@ -368,29 +375,32 @@ else
     private object CwaFields => new { cwaTransportMode, cwaLocalIngestPath, cwaSftpHost, cwaSftpPort, cwaSftpUsername,
         cwaSftpIngestPath, cwaSftpAuthenticationMode, cwaOpdsBaseUrl, cwaPublicUrl, cwaOpdsUsername, cwaEreaderServiceAccountUsername };
     private object AbsFields => new { audiobookshelfBaseUrl, audiobookshelfPublicUrl, audiobookshelfLibraryId, audiobookshelfFolderId };
-    private bool HasUnsavedChanges => draft.HasChanges("cwa", CwaFields) || draft.HasChanges("abs", AbsFields) ||
-        new[] { cwaSftpPrivateKeyDraft, cwaSftpPassphraseDraft, cwaSftpPasswordDraft, cwaOpdsPasswordDraft,
-            cwaEreaderServiceAccountPasswordDraft, cwaApprovedSftpHostKeyFingerprint, audiobookshelfApiTokenDraft }
-        .Any(value => !string.IsNullOrEmpty(value));
-    // Destinations ("cwa", "audiobookshelf") whose panels are showing even
-    // though they're not Enabled — set when flipping the switch on an
-    // unconfigured destination reveals its settings instead of calling the API
-    // (see SetCwaEnabledAsync/SetAudiobookshelfEnabledAsync), and cleared again
-    // once the destination is actually switched off for real.
+    private bool HasUnsavedChanges => CwaDirty || AudiobookshelfDirty;
+    // Destinations ("cwa", "audiobookshelf") whose settings are showing while they
+    // are off: opened with the Show settings button, or by a refused attempt to
+    // turn one on, so what needs fixing is on screen.
     private readonly HashSet<string> expandedSetup = new(StringComparer.OrdinalIgnoreCase);
     private void Expand(string destinationId) => expandedSetup.Add(destinationId);
     private void Collapse(string destinationId) => expandedSetup.Remove(destinationId);
+    private void ToggleSetup(string destinationId)
+    {
+        if (!expandedSetup.Remove(destinationId)) expandedSetup.Add(destinationId);
+    }
+
+    private bool CwaDirty => draft.HasChanges("cwa", CwaFields) ||
+        new[] { cwaSftpPrivateKeyDraft, cwaSftpPassphraseDraft, cwaSftpPasswordDraft, cwaOpdsPasswordDraft,
+            cwaEreaderServiceAccountPasswordDraft, cwaApprovedSftpHostKeyFingerprint }
+        .Any(value => !string.IsNullOrEmpty(value));
+    private bool AudiobookshelfDirty => draft.HasChanges("abs", AbsFields) || !string.IsNullOrEmpty(audiobookshelfApiTokenDraft);
 
     private CwaSettingsResponse? cwa;
     private bool cwaLoadFailed, cwaBusy;
-    private int cwaSwitchGeneration;
     private string cwaTransportMode = "Local", cwaSftpAuthenticationMode = "PrivateKey";
     private string? cwaLocalIngestPath, cwaSftpHost, cwaSftpUsername, cwaSftpIngestPath, cwaSftpPrivateKeyDraft, cwaSftpPassphraseDraft, cwaSftpPasswordDraft, cwaPendingSftpHostKeyFingerprint, cwaApprovedSftpHostKeyFingerprint, cwaOpdsBaseUrl, cwaPublicUrl, cwaOpdsUsername, cwaOpdsPasswordDraft, cwaEreaderServiceAccountUsername, cwaEreaderServiceAccountPasswordDraft;
     private int? cwaSftpPort;
     private PublishingConnectionTestResponse? cwaIngestTestResult, cwaOpdsTestResult, cwaConnectionTestResult;
     private AudiobookshelfSettingsResponse? audiobookshelf;
     private bool audiobookshelfLoadFailed, audiobookshelfBusy;
-    private int audiobookshelfSwitchGeneration;
     private string? audiobookshelfBaseUrl, audiobookshelfPublicUrl, audiobookshelfLibraryId, audiobookshelfFolderId, audiobookshelfApiTokenDraft;
     private PublishingConnectionTestResponse? audiobookshelfTestResult;
     private List<AudiobookshelfLibraryOption>? audiobookshelfLibraryOptions;
@@ -533,30 +543,56 @@ else
     private async Task LoadCwaAsync(bool initializeFields = false) { try { cwa = await CwaApi.GetAsync(); if (initializeFields) ApplyCwaFields(cwa); cwaLoadFailed = false; } catch (HttpRequestException) { cwaLoadFailed = true; } }
     private void ApplyCwaFields(CwaSettingsResponse? settings) { if (settings is null) return; cwaTransportMode = settings.TransportMode; cwaLocalIngestPath = settings.LocalIngestPath; cwaSftpHost = settings.SftpHost; cwaSftpPort = settings.SftpPort; cwaSftpUsername = settings.SftpUsername; cwaSftpIngestPath = settings.SftpIngestPath; cwaSftpAuthenticationMode = settings.SftpAuthenticationMode; if (!string.IsNullOrWhiteSpace(settings.SftpHostKeyFingerprint)) cwaPendingSftpHostKeyFingerprint = null; cwaOpdsBaseUrl = settings.OpdsBaseUrl; cwaPublicUrl = settings.PublicUrl; cwaOpdsUsername = settings.OpdsUsername; cwaEreaderServiceAccountUsername = settings.EreaderServiceAccountUsername; draft.Accept("cwa", CwaFields); }
     private string CwaIngestTestButtonLabel => cwaTransportMode == "Sftp" ? "Test SFTP" : "Test local path";
-    private async Task SetCwaEnabledAsync(bool enabled)
+    private async Task SetCwaEnabledAsync(SettingSwitchChange change)
     {
-        if (enabled && cwa is { IsIngestConfigured: false })
+        if (change.Value && CwaDirty)
         {
-            // The server will refuse to enable CWA until ingest delivery is
-            // configured, so there's nothing to gain from the round trip.
-            // Flipping the switch here instead reveals the delivery panel — the
-            // switch doubles as the only "let me configure this" control there
-            // is. Bumping the generation undoes MudSwitch's optimistic flip.
             Expand("cwa");
-            cwaSwitchGeneration++;
+            change.Refuse("Save your CWA changes first. Turning CWA on uses the saved settings.");
             return;
         }
 
-        if (await RunCwaAsync(() => CwaApi.SetEnabledAsync(enabled)) && !enabled)
+        cwaBusy = true;
+        try
         {
-            // Once switched off, the panels should actually collapse rather than
-            // stay open because an earlier attempt to configure it left it
-            // expanded.
-            Collapse("cwa");
+            var result = await CwaApi.SetEnabledAsync(change.Value);
+            if (!result.Succeeded)
+            {
+                Expand("cwa");
+                change.Refuse(result.Error);
+                // A test run by the refused change is recorded, so show it.
+                cwa = await CwaApi.GetAsync();
+                cwaConnectionTestResult = null;
+                return;
+            }
+
+            cwa = result.Settings;
+            cwaConnectionTestResult = null;
+            if (!change.Value) Collapse("cwa");
+            Snackbar.Saved(change.Value ? "CWA enabled." : "CWA disabled.");
+        }
+        finally
+        {
+            cwaBusy = false;
         }
     }
-    private Task ClearCwaSftpPassphraseAsync() => RunCwaAsync(() => CwaApi.ClearSftpPassphraseAsync());
-    private Task ClearCwaSftpPasswordAsync() => RunCwaAsync(() => CwaApi.ClearSftpPasswordAsync());
+
+    private async Task ClearCwaSftpPassphraseAsync()
+    {
+        if (await Dialogs.ConfirmRemovalAsync("Remove the stored passphrase?", "The stored key passphrase is deleted."))
+        {
+            if (await RunCwaAsync(() => CwaApi.ClearSftpPassphraseAsync())) Snackbar.Saved("Stored passphrase removed.");
+        }
+    }
+
+    private async Task ClearCwaSftpPasswordAsync()
+    {
+        if (await Dialogs.ConfirmRemovalAsync("Remove the stored password?", "The stored SFTP password is deleted."))
+        {
+            if (await RunCwaAsync(() => CwaApi.ClearSftpPasswordAsync())) Snackbar.Saved("Stored password removed.");
+        }
+    }
+
     private Task TrustCwaSftpHostKeyAsync()
     {
         if (!string.IsNullOrWhiteSpace(cwaPendingSftpHostKeyFingerprint))
@@ -564,29 +600,29 @@ else
             cwaApprovedSftpHostKeyFingerprint = cwaPendingSftpHostKeyFingerprint;
             cwaPendingSftpHostKeyFingerprint = null;
             cwaIngestTestResult = null;
-            Snackbar.Add("The server identity is approved for this unsaved form. Test again, then save delivery settings to persist it.", Severity.Success);
+            Snackbar.Saved("The server identity is approved for this unsaved form. Test again, then save delivery settings to persist it.");
         }
 
         return Task.CompletedTask;
     }
 
-    private async Task SaveCwaIngestAsync()
+    private async Task SaveCwaAsync(string savedMessage)
     {
         cwaBusy = true;
         try
         {
-            if (await SaveCurrentCwaSettingsAsync(saveIngestCredential: true, saveOpdsCredential: false, saveEreaderCredential: false))
+            if (await SaveCurrentCwaSettingsAsync())
             {
-                Snackbar.Add("Saved the CWA delivery settings.", Severity.Success);
+                Snackbar.Saved(savedMessage);
             }
         }
         finally
         {
             cwaBusy = false;
-            cwaSwitchGeneration++;
         }
     }
 
+    private Task SaveCwaIngestAsync() => SaveCwaAsync("Saved the CWA delivery settings.");
     private async Task SaveAndTestCwaIngestAsync()
     {
         cwaBusy = true;
@@ -606,7 +642,7 @@ else
                 CurrentCwaSftpHostKeyFingerprint));
             if (cwaIngestTestResult is null)
             {
-                Snackbar.Add("The delivery test could not be run.", Severity.Error);
+                Snackbar.Failed("The delivery test could not be run.");
                 return;
             }
 
@@ -619,44 +655,11 @@ else
         finally
         {
             cwaBusy = false;
-            cwaSwitchGeneration++;
         }
     }
 
-    private async Task SaveCwaOpdsAsync()
-    {
-        cwaBusy = true;
-        try
-        {
-            if (await SaveCurrentCwaSettingsAsync(saveIngestCredential: false, saveOpdsCredential: true, saveEreaderCredential: false))
-            {
-                Snackbar.Add("Saved the CWA OPDS settings.", Severity.Success);
-            }
-        }
-        finally
-        {
-            cwaBusy = false;
-            cwaSwitchGeneration++;
-        }
-    }
-
-    private async Task SaveCwaEreaderAsync()
-    {
-        cwaBusy = true;
-        try
-        {
-            if (await SaveCurrentCwaSettingsAsync(saveIngestCredential: false, saveOpdsCredential: false, saveEreaderCredential: true))
-            {
-                Snackbar.Add("Saved the e-reader delivery settings.", Severity.Success);
-            }
-        }
-        finally
-        {
-            cwaBusy = false;
-            cwaSwitchGeneration++;
-        }
-    }
-
+    private Task SaveCwaOpdsAsync() => SaveCwaAsync("Saved the CWA OPDS settings.");
+    private Task SaveCwaEreaderAsync() => SaveCwaAsync("Saved the e-reader delivery settings.");
     private async Task TestCwaOpdsAsync()
     {
         cwaBusy = true;
@@ -668,7 +671,7 @@ else
                 cwaOpdsPasswordDraft));
             if (cwaOpdsTestResult is null)
             {
-                Snackbar.Add("The OPDS test could not be run.", Severity.Error);
+                Snackbar.Failed("The OPDS test could not be run.");
                 return;
             }
 
@@ -676,7 +679,6 @@ else
         finally
         {
             cwaBusy = false;
-            cwaSwitchGeneration++;
         }
     }
 
@@ -688,7 +690,7 @@ else
             cwaConnectionTestResult = await CwaApi.TestConnectionAsync();
             if (cwaConnectionTestResult is null)
             {
-                Snackbar.Add("The connection test could not be run.", Severity.Error);
+                Snackbar.Failed("The connection test could not be run.");
                 return;
             }
 
@@ -700,14 +702,11 @@ else
         finally
         {
             cwaBusy = false;
-            cwaSwitchGeneration++;
         }
     }
 
-    private async Task<bool> SaveCurrentCwaSettingsAsync(
-        bool saveIngestCredential,
-        bool saveOpdsCredential,
-        bool saveEreaderCredential)
+    /// <summary>Saves everything typed in the CWA settings, so no Save button leaves a typed secret behind.</summary>
+    private async Task<bool> SaveCurrentCwaSettingsAsync()
     {
         var settingsResult = await CwaApi.SetSettingsAsync(new SetCwaSettingsRequest(
             cwaTransportMode,
@@ -726,7 +725,7 @@ else
             return false;
         }
 
-        if (saveIngestCredential && cwaTransportMode == "Sftp")
+        if (cwaTransportMode == "Sftp")
         {
             if (cwaSftpAuthenticationMode == "Password" && !string.IsNullOrWhiteSpace(cwaSftpPasswordDraft))
             {
@@ -771,7 +770,7 @@ else
             }
         }
 
-        if (saveOpdsCredential && !string.IsNullOrWhiteSpace(cwaOpdsPasswordDraft))
+        if (!string.IsNullOrWhiteSpace(cwaOpdsPasswordDraft))
         {
             if (!AcceptCwaResult(await CwaApi.SetOpdsPasswordAsync(cwaOpdsPasswordDraft)))
             {
@@ -781,7 +780,7 @@ else
             cwaOpdsPasswordDraft = null;
         }
 
-        if (saveEreaderCredential && !string.IsNullOrWhiteSpace(cwaEreaderServiceAccountPasswordDraft))
+        if (!string.IsNullOrWhiteSpace(cwaEreaderServiceAccountPasswordDraft))
         {
             if (!AcceptCwaResult(await CwaApi.SetEreaderServiceAccountPasswordAsync(cwaEreaderServiceAccountPasswordDraft)))
             {
@@ -817,7 +816,7 @@ else
     {
         if (!result.Succeeded)
         {
-            Snackbar.Add(result.Error ?? "The CWA settings could not be saved.", Severity.Error);
+            Snackbar.Failed(result.Error ?? "The CWA settings could not be saved.");
             return false;
         }
 
@@ -825,11 +824,39 @@ else
         return true;
     }
 
-    private async Task<bool> RunCwaAsync(Func<Task<CwaResult>> action) { cwaBusy = true; try { var result = await action(); if (!result.Succeeded) { Snackbar.Add(result.Error ?? "That change could not be saved.", Severity.Error); return false; } cwa = result.Settings; return true; } finally { cwaBusy = false; cwaSwitchGeneration++; } }
+    private async Task<bool> RunCwaAsync(Func<Task<CwaResult>> action) { cwaBusy = true; try { var result = await action(); if (!result.Succeeded) { Snackbar.Failed(result.Error); return false; } cwa = result.Settings; return true; } finally { cwaBusy = false; } }
     private async Task LoadAudiobookshelfAsync(bool initializeFields = false) { try { audiobookshelf = await AudiobookshelfApi.GetAsync(); if (initializeFields) ApplyAudiobookshelfFields(audiobookshelf); audiobookshelfLoadFailed = false; } catch (HttpRequestException) { audiobookshelfLoadFailed = true; } }
     private void ApplyAudiobookshelfFields(AudiobookshelfSettingsResponse? settings) { if (settings is null) return; audiobookshelfBaseUrl = settings.BaseUrl; audiobookshelfPublicUrl = settings.PublicUrl; audiobookshelfLibraryId = settings.LibraryId; audiobookshelfFolderId = settings.FolderId; draft.Accept("abs", AbsFields); }
-    private Task SetAudiobookshelfEnabledAsync(bool enabled) =>
-        RunAudiobookshelfAsync(() => AudiobookshelfApi.SetEnabledAsync(enabled));
+    private async Task SetAudiobookshelfEnabledAsync(SettingSwitchChange change)
+    {
+        if (change.Value && AudiobookshelfDirty)
+        {
+            Expand("audiobookshelf");
+            change.Refuse("Save your Audiobookshelf changes first. Turning it on uses the saved settings.");
+            return;
+        }
+
+        audiobookshelfBusy = true;
+        try
+        {
+            var result = await AudiobookshelfApi.SetEnabledAsync(change.Value);
+            if (!result.Succeeded)
+            {
+                Expand("audiobookshelf");
+                change.Refuse(result.Error);
+                audiobookshelf = await AudiobookshelfApi.GetAsync();
+                return;
+            }
+
+            audiobookshelf = result.Settings;
+            if (!change.Value) Collapse("audiobookshelf");
+            Snackbar.Saved(change.Value ? "Audiobookshelf enabled." : "Audiobookshelf disabled.");
+        }
+        finally
+        {
+            audiobookshelfBusy = false;
+        }
+    }
     private async Task SaveAudiobookshelfSettingsAsync()
     {
         audiobookshelfBusy = true;
@@ -838,7 +865,7 @@ else
             var result = await AudiobookshelfApi.SetSettingsAsync(new SetAudiobookshelfSettingsRequest(audiobookshelfBaseUrl, audiobookshelfPublicUrl, audiobookshelfLibraryId, audiobookshelfFolderId));
             if (!result.Succeeded)
             {
-                Snackbar.Add(result.Error ?? "That change could not be saved.", Severity.Error);
+                Snackbar.Failed(result.Error);
                 return;
             }
 
@@ -849,7 +876,7 @@ else
                 var tokenResult = await AudiobookshelfApi.SetApiTokenAsync(audiobookshelfApiTokenDraft);
                 if (!tokenResult.Succeeded)
                 {
-                    Snackbar.Add(tokenResult.Error ?? "The API token could not be saved.", Severity.Error);
+                    Snackbar.Failed(tokenResult.Error ?? "The API token could not be saved.");
                     return;
                 }
 
@@ -858,16 +885,20 @@ else
             }
 
             ApplyAudiobookshelfFields(result.Settings);
-            Snackbar.Add("Saved the Audiobookshelf settings.", Severity.Success);
+            Snackbar.Saved("Saved the Audiobookshelf settings.");
         }
         finally
         {
             audiobookshelfBusy = false;
-            audiobookshelfSwitchGeneration++;
         }
     }
-    private async Task SaveAudiobookshelfApiTokenAsync() { if (string.IsNullOrWhiteSpace(audiobookshelfApiTokenDraft)) return; if (await RunAudiobookshelfAsync(() => AudiobookshelfApi.SetApiTokenAsync(audiobookshelfApiTokenDraft))) { audiobookshelfApiTokenDraft = null; Snackbar.Add("Saved the Audiobookshelf API token.", Severity.Success); } }
-    private Task ClearAudiobookshelfApiTokenAsync() => RunAudiobookshelfAsync(() => AudiobookshelfApi.ClearApiTokenAsync());
+    private async Task ClearAudiobookshelfApiTokenAsync()
+    {
+        if (await Dialogs.ConfirmRemovalAsync("Remove the Audiobookshelf API token?", "The stored token is deleted."))
+        {
+            if (await RunAudiobookshelfAsync(() => AudiobookshelfApi.ClearApiTokenAsync())) Snackbar.Saved("API token removed.");
+        }
+    }
 
     private async Task TestAudiobookshelfAsync()
     {
@@ -878,8 +909,11 @@ else
                 audiobookshelfBaseUrl, audiobookshelfLibraryId, audiobookshelfFolderId, audiobookshelfApiTokenDraft));
             if (audiobookshelfTestResult is null)
             {
-                Snackbar.Add("The connection test could not be run.", Severity.Error);
+                Snackbar.Failed("The connection test could not be run.");
             }
+
+            // A test of the saved values is recorded, so show what is recorded now.
+            audiobookshelf = await AudiobookshelfApi.GetAsync();
         }
         finally
         {
@@ -896,7 +930,7 @@ else
                 audiobookshelfBaseUrl, audiobookshelfApiTokenDraft));
             if (response is null)
             {
-                Snackbar.Add("The library lookup could not be run.", Severity.Error);
+                Snackbar.Failed("The library lookup could not be run.");
                 return;
             }
 
@@ -928,5 +962,5 @@ else
     private IReadOnlyList<AudiobookshelfFolderOption>? SelectedAudiobookshelfLibraryFolders =>
         audiobookshelfLibraryOptions?.FirstOrDefault(library => library.Id == audiobookshelfLibraryId)?.Folders;
 
-    private async Task<bool> RunAudiobookshelfAsync(Func<Task<AudiobookshelfResult>> action) { audiobookshelfBusy = true; try { var result = await action(); if (!result.Succeeded) { Snackbar.Add(result.Error ?? "That change could not be saved.", Severity.Error); return false; } audiobookshelf = result.Settings; return true; } finally { audiobookshelfBusy = false; audiobookshelfSwitchGeneration++; } }
+    private async Task<bool> RunAudiobookshelfAsync(Func<Task<AudiobookshelfResult>> action) { audiobookshelfBusy = true; try { var result = await action(); if (!result.Succeeded) { Snackbar.Failed(result.Error); return false; } audiobookshelf = result.Settings; return true; } finally { audiobookshelfBusy = false; } }
 }

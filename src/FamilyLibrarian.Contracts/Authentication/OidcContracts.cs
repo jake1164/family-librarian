@@ -27,7 +27,8 @@ public sealed record SetOidcSettingsRequest(
     string Scopes,
     string MatchClaimName,
     string? AdminClaimName,
-    string? AdminClaimValues);
+    string? AdminClaimValues,
+    string? ClientSecret = null);
 
 public sealed record SetOidcEnabledRequest(bool Enabled);
 

@@ -12,37 +12,48 @@ public sealed class MatrixSettingsServiceTests
     private static readonly DateTimeOffset Now = new(2026, 9, 14, 12, 0, 0, TimeSpan.Zero);
 
     [TestMethod]
-    public async Task MatrixCannotBeEnabledUntilTheSavedConfigurationPassesATest()
+    public async Task TurningOnWithNoRecordedTestRunsItAndEnables()
     {
         var context = new TestContext();
         await context.ConfigureAsync();
 
-        var beforeTest = await context.Service.SetEnabledAsync(true, CancellationToken.None);
-        Assert.IsFalse(beforeTest.Succeeded);
-        StringAssert.Contains(beforeTest.Error, "successful test message");
-
-        var test = await context.Service.SendTestAsync(null, null, null, CancellationToken.None);
-        Assert.IsTrue(test.Succeeded);
-        Assert.IsTrue(test.Outcome!.Succeeded);
-
         var enabled = await context.Service.SetEnabledAsync(true, CancellationToken.None);
+
         Assert.IsTrue(enabled.Succeeded);
         Assert.IsTrue(enabled.Status!.IsEnabled);
+        Assert.AreEqual(true, enabled.Status.LastTestSucceeded);
+        Assert.AreEqual("super-secret-token", context.MatrixClient.LastAccessTokenUsed);
     }
 
     [TestMethod]
-    public async Task ChangingTheSavedSettingsInvalidatesTheLastSuccessfulTest()
+    public async Task MatrixStaysOffWhenTheTurnOnTestFails()
     {
         var context = new TestContext();
         await context.ConfigureAsync();
-        await context.Service.SendTestAsync(null, null, null, CancellationToken.None);
+        context.MatrixClient.NextOutcome = new ConnectionTestOutcome(false, "The access token was refused.");
+
+        var enabled = await context.Service.SetEnabledAsync(true, CancellationToken.None);
+
+        Assert.IsFalse(enabled.Succeeded);
+        StringAssert.Contains(enabled.Error, "Matrix stayed off");
+        StringAssert.Contains(enabled.Error, "The access token was refused.");
+        Assert.IsFalse(context.Store.Current!.IsEnabled);
+    }
+
+    [TestMethod]
+    public async Task ChangingTheSavedSettingsMeansTurningOnTestsAgain()
+    {
+        var context = new TestContext();
+        await context.ConfigureAsync();
         await context.Service.SetEnabledAsync(true, CancellationToken.None);
+        await context.Service.SetEnabledAsync(false, CancellationToken.None);
 
         await context.Service.SetSettingsAsync("https://matrix.other.example.test", "@bot:example.test", null, CancellationToken.None);
+        context.MatrixClient.NextOutcome = new ConnectionTestOutcome(false, "No such server.");
 
         var enabled = await context.Service.SetEnabledAsync(true, CancellationToken.None);
         Assert.IsFalse(enabled.Succeeded);
-        StringAssert.Contains(enabled.Error, "successful test message");
+        StringAssert.Contains(enabled.Error, "No such server.");
     }
 
     [TestMethod]
@@ -130,8 +141,6 @@ public sealed class MatrixSettingsServiceTests
         Assert.IsTrue(test.Outcome!.Succeeded);
         StringAssert.Contains(test.Outcome.Message, "not saved yet");
         Assert.IsNull(context.Store.Current!.LastTestSucceeded);
-        var enabled = await context.Service.SetEnabledAsync(true, CancellationToken.None);
-        Assert.IsFalse(enabled.Succeeded);
     }
 
     [TestMethod]
@@ -198,11 +207,13 @@ public sealed class MatrixSettingsServiceTests
     {
         public string? LastAccessTokenUsed { get; private set; }
 
+        public ConnectionTestOutcome NextOutcome { get; set; } = new(true, "Connected as @bot:example.test.");
+
         public Task<ConnectionTestOutcome> TestConnectionAsync(
             MatrixSettings settings, string accessToken, CancellationToken cancellationToken)
         {
             LastAccessTokenUsed = accessToken;
-            return Task.FromResult(new ConnectionTestOutcome(true, "Connected as @bot:example.test."));
+            return Task.FromResult(NextOutcome);
         }
 
         public Task<MatrixRoomResult> GetOrCreateDirectRoomAsync(

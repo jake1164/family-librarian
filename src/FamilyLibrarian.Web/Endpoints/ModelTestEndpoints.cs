@@ -19,6 +19,7 @@ internal static class ModelTestEndpoints
         group.MapGet("/", GetAsync);
         group.MapPut("/", SaveAsync);
         group.MapPut("/enabled", SetEnabledAsync);
+        group.MapPut("/allow-cloud", SetAllowCloudAsync);
         group.MapPost("/run", RunAsync);
     }
 
@@ -49,6 +50,10 @@ internal static class ModelTestEndpoints
     private static async Task<IResult> SetEnabledAsync(
         SetModelTestEnabledRequest request, ModelTestSettingsService service, CancellationToken cancellationToken) =>
         ToResult(await service.SetEnabledAsync(request.Enabled, cancellationToken));
+
+    private static async Task<IResult> SetAllowCloudAsync(
+        SetModelTestCloudRequest request, ModelTestSettingsService service, CancellationToken cancellationToken) =>
+        ToResult(await service.SetAllowCloudAsync(request.Allow, cancellationToken));
 
     private static async Task<IResult> RunAsync(
         RunModelTestRequest request, ModelCapabilityTestService service, CancellationToken cancellationToken)

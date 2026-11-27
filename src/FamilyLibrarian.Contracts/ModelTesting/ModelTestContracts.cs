@@ -22,6 +22,8 @@ public sealed record SaveModelTestSettingsRequest(
 
 public sealed record SetModelTestEnabledRequest(bool Enabled);
 
+public sealed record SetModelTestCloudRequest(bool Allow);
+
 /// <param name="Target"><c>Primary</c>, <c>Comparison</c>, <c>Cloud</c>, <c>Role</c> (a production role's configured model, read only) or <c>Alias</c> (a test-only alias).</param>
 /// <param name="Checks">Check names to run; empty or null runs all of them.</param>
 /// <param name="ConfirmCloud">Must be true, in addition to the cloud setting, for a cloud model to be called.</param>

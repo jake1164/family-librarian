@@ -8,9 +8,8 @@ namespace FamilyLibrarian.Infrastructure.Tests.Publishing;
 /// <summary>
 /// <see cref="AudiobookshelfSettingsService.GetRequestReadinessErrorAsync"/> --
 /// the Audiobookshelf half of the format-readiness gate, mirroring
-/// <c>CwaSettingsServiceTests</c>. Unlike CWA, <see cref="AudiobookshelfSettingsService.SetEnabledAsync"/>
-/// itself does not require a passing test, so these tests exercise readiness
-/// directly rather than an enable-time rejection.
+/// <c>CwaSettingsServiceTests</c> -- and the same enable rules: the saved settings
+/// must be complete and must pass a test, which enabling runs when needed.
 /// </summary>
 [TestClass]
 public sealed class AudiobookshelfSettingsServiceTests
@@ -31,70 +30,65 @@ public sealed class AudiobookshelfSettingsServiceTests
     }
 
     [TestMethod]
-    public async Task TheDraftConfigurationTestDoesNotPersistAResult()
+    public async Task ATestOfUnsavedValuesIsNotRecorded()
     {
-        // TestConfigurationAsync exists so an administrator can check unsaved
-        // form values without committing them -- it must never let
-        // LastTestSucceeded become true on its own, or the readiness gate
-        // could be satisfied by a test result nothing ever actually saved.
+        // TestConfigurationAsync checks the values on screen. A pass for values that
+        // are not saved must never satisfy the readiness gate for the saved ones.
         var context = new TestContext();
         await context.SetSettingsAndTokenAsync();
+
+        var outcome = await context.Service.TestConfigurationAsync(
+            "https://other.example.test", context.LibraryId, null, context.ApiToken, CancellationToken.None);
+
+        StringAssert.Contains(outcome.Message, "not saved yet");
+        Assert.IsNull((await context.Service.GetStatusAsync(CancellationToken.None)).LastTestSucceeded);
+    }
+
+    [TestMethod]
+    public async Task ATestOfTheSavedValuesIsRecorded()
+    {
+        var context = new TestContext();
+        await context.SetSettingsAndTokenAsync();
+
+        await context.Service.TestConfigurationAsync(context.BaseUrl, context.LibraryId, null, null, CancellationToken.None);
+
+        Assert.AreEqual(true, (await context.Service.GetStatusAsync(CancellationToken.None)).LastTestSucceeded);
+    }
+
+    [TestMethod]
+    [DataRow(false, false, false, "base URL is required")]
+    [DataRow(true, false, false, "library must be selected")]
+    [DataRow(true, true, false, "API token is required")]
+    public async Task EnablingIncompleteSettingsIsRefused(bool url, bool library, bool token, string expected)
+    {
+        var context = new TestContext();
+        await context.Service.SetSettingsAsync(
+            url ? context.BaseUrl : null, null, library ? context.LibraryId : null, null, CancellationToken.None);
+        if (token) await context.Service.SetApiTokenAsync(context.ApiToken, CancellationToken.None);
+
+        var result = await context.Service.SetEnabledAsync(true, CancellationToken.None);
+
+        Assert.AreEqual(PublishingCommandOutcome.Invalid, result.Outcome);
+        StringAssert.Contains(result.Error, expected);
+        Assert.IsFalse((await context.Service.GetStatusAsync(CancellationToken.None)).IsEnabled);
+    }
+
+    [TestMethod]
+    public async Task EnablingRunsTheTestAndStaysOffWhenItFails()
+    {
+        var context = new TestContext();
+        await context.SetSettingsAndTokenAsync();
+        context.ConnectionTester.NextOutcome = new ConnectionTestOutcome(false, "The token was refused.");
+
+        var refused = await context.Service.SetEnabledAsync(true, CancellationToken.None);
+
+        StringAssert.Contains(refused.Error, "Audiobookshelf stayed off");
+        StringAssert.Contains(refused.Error, "The token was refused.");
+
         context.ConnectionTester.NextOutcome = new ConnectionTestOutcome(true, "Connected.");
-
-        await context.Service.TestConfigurationAsync(
-            context.BaseUrl, context.LibraryId, null, context.ApiToken, CancellationToken.None);
-        await context.Service.SetEnabledAsync(true, CancellationToken.None);
-
-        var error = await context.Service.GetRequestReadinessErrorAsync(CancellationToken.None);
-
-        StringAssert.Contains(error, "Test the connection");
-    }
-
-    [TestMethod]
-    public async Task RequestReadinessIsRejectedWhenEnabledWithoutABaseUrl()
-    {
-        var context = new TestContext();
-        await context.Service.SetEnabledAsync(true, CancellationToken.None);
-
-        var error = await context.Service.GetRequestReadinessErrorAsync(CancellationToken.None);
-
-        StringAssert.Contains(error, "base URL is required");
-    }
-
-    [TestMethod]
-    public async Task RequestReadinessIsRejectedWhenEnabledWithoutALibrary()
-    {
-        var context = new TestContext();
-        await context.Service.SetSettingsAsync(context.BaseUrl, null, null, null, CancellationToken.None);
-        await context.Service.SetEnabledAsync(true, CancellationToken.None);
-
-        var error = await context.Service.GetRequestReadinessErrorAsync(CancellationToken.None);
-
-        StringAssert.Contains(error, "library must be selected");
-    }
-
-    [TestMethod]
-    public async Task RequestReadinessIsRejectedWhenEnabledWithoutAnApiToken()
-    {
-        var context = new TestContext();
-        await context.Service.SetSettingsAsync(context.BaseUrl, null, context.LibraryId, null, CancellationToken.None);
-        await context.Service.SetEnabledAsync(true, CancellationToken.None);
-
-        var error = await context.Service.GetRequestReadinessErrorAsync(CancellationToken.None);
-
-        StringAssert.Contains(error, "API token is required");
-    }
-
-    [TestMethod]
-    public async Task RequestReadinessIsRejectedWhenConfiguredButNeverTested()
-    {
-        var context = new TestContext();
-        await context.SetSettingsAndTokenAsync();
-        await context.Service.SetEnabledAsync(true, CancellationToken.None);
-
-        var error = await context.Service.GetRequestReadinessErrorAsync(CancellationToken.None);
-
-        StringAssert.Contains(error, "Test the connection");
+        var enabled = await context.Service.SetEnabledAsync(true, CancellationToken.None);
+        Assert.IsTrue(enabled.Status!.IsEnabled);
+        Assert.IsNull(await context.Service.GetRequestReadinessErrorAsync(CancellationToken.None));
     }
 
     [TestMethod]

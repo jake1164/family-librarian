@@ -27,9 +27,8 @@ public sealed class AudiobookshelfSettingsService(
     /// Whether a user may request an Audiobook right now. Mirrors
     /// <c>CwaSettingsService.GetRequestReadinessErrorAsync</c>'s shape and bar
     /// (enabled, fully configured, and a passing test for the currently saved
-    /// configuration) even though <see cref="SetEnabledAsync"/> does not itself
-    /// require a passing test. Returns the reason when not ready, or
-    /// <see langword="null"/> when ready.
+    /// configuration). Settings can change after enabling, so readiness checks
+    /// again. Returns the reason when not ready, or <see langword="null"/> when ready.
     /// </summary>
     public async Task<bool> IsEnabledAsync(CancellationToken cancellationToken) =>
         (await store.FindAsync(cancellationToken))?.IsEnabled == true;
@@ -49,6 +48,25 @@ public sealed class AudiobookshelfSettingsService(
         bool isEnabled, CancellationToken cancellationToken)
     {
         var settings = await store.GetOrCreateAsync(cancellationToken);
+        if (isEnabled)
+        {
+            if (GetRequirementError(settings) is { } requirementError)
+            {
+                return AudiobookshelfCommandResult.Invalid(requirementError);
+            }
+
+            // Requests need a passing test of the saved settings, so an enabled destination without one would be unusable.
+            if (settings.LastTestSucceeded != true)
+            {
+                var test = await TestConnectionAsync(cancellationToken);
+                if (!test.Outcome.Succeeded)
+                {
+                    return AudiobookshelfCommandResult.Invalid(
+                        $"Audiobookshelf stayed off. The connection test failed: {test.Outcome.Message}");
+                }
+            }
+        }
+
         settings.SetEnabled(isEnabled, currentUser.UserId, clock.UtcNow);
         await store.SaveChangesAsync(cancellationToken);
 
@@ -135,7 +153,14 @@ public sealed class AudiobookshelfSettingsService(
     {
         var settings = await store.GetOrCreateAsync(cancellationToken);
         var outcome = await connectionTester.TestAsync(settings, cancellationToken);
+        await RecordTestAsync(settings, outcome, cancellationToken);
 
+        return new AudiobookshelfConnectionTestResult(ToStatus(settings), outcome);
+    }
+
+    private async Task RecordTestAsync(
+        AudiobookshelfSettings settings, ConnectionTestOutcome outcome, CancellationToken cancellationToken)
+    {
         settings.RecordTestResult(outcome.Succeeded, outcome.Message, currentUser.UserId, clock.UtcNow);
         await store.SaveChangesAsync(cancellationToken);
 
@@ -145,18 +170,16 @@ public sealed class AudiobookshelfSettingsService(
             "audiobookshelf",
             new { Destination = "audiobookshelf", outcome.Succeeded },
             cancellationToken);
-
-        return new AudiobookshelfConnectionTestResult(ToStatus(settings), outcome);
     }
 
     /// <summary>
     /// Tests the base URL, library ID, folder ID, and API token currently in
-    /// the administrator's form without changing persisted configuration, the
-    /// stored token, audit state, or last-test status — mirroring
-    /// <c>CwaSettingsService</c>'s non-persistent ingest/OPDS tests. A blank
-    /// <paramref name="apiToken"/> falls back to the stored token so an
-    /// administrator can test a base URL/library/folder change without
-    /// retyping a token they already saved.
+    /// the administrator's form without changing persisted configuration or the
+    /// stored token. The result is recorded only when those values are the
+    /// saved ones; a test of unsaved values must never mark the saved settings
+    /// as tested. A blank <paramref name="apiToken"/> falls back to the stored
+    /// token so an administrator can test a base URL/library/folder change
+    /// without retyping a token they already saved.
     /// </summary>
     public async Task<ConnectionTestOutcome> TestConfigurationAsync(
         string? baseUrl, string? libraryId, string? folderId, string? apiToken, CancellationToken cancellationToken)
@@ -195,8 +218,26 @@ public sealed class AudiobookshelfSettingsService(
                 clock.UtcNow);
         }
 
-        return await connectionTester.TestAsync(candidate, cancellationToken);
+        var outcome = await connectionTester.TestAsync(candidate, cancellationToken);
+        if (persisted is not null && MatchesSavedConfiguration(persisted, candidate))
+        {
+            await RecordTestAsync(await store.GetOrCreateAsync(cancellationToken), outcome, cancellationToken);
+            return outcome;
+        }
+
+        return outcome with { Message = $"{outcome.Message} These values are not saved yet -- click Save settings to keep them." };
     }
+
+    private bool MatchesSavedConfiguration(AudiobookshelfSettings persisted, AudiobookshelfSettings candidate) =>
+        persisted.HasApiToken
+        && candidate.HasApiToken
+        && string.Equals(persisted.BaseUrl, candidate.BaseUrl, StringComparison.Ordinal)
+        && string.Equals(persisted.LibraryId, candidate.LibraryId, StringComparison.Ordinal)
+        && string.Equals(persisted.FolderId, candidate.FolderId, StringComparison.Ordinal)
+        && string.Equals(
+            protector.Unprotect(ApiTokenPurpose, persisted.ProtectedApiToken!, persisted.ApiTokenFormatVersion),
+            protector.Unprotect(ApiTokenPurpose, candidate.ProtectedApiToken!, candidate.ApiTokenFormatVersion),
+            StringComparison.Ordinal);
 
     /// <summary>
     /// Lists the libraries (and their folders) on the Audiobookshelf instance
@@ -251,6 +292,27 @@ public sealed class AudiobookshelfSettingsService(
 
     private static string? GetConfigurationError(AudiobookshelfSettings settings)
     {
+        if (GetRequirementError(settings) is { } requirementError)
+        {
+            return requirementError;
+        }
+
+        // LastTestSucceeded is reset to null by every settings/secret mutation
+        // (AudiobookshelfSettings.ResetTestResult()), so this is specifically "a
+        // successful test for the *currently saved* configuration," not a stale
+        // pass from before the last edit.
+        if (settings.LastTestSucceeded != true)
+        {
+            return "Test the connection and confirm it succeeds before enabling Audiobookshelf. " +
+                   "Any settings change since the last test invalidates it.";
+        }
+
+        return null;
+    }
+
+    /// <summary>What must be saved before a connection test is worth running.</summary>
+    private static string? GetRequirementError(AudiobookshelfSettings settings)
+    {
         if (string.IsNullOrWhiteSpace(settings.BaseUrl))
         {
             return "A base URL is required before enabling Audiobookshelf.";
@@ -264,16 +326,6 @@ public sealed class AudiobookshelfSettingsService(
         if (!settings.HasApiToken)
         {
             return "An API token is required before enabling Audiobookshelf.";
-        }
-
-        // LastTestSucceeded is reset to null by every settings/secret mutation
-        // (AudiobookshelfSettings.ResetTestResult()), so this is specifically "a
-        // successful test for the *currently saved* configuration," not a stale
-        // pass from before the last edit.
-        if (settings.LastTestSucceeded != true)
-        {
-            return "Test the connection and confirm it succeeds before enabling Audiobookshelf. " +
-                   "Any settings change since the last test invalidates it.";
         }
 
         return null;

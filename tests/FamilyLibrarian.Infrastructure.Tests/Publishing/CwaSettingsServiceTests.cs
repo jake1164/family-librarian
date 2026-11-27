@@ -37,29 +37,32 @@ public sealed class CwaSettingsServiceTests
     }
 
     [TestMethod]
-    public async Task EnablingWithOpdsConfiguredButNeverTestedIsRejected()
+    public async Task EnablingWithNoRecordedTestRunsItAndEnablesWhenItPasses()
     {
         var context = new TestContext();
         await context.SetLocalIngestAndOpdsAsync();
+        context.ConnectionTester.NextOutcome = new ConnectionTestOutcome(true, "Connected.");
 
         var result = await context.Service.SetEnabledAsync(true, CancellationToken.None);
 
-        Assert.AreEqual(PublishingCommandOutcome.Invalid, result.Outcome);
-        StringAssert.Contains(result.Error, "Test the connection");
+        Assert.AreEqual(PublishingCommandOutcome.Success, result.Outcome);
+        Assert.IsTrue(result.Status!.IsEnabled);
+        Assert.AreEqual(true, result.Status.LastTestSucceeded);
     }
 
     [TestMethod]
-    public async Task EnablingWithAFailedTestIsRejected()
+    public async Task CwaStaysOffWhenTheTurnOnTestFails()
     {
         var context = new TestContext();
         await context.SetLocalIngestAndOpdsAsync();
         context.ConnectionTester.NextOutcome = new ConnectionTestOutcome(false, "The OPDS catalog is unreachable.");
-        await context.Service.TestConnectionAsync(CwaConnectionTestTarget.All, CancellationToken.None);
 
         var result = await context.Service.SetEnabledAsync(true, CancellationToken.None);
 
         Assert.AreEqual(PublishingCommandOutcome.Invalid, result.Outcome);
-        StringAssert.Contains(result.Error, "Test the connection");
+        StringAssert.Contains(result.Error, "CWA stayed off");
+        StringAssert.Contains(result.Error, "The OPDS catalog is unreachable.");
+        Assert.IsFalse((await context.Service.GetStatusAsync(CancellationToken.None)).IsEnabled);
     }
 
     [TestMethod]
@@ -88,11 +91,12 @@ public sealed class CwaSettingsServiceTests
         await context.Service.TestConnectionAsync(CwaConnectionTestTarget.All, CancellationToken.None);
 
         await context.SetLocalIngestAndOpdsAsync(localIngestPath: "/ingest-changed");
+        context.ConnectionTester.NextOutcome = new ConnectionTestOutcome(false, "The new path is missing.");
 
         var result = await context.Service.SetEnabledAsync(true, CancellationToken.None);
 
         Assert.AreEqual(PublishingCommandOutcome.Invalid, result.Outcome);
-        StringAssert.Contains(result.Error, "Test the connection");
+        StringAssert.Contains(result.Error, "The new path is missing.");
     }
 
     [TestMethod]

@@ -20,12 +20,36 @@ public sealed class MatrixSettingsService(
     public async Task<MatrixStatus> GetStatusAsync(CancellationToken cancellationToken) =>
         ToStatus(await store.FindAsync(cancellationToken));
 
+    /// <summary>
+    /// Turns Matrix on or off. Turning it on needs a passing connection test of the saved settings; when none is recorded,
+    /// this runs one itself, so no separate step is needed. The test only signs the bot in and sends nothing to anyone.
+    /// </summary>
     public async Task<MatrixCommandResult> SetEnabledAsync(bool enabled, CancellationToken cancellationToken)
     {
         var settings = await store.GetOrCreateAsync(cancellationToken);
-        if (enabled && GetConfigurationError(settings) is { } error)
+        if (enabled)
         {
-            return MatrixCommandResult.Invalid(error);
+            if (GetConnectionPrerequisiteError(settings) is { } error)
+            {
+                return MatrixCommandResult.Invalid(error);
+            }
+
+            if (settings.LastTestSucceeded != true)
+            {
+                var token = protector.Unprotect(
+                    CommunicationSecretPurposes.MatrixAccessToken, settings.ProtectedAccessToken!, settings.AccessTokenFormatVersion);
+                if (token is null)
+                {
+                    return MatrixCommandResult.Invalid("The stored Matrix access token could not be decrypted.");
+                }
+
+                var outcome = await matrixClient.TestConnectionAsync(settings, token, cancellationToken);
+                await RecordTestAsync(settings, outcome, cancellationToken);
+                if (!outcome.Succeeded)
+                {
+                    return MatrixCommandResult.Invalid($"Matrix stayed off. The connection test failed: {outcome.Message}");
+                }
+            }
         }
 
         settings.SetEnabled(enabled, currentUser.UserId, clock.UtcNow);
@@ -201,6 +225,13 @@ public sealed class MatrixSettingsService(
         }
 
         var settings = await store.GetOrCreateAsync(cancellationToken);
+        await RecordTestAsync(settings, outcome, cancellationToken);
+
+        return MatrixTestResult.Success(ToStatus(settings), outcome);
+    }
+
+    private async Task RecordTestAsync(MatrixSettings settings, ConnectionTestOutcome outcome, CancellationToken cancellationToken)
+    {
         settings.RecordTestResult(outcome.Succeeded, outcome.Message, currentUser.UserId, clock.UtcNow);
         await store.SaveChangesAsync(cancellationToken);
         await audit.WriteAsync(
@@ -209,8 +240,6 @@ public sealed class MatrixSettingsService(
             ProviderId,
             new { Provider = ProviderId, outcome.Succeeded },
             cancellationToken);
-
-        return MatrixTestResult.Success(ToStatus(settings), outcome);
     }
 
     private bool MatchesSavedConfiguration(MatrixSettings persisted, MatrixSettings candidate, string plaintextToken) =>
@@ -234,21 +263,6 @@ public sealed class MatrixSettingsService(
             settings.LastTestedAtUtc,
             settings.LastTestSucceeded,
             settings.LastTestMessage);
-
-    private static string? GetConfigurationError(MatrixSettings settings)
-    {
-        if (GetConnectionPrerequisiteError(settings) is { } error)
-        {
-            return error;
-        }
-
-        if (settings.LastTestSucceeded != true)
-        {
-            return "Send a successful test message for the currently saved configuration before enabling Matrix.";
-        }
-
-        return null;
-    }
 
     private static string? GetConnectionPrerequisiteError(MatrixSettings settings)
     {
