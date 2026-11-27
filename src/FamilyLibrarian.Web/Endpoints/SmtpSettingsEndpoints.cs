@@ -1,3 +1,5 @@
+using FamilyLibrarian.Application.Abstractions;
+using FamilyLibrarian.Application.Accounts;
 using FamilyLibrarian.Application.Communications;
 using FamilyLibrarian.Domain.Communications;
 using FamilyLibrarian.Contracts.Communications;
@@ -34,12 +36,20 @@ internal static class SmtpSettingsEndpoints
         }
 
         return ToResult(await service.SetSettingsAsync(
-            request.Host, request.Port, securityMode, request.Username, request.FromAddress, request.FromName, cancellationToken));
+            request.Host, request.Port, securityMode, request.Username, request.FromAddress, request.FromName,
+            request.Password, cancellationToken));
     }
 
     private static async Task<IResult> SetEnabledAsync(
-        SetSmtpEnabledRequest request, SmtpSettingsService service, CancellationToken cancellationToken) =>
-        ToResult(await service.SetEnabledAsync(request.Enabled, cancellationToken));
+        SetSmtpEnabledRequest request, SmtpSettingsService service, ICurrentUser currentUser, IUserAccountStore accounts,
+        CancellationToken cancellationToken)
+    {
+        // The address comes from the account on the server, never from the request.
+        var recipient = request.Enabled && currentUser.UserId is { } userId
+            ? (await accounts.FindAsync(userId, cancellationToken))?.Email
+            : null;
+        return ToResult(await service.SetEnabledAsync(request.Enabled, recipient, cancellationToken));
+    }
 
     private static async Task<IResult> SetPasswordAsync(
         SetSmtpPasswordRequest request, SmtpSettingsService service, CancellationToken cancellationToken) =>

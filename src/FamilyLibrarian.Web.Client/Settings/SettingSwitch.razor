@@ -1,0 +1,100 @@
+@inject IDialogService Dialogs
+
+@* Every on/off setting that saves as soon as it is clicked goes through here (docs/07-ui-conventions.md).
+   MudSwitch moves on click and only moves back when the value it is given changes, so a refused save would
+   leave it showing the click. This shows the click while saving, then always shows the saved value again. *@
+<div class="@($"setting-switch d-flex flex-column {(AlignEnd ? "align-end" : "align-start")} {Class}")" style="max-width: 36rem;">
+    <MudSwitch T="bool" Value="shown" ValueChanged="ChangeAsync" Color="Color" Label="@Label"
+               Disabled="@(Disabled || working)" @attributes="Attributes" />
+    @if (working && !string.IsNullOrWhiteSpace(WorkingText))
+    {
+        <MudText Typo="Typo.caption" role="status">@WorkingText</MudText>
+    }
+    @if (refusal is not null)
+    {
+        <MudAlert Severity="Severity.Error" Dense="true" Class="mt-1" role="alert">@refusal</MudAlert>
+    }
+</div>
+
+@code {
+    private bool shown;
+    private bool working;
+    private bool lastValue;
+    private string? refusal;
+
+    /// <summary>The saved state. The switch shows nothing else once a change has finished.</summary>
+    [Parameter, EditorRequired] public bool Value { get; set; }
+
+    /// <summary>Saves the change. Call <see cref="SettingSwitchChange.Refuse"/> when it cannot be made.</summary>
+    [Parameter, EditorRequired] public EventCallback<SettingSwitchChange> Changing { get; set; }
+
+    [Parameter] public string? Label { get; set; }
+
+    [Parameter] public Color Color { get; set; } = Color.Primary;
+
+    [Parameter] public bool Disabled { get; set; }
+
+    [Parameter] public bool AlignEnd { get; set; }
+
+    [Parameter] public string? Class { get; set; }
+
+    /// <summary>Shown while the save is running, for a change that takes a while because it runs a check.</summary>
+    [Parameter] public string? WorkingText { get; set; }
+
+    /// <summary>When set, turning the switch on asks this question first. Turning it off never asks.</summary>
+    [Parameter] public string? ConfirmOn { get; set; }
+
+    [Parameter] public string ConfirmTitle { get; set; } = "Turn this on?";
+
+    [Parameter] public string ConfirmYes { get; set; } = "Turn on";
+
+    [Parameter(CaptureUnmatchedValues = true)] public IReadOnlyDictionary<string, object>? Attributes { get; set; }
+
+    protected override void OnParametersSet()
+    {
+        // A reason no longer applies once the saved state has changed, for example from another computer.
+        if (Value != lastValue)
+        {
+            lastValue = Value;
+            refusal = null;
+        }
+
+        if (!working)
+        {
+            shown = Value;
+        }
+    }
+
+    private async Task ChangeAsync(bool wanted)
+    {
+        refusal = null;
+        working = true;
+        shown = wanted;
+        try
+        {
+            // MudSwitch has to be rendered with the clicked state once, otherwise returning to the saved value is not a
+            // change to it. Blazor batches renders while an event is being handled, so yield to let this one happen.
+            StateHasChanged();
+            await Task.Yield();
+
+            if (wanted && ConfirmOn is not null &&
+                await Dialogs.ShowMessageBoxAsync(ConfirmTitle, ConfirmOn, yesText: ConfirmYes, cancelText: "Cancel") != true)
+            {
+                return;
+            }
+
+            var change = new SettingSwitchChange(wanted);
+            await Changing.InvokeAsync(change);
+            refusal = change.Refusal;
+        }
+        catch (HttpRequestException)
+        {
+            refusal = "We couldn't reach Family Librarian, so nothing changed. Try again.";
+        }
+        finally
+        {
+            working = false;
+            shown = Value;
+        }
+    }
+}

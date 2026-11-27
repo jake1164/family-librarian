@@ -39,10 +39,13 @@ else
 
     <MudPaper Class="pa-4" Outlined="true">
         <MudStack Spacing="3">
-            <MudSwitch T="bool" Value="enabled" ValueChanged="OnEnabledChangedAsync" Disabled="@(busy || !CanEdit)"
-                       Color="Color.Primary" Label="Hold notifications during a daily window" />
+            <SettingSwitch Value="hasSavedWindow" Changing="SetEnabledAsync" Disabled="@(busy || !CanEdit)"
+                           Label="Hold notifications during a daily window" />
+            <MudText Typo="Typo.caption">
+                Turning this on starts with 10:00 PM to 7:00 AM in your browser's time zone. You can change that here afterwards.
+            </MudText>
 
-            @if (enabled)
+            @if (hasSavedWindow || needsSetup)
             {
                 <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="2" Wrap="Wrap.Wrap">
                     <MudTextField Immediate="true" T="string" @bind-Value="timeZoneId" Label="Time zone" Disabled="@(busy || !CanEdit)"
@@ -67,18 +70,21 @@ else
                 <MudAlert Severity="Severity.Error">@errorMessage</MudAlert>
             }
 
-            <div>
-                <MudButton Variant="Variant.Filled" Color="Color.Primary" Disabled="@(busy || !CanEdit)" OnClick="SaveAsync">
-                    Save quiet hours
-                </MudButton>
-            </div>
+            @if (hasSavedWindow)
+            {
+                <div>
+                    <MudButton Variant="Variant.Filled" Color="Color.Primary" Disabled="@(busy || !CanEdit)" OnClick="SaveAsync">
+                        Save quiet hours
+                    </MudButton>
+                </div>
+            }
         </MudStack>
     </MudPaper>
 }
 
 @code {
     private readonly SettingsSnapshot draft = new();
-    private object QuietHoursFields => new { enabled, timeZoneId, startTime, endTime };
+    private object QuietHoursFields => new { timeZoneId, startTime, endTime };
     private bool isLoading = true;
     private bool loadFailed;
     private bool busy;
@@ -86,7 +92,10 @@ else
     private bool hasSavedWindow;
     // A window saved earlier can still be turned off while nothing can send.
     private bool CanEdit => isAvailable || hasSavedWindow;
-    private bool enabled;
+    // Shows the time fields while off, when turning on needs something the defaults could not supply.
+    private bool needsSetup;
+    private static readonly TimeSpan DefaultStart = TimeSpan.FromHours(22);
+    private static readonly TimeSpan DefaultEnd = TimeSpan.FromHours(7);
     private string timeZoneId = string.Empty;
     private TimeSpan? startTime;
     private TimeSpan? endTime;
@@ -101,7 +110,7 @@ else
             isAvailable = quietHours?.IsAvailable ?? false;
             if (quietHours is { TimeZoneId: not null, StartMinute: { } start, EndMinute: { } end })
             {
-                enabled = hasSavedWindow = true;
+                hasSavedWindow = true;
                 timeZoneId = quietHours.TimeZoneId;
                 startTime = TimeSpan.FromMinutes(start);
                 endTime = TimeSpan.FromMinutes(end);
@@ -118,12 +127,57 @@ else
         }
     }
 
-    private async Task OnEnabledChangedAsync(bool value)
+    private async Task SetEnabledAsync(SettingSwitchChange change)
     {
-        enabled = value;
-        if (value && string.IsNullOrWhiteSpace(timeZoneId))
+        errorMessage = null;
+        busy = true;
+        try
         {
-            await UseBrowserTimeZoneAsync();
+            if (!change.Value)
+            {
+                var cleared = await QuietHoursApi.SetAsync(null, null, null);
+                if (!cleared.Succeeded)
+                {
+                    change.Refuse(cleared.Error);
+                    return;
+                }
+
+                hasSavedWindow = needsSetup = false;
+                draft.Accept("quiet", QuietHoursFields);
+                Snackbar.Saved("Quiet hours turned off.");
+                return;
+            }
+
+            if (string.IsNullOrWhiteSpace(timeZoneId))
+            {
+                await UseBrowserTimeZoneAsync();
+            }
+
+            startTime ??= DefaultStart;
+            endTime ??= DefaultEnd;
+            if (string.IsNullOrWhiteSpace(timeZoneId))
+            {
+                needsSetup = true;
+                change.Refuse("Your browser did not report a time zone. Enter one below, then turn this on.");
+                return;
+            }
+
+            var result = await QuietHoursApi.SetAsync(timeZoneId, (int)startTime.Value.TotalMinutes, (int)endTime.Value.TotalMinutes);
+            if (!result.Succeeded)
+            {
+                needsSetup = true;
+                change.Refuse(result.Error);
+                return;
+            }
+
+            hasSavedWindow = true;
+            needsSetup = false;
+            draft.Accept("quiet", QuietHoursFields);
+            Snackbar.Saved("Quiet hours turned on.");
+        }
+        finally
+        {
+            busy = false;
         }
     }
 
@@ -147,25 +201,17 @@ else
 
         try
         {
-            QuietHoursResult result;
-            if (!enabled)
-            {
-                result = await QuietHoursApi.SetAsync(null, null, null);
-            }
-            else if (startTime is { } start && endTime is { } end && !string.IsNullOrWhiteSpace(timeZoneId))
-            {
-                result = await QuietHoursApi.SetAsync(timeZoneId, (int)start.TotalMinutes, (int)end.TotalMinutes);
-            }
-            else
+            if (startTime is not { } start || endTime is not { } end || string.IsNullOrWhiteSpace(timeZoneId))
             {
                 errorMessage = "Enter a time zone and both a start and end time.";
                 return;
             }
 
+            var result = await QuietHoursApi.SetAsync(timeZoneId, (int)start.TotalMinutes, (int)end.TotalMinutes);
+
             if (result.Succeeded)
             {
-                hasSavedWindow = enabled;
-                Snackbar.Add("Quiet hours saved.", Severity.Success);
+                Snackbar.Saved("Quiet hours saved.");
                 draft.Accept("quiet", QuietHoursFields);
             }
             else

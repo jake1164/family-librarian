@@ -74,3 +74,13 @@ html, body {
 .provider-source-link:hover {
     text-decoration: underline;
 }
+
+/* A setting switch that is showing a message grows downwards. In a header row, keep the title level with the switch
+   instead of letting the row centre it against the taller column. */
+.d-flex.flex-row:has(> .setting-switch > .mud-alert) {
+    align-items: flex-start !important;
+}
+
+.d-flex.flex-row:has(> .setting-switch > .mud-alert) > :not(.setting-switch) {
+    padding-top: 0.35rem;
+}

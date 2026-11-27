@@ -141,6 +141,9 @@ internal sealed class FamilyLibrarianAppFactory(
             // overrides this via configureTestServices, same as the others below.
             services.RemoveAll<ICwaConnectionTester>();
             services.AddSingleton<ICwaConnectionTester, AlwaysSucceedsCwaConnectionTester>();
+            // Enabling Audiobookshelf runs its connection test, so this needs a double for the same reason as CWA's.
+            services.RemoveAll<IAudiobookshelfConnectionTester>();
+            services.AddSingleton<IAudiobookshelfConnectionTester, AlwaysSucceedsAudiobookshelfConnectionTester>();
             services.RemoveAll<IAudiobookshelfApiClient>();
             services.AddSingleton<IAudiobookshelfApiClient, AlwaysEmptyAudiobookshelfApiClient>();
 

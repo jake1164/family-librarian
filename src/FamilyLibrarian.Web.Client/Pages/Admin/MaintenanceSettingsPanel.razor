@@ -1,6 +1,9 @@
 @using FamilyLibrarian.Contracts.Storage
 @using FamilyLibrarian.Web.Client.Storage
 @inject StorageApiClient Api
+@inject ISnackbar Snackbar
+
+<SettingsDraftGuard IsDirty="@HasUnsavedChanges" />
 
 <MudPaper Outlined="true" Class="pa-4" id="cleanup-settings">
     <MudStack Spacing="2">
@@ -12,11 +15,6 @@
                 refused, never quietly changed. A copy that is trusted, or part of a set with a trusted track, is never removed.
             </MudText>
         </div>
-
-        @if (message is not null)
-        {
-            <MudAlert Severity="@(messageIsError ? Severity.Warning : Severity.Success)" role="@(messageIsError ? "alert" : "status")" ShowCloseIcon="true" CloseIconClicked="() => message = null">@message</MudAlert>
-        }
 
         @if (problems.Count > 0)
         {
@@ -148,8 +146,7 @@
     private IReadOnlyList<string> problems = [];
     private bool failed;
     private bool busy;
-    private string? message;
-    private bool messageIsError;
+    private bool HasUnsavedChanges => settings is not null && form is not null && form.ToDto() != settings.Values;
     private DateTimeOffset now = DateTimeOffset.UtcNow;
 
     protected override Task OnInitializedAsync() => LoadAsync();
@@ -186,7 +183,6 @@
             Say("Clean-up settings saved. The next pass uses them.", error: false);
         }
         else if (result.Problems.Count == 0) Say(result.Error ?? "The settings could not be saved.", error: true);
-        else message = null;
     }
 
     private async Task ResetAsync()
@@ -205,7 +201,7 @@
 
     private void Say(string text, bool error)
     {
-        message = text;
-        messageIsError = error;
+        if (error) Snackbar.Failed(text);
+        else Snackbar.Saved(text);
     }
 }

@@ -47,7 +47,8 @@ public sealed record ModelRoleCommand(
 public sealed record SaveModelGatewaySettings(
     string? EndpointUrl, bool AllowCloud, IReadOnlyList<ModelRoleCommand> Roles, ModelExecutionLimits? Limits = null,
     bool? AllowCloudExcerpts = null,
-    bool? AllowModelHoldRelease = null);
+    bool? AllowModelHoldRelease = null,
+    string? ApiKey = null);
 
 public sealed record ModelGatewaySettingsResult(bool Succeeded, bool Forbidden, string? Error, ModelGatewaySettingsView? Settings)
 {
@@ -95,7 +96,19 @@ public sealed class ModelGatewaySettingsService(
             return ModelGatewaySettingsResult.Invalid(error);
         }
 
+        // A null or blank key keeps the stored one.
+        var newApiKey = string.IsNullOrWhiteSpace(command.ApiKey) ? null : command.ApiKey.Trim();
+        if (newApiKey is not null && ModelConfigurationRules.ApiKeyError(newApiKey) is { } keyError)
+        {
+            return ModelGatewaySettingsResult.Invalid(keyError);
+        }
+
         var settings = await store.GetOrCreateAsync(cancellationToken);
+        if (newApiKey is not null)
+        {
+            settings.SetApiKey(protector.Protect(ModelGatewaySecretPurposes.ApiKey, newApiKey), protector.FormatVersion, currentUser.UserId, clock.UtcNow);
+        }
+
         settings.Configure(command.EndpointUrl, command.AllowCloud, currentUser.UserId, clock.UtcNow);
         foreach (var role in command.Roles)
         {
@@ -131,6 +144,102 @@ public sealed class ModelGatewaySettingsService(
                 settings.AllowModelHoldRelease,
                 settings.Limits,
                 Roles = settings.Roles.Select(role => new { Role = role.Role.ToString(), role.IsEnabled, Placement = role.Placement.ToString(), Reasoning = role.Reasoning.ToString() })
+            },
+            cancellationToken);
+        if (newApiKey is not null)
+        {
+            await audit.WriteAsync(
+                AuditActions.ModelGatewaySecretSet, AuditSubjectTypes.ModelGateway, SubjectId, new { Field = "api_key" }, cancellationToken);
+        }
+
+        return ModelGatewaySettingsResult.Success(ToView(settings));
+    }
+
+    /// <summary>Turns one role on or off on its own, using the model and placement already saved for it.</summary>
+    public async Task<ModelGatewaySettingsResult> SetRoleEnabledAsync(ModelRole role, bool enabled, CancellationToken cancellationToken)
+    {
+        if (!IsAdministrator())
+        {
+            return ModelGatewaySettingsResult.NotAllowed();
+        }
+
+        var settings = await store.GetOrCreateAsync(cancellationToken);
+        var saved = settings.FindRole(role);
+        var placement = saved?.Placement ?? ModelPlacement.Local;
+        if (enabled)
+        {
+            if (string.IsNullOrWhiteSpace(saved?.ActiveModel))
+            {
+                return ModelGatewaySettingsResult.Invalid(
+                    $"Choose a {placement.ToString().ToLowerInvariant()} model for this role and save it first.");
+            }
+
+            if (placement == ModelPlacement.Cloud && !settings.AllowCloud)
+            {
+                return ModelGatewaySettingsResult.Invalid("This role runs on a cloud model. Allow cloud use first, or run it locally.");
+            }
+        }
+
+        settings.ConfigureRole(
+            role, enabled, placement, saved?.LocalModel, saved?.CloudModel, currentUser.UserId, clock.UtcNow,
+            saved?.Reasoning ?? ModelReasoningMode.Inherit);
+        await store.SaveChangesAsync(cancellationToken);
+        await audit.WriteAsync(
+            AuditActions.ModelGatewaySettingsChanged, AuditSubjectTypes.ModelGateway, SubjectId,
+            new { Role = role.ToString(), Enabled = enabled }, cancellationToken);
+        return ModelGatewaySettingsResult.Success(ToView(settings));
+    }
+
+    /// <summary>
+    /// Changes the permissions that are given. Withdrawing cloud use always succeeds: it also switches off the roles that
+    /// are placed on a cloud model, so no saved role is left asking for a permission that has been taken away.
+    /// </summary>
+    public async Task<ModelGatewaySettingsResult> SetPermissionsAsync(
+        bool? allowCloud, bool? allowCloudExcerpts, bool? allowModelHoldRelease, CancellationToken cancellationToken)
+    {
+        if (!IsAdministrator())
+        {
+            return ModelGatewaySettingsResult.NotAllowed();
+        }
+
+        var settings = await store.GetOrCreateAsync(cancellationToken);
+        if (allowCloudExcerpts == true && !(allowCloud ?? settings.AllowCloud))
+        {
+            return ModelGatewaySettingsResult.Invalid("Allow cloud use before allowing file details to be sent to a cloud model.");
+        }
+
+        if (allowCloud is { } cloud)
+        {
+            settings.Configure(settings.EndpointUrl, cloud, currentUser.UserId, clock.UtcNow);
+            if (!cloud)
+            {
+                foreach (var role in settings.Roles.Where(role => role.IsEnabled && role.Placement == ModelPlacement.Cloud).ToArray())
+                {
+                    settings.ConfigureRole(
+                        role.Role, false, role.Placement, role.LocalModel, role.CloudModel, currentUser.UserId, clock.UtcNow, role.Reasoning);
+                }
+            }
+        }
+
+        if (allowCloudExcerpts is { } excerpts)
+        {
+            settings.SetAllowCloudExcerpts(excerpts, currentUser.UserId, clock.UtcNow);
+        }
+
+        if (allowModelHoldRelease is { } release)
+        {
+            settings.SetAllowModelHoldRelease(release, currentUser.UserId, clock.UtcNow);
+        }
+
+        await store.SaveChangesAsync(cancellationToken);
+        await audit.WriteAsync(
+            AuditActions.ModelGatewaySettingsChanged, AuditSubjectTypes.ModelGateway, SubjectId,
+            new
+            {
+                settings.AllowCloud,
+                settings.AllowCloudExcerpts,
+                settings.AllowModelHoldRelease,
+                Roles = settings.Roles.Select(role => new { Role = role.Role.ToString(), role.IsEnabled })
             },
             cancellationToken);
         return ModelGatewaySettingsResult.Success(ToView(settings));

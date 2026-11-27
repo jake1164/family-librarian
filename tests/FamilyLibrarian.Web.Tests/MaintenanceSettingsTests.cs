@@ -323,7 +323,7 @@ public sealed class MaintenanceSettingsTests
 
     private static async Task<string> RenderPanelAsync(Func<HttpRequestMessage, HttpResponseMessage> respond)
     {
-        await using var services = new ServiceCollection().AddLogging().AddMudServices().AddSingleton<IJSRuntime, NoJs>().AddSingleton(ClientFor(respond)).BuildServiceProvider();
+        await using var services = new ServiceCollection().AddLogging().AddMudServices().AddSingleton<IJSRuntime, NoJs>().AddSingleton<NavigationManager, StaticNavigationManager>().AddSingleton(ClientFor(respond)).BuildServiceProvider();
         await using var renderer = new HtmlRenderer(services, NullLoggerFactory.Instance);
         return await renderer.Dispatcher.InvokeAsync(async () => (await renderer.RenderComponentAsync<MaintenanceSettingsPanel>(ParameterView.Empty)).ToHtmlString());
     }

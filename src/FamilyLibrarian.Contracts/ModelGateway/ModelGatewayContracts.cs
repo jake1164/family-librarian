@@ -54,7 +54,8 @@ public sealed record ModelLimitsDto(
 public sealed record SaveModelGatewaySettingsRequest(
     string? EndpointUrl, bool AllowCloud, IReadOnlyList<ModelRoleDto> Roles, ModelLimitsDto? Limits = null,
     bool? AllowCloudExcerpts = null,
-    bool? AllowModelHoldRelease = null);
+    bool? AllowModelHoldRelease = null,
+    string? ApiKey = null);
 
 /// <param name="ReportedTokens">Tokens the provider reported; calls it reported nothing for are counted in <paramref name="CallsWithoutUsage"/>, not as zero.</param>
 /// <param name="Opportunities">Facts about the situation the calls were made in (for example a tie existed), never about what the model did.</param>
@@ -97,6 +98,13 @@ public sealed record ModelCallFailuresResponse(
     DateTimeOffset SinceUtc, DateTimeOffset UntilUtc, int Page, bool HasMore, IReadOnlyList<ModelCallFailureResponse> Rows);
 
 public sealed record SetModelGatewayEnabledRequest(bool Enabled);
+
+/// <summary>Turns one role on or off, using that role's saved model and placement.</summary>
+public sealed record SetModelRoleEnabledRequest(bool Enabled);
+
+/// <summary>Changes the permissions that are given and leaves the others as they are.</summary>
+public sealed record SetModelGatewayPermissionsRequest(
+    bool? AllowCloud = null, bool? AllowCloudExcerpts = null, bool? AllowModelHoldRelease = null);
 
 public sealed record SetModelGatewayApiKeyRequest(string ApiKey);
 

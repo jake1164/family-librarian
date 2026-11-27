@@ -19,9 +19,6 @@ public sealed class SmtpSettingsApiClient(HttpClient httpClient, AntiforgeryToke
     public Task<SmtpSettingsResult> SetEnabledAsync(bool enabled, CancellationToken cancellationToken = default) =>
         SendAsync(HttpMethod.Put, $"{BasePath}/enabled", new SetSmtpEnabledRequest(enabled), cancellationToken);
 
-    public Task<SmtpSettingsResult> SetPasswordAsync(string password, CancellationToken cancellationToken = default) =>
-        SendAsync(HttpMethod.Put, $"{BasePath}/password", new SetSmtpPasswordRequest(password), cancellationToken);
-
     public Task<SmtpSettingsResult> ClearPasswordAsync(CancellationToken cancellationToken = default) =>
         SendAsync<object>(HttpMethod.Delete, $"{BasePath}/password", null, cancellationToken);
 

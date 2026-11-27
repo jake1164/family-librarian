@@ -263,6 +263,30 @@ imply it as a defect or guess a kind the provider's own evidence did not state.
 Every `MudSwitch` sets a color and shows a label; without a color, a switch that
 is on looks inactive.
 
+### Turning something on or off saves at once
+
+Use [`Settings/SettingSwitch.razor`](../src/FamilyLibrarian.Web.Client/Settings/SettingSwitch.razor)
+for every on/off setting. Do not use a plain `MudSwitch` with `Value` and
+`ValueChanged` for this: `MudSwitch` moves on click and only moves back when the
+value it is given changes, so a refused save leaves it looking on.
+
+- The switch saves when clicked. It never waits for a Save button.
+- It ends up showing the saved state, whatever happened to the click.
+- If turning it on needs a check (a connection test, a test email), the host runs
+  that check as part of turning it on. Nobody has to press a test button first.
+- A check uses the saved settings. If the card has unsaved edits, refuse and say
+  to save first.
+- When it cannot turn on, call `SettingSwitchChange.Refuse`. The reason stays
+  beside the switch, and the page opens whatever setup needs attention.
+- Privacy and risk permissions set `ConfirmOn`, which asks before turning on.
+  Turning something off never asks.
+- Turning a permission off must always succeed. Switch off whatever depended on
+  it rather than refusing.
+- A switch that changes how data is deleted, and so needs a preview first, or one
+  that only filters a view, is not an on/off setting and stays a plain `MudSwitch`.
+
+### Color and label
+
 - **Turning a feature, source or connection on or off:** `Color.Primary`, with a
   label that follows the state: `Enabled` / `Disabled`. Where no title sits beside
   the switch, name the feature in the label and still follow the state ("Model
@@ -272,6 +296,21 @@ is on looks inactive.
   what turning it on does ("Needs attention only").
 - **Risky permissions** (widening what can leave the server or be released
   without a person, or restricting how people sign in): `Color.Warning`.
+
+## Save, test and remove on settings pages
+
+- **Save** stores everything typed on its card or section, passwords and keys
+  included. Do not add a second Save button for a secret.
+- **Test** checks the values on screen and changes no settings. The host records
+  the result only when those values are the saved ones, because a recorded pass is
+  what lets a feature turn on without testing again.
+- **Remove** and delete ask first, with `Dialogs.ConfirmRemovalAsync`, or an
+  inline confirmation where the consequence needs explaining.
+- Every form that has a Save button includes a `SettingsDraftGuard`.
+- Results appear in the same places everywhere: a test result in an alert beside
+  its button; a switch refusal beside the switch; a save or removal as a
+  notification through `Snackbar.Saved` or `Snackbar.Failed`. A failure stays
+  until dismissed. A page that could not load says so inline.
 
 ## Adding a new status or media type
 

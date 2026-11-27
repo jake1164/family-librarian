@@ -19,12 +19,37 @@ public sealed class SmtpSettingsService(
     public async Task<SmtpStatus> GetStatusAsync(CancellationToken cancellationToken) =>
         ToStatus(await store.FindAsync(cancellationToken));
 
-    public async Task<SmtpCommandResult> SetEnabledAsync(bool enabled, CancellationToken cancellationToken)
+    /// <summary>
+    /// Turns email on or off. Turning it on needs a passing test of the saved settings; when none is recorded, this sends
+    /// one itself to <paramref name="testRecipient"/>, the signed-in administrator's own address, so no separate step is needed.
+    /// </summary>
+    public async Task<SmtpCommandResult> SetEnabledAsync(
+        bool enabled, string? testRecipient, CancellationToken cancellationToken)
     {
         var settings = await store.GetOrCreateAsync(cancellationToken);
-        if (enabled && GetConfigurationError(settings) is { } error)
+        if (enabled)
         {
-            return SmtpCommandResult.Invalid(error);
+            if (GetConnectionPrerequisiteError(settings) is { } error)
+            {
+                return SmtpCommandResult.Invalid(error);
+            }
+
+            if (settings.LastTestSucceeded != true)
+            {
+                if (string.IsNullOrWhiteSpace(testRecipient) || !MailAddress.TryCreate(testRecipient.Trim(), out var recipient))
+                {
+                    return SmtpCommandResult.Invalid(
+                        "Your account has no email address to send a test message to. Send a test email below, then turn email on.");
+                }
+
+                var outcome = await testSender.SendTestAsync(settings, recipient.Address, cancellationToken);
+                await RecordTestAsync(settings, outcome, cancellationToken);
+                if (!outcome.Succeeded)
+                {
+                    return SmtpCommandResult.Invalid(
+                        $"Email stayed off. The test message to {recipient.Address} failed: {outcome.Message}");
+                }
+            }
         }
 
         settings.SetEnabled(enabled, currentUser.UserId, clock.UtcNow);
@@ -46,6 +71,7 @@ public sealed class SmtpSettingsService(
         string? username,
         string? fromAddress,
         string? fromName,
+        string? password,
         CancellationToken cancellationToken)
     {
         if (port is not null and (< 1 or > 65_535))
@@ -58,8 +84,21 @@ public sealed class SmtpSettingsService(
             return SmtpCommandResult.Invalid("The sender email address is not valid.");
         }
 
+        // A null or blank password keeps the stored one, so the form's "leave blank to keep it" holds.
+        var trimmedNewPassword = password?.Trim();
+        var replacePassword = !string.IsNullOrEmpty(trimmedNewPassword);
+
         var settings = await store.GetOrCreateAsync(cancellationToken);
         settings.SetSettings(host, port, securityMode, username, fromAddress, fromName, currentUser.UserId, clock.UtcNow);
+        if (replacePassword)
+        {
+            settings.SetPassword(
+                protector.Protect(CommunicationSecretPurposes.SmtpPassword, trimmedNewPassword!),
+                protector.FormatVersion,
+                currentUser.UserId,
+                clock.UtcNow);
+        }
+
         await store.SaveChangesAsync(cancellationToken);
         await audit.WriteAsync(
             AuditActions.CommunicationProviderSettingsChanged,
@@ -67,6 +106,15 @@ public sealed class SmtpSettingsService(
             "smtp",
             new { Provider = "smtp" },
             cancellationToken);
+        if (replacePassword)
+        {
+            await audit.WriteAsync(
+                AuditActions.CommunicationProviderSecretSet,
+                AuditSubjectTypes.CommunicationProvider,
+                "smtp",
+                new { Provider = "smtp", Field = "password" },
+                cancellationToken);
+        }
 
         return SmtpCommandResult.Success(ToStatus(settings));
     }
@@ -180,7 +228,23 @@ public sealed class SmtpSettingsService(
 
         var outcome = await testSender.SendTestAsync(candidate, recipient.Address, cancellationToken);
 
+        // A recorded pass is what lets email be turned on without another test, so a test of unsaved form values must not
+        // be recorded against the saved settings -- it would mark settings that were never tried as tested.
+        if (persisted is null || !MatchesSavedConfiguration(persisted, candidate))
+        {
+            return SmtpTestResult.Success(
+                ToStatus(persisted),
+                outcome with { Message = $"{outcome.Message} These values are not saved yet -- click Save settings to keep them." });
+        }
+
         var settings = await store.GetOrCreateAsync(cancellationToken);
+        await RecordTestAsync(settings, outcome, cancellationToken);
+
+        return SmtpTestResult.Success(ToStatus(settings), outcome);
+    }
+
+    private async Task RecordTestAsync(SmtpSettings settings, ConnectionTestOutcome outcome, CancellationToken cancellationToken)
+    {
         settings.RecordTestResult(outcome.Succeeded, outcome.Message, currentUser.UserId, clock.UtcNow);
         await store.SaveChangesAsync(cancellationToken);
         await audit.WriteAsync(
@@ -189,9 +253,20 @@ public sealed class SmtpSettingsService(
             "smtp",
             new { Provider = "smtp", outcome.Succeeded },
             cancellationToken);
-
-        return SmtpTestResult.Success(ToStatus(settings), outcome);
     }
+
+    private bool MatchesSavedConfiguration(SmtpSettings persisted, SmtpSettings candidate) =>
+        string.Equals(persisted.Host, candidate.Host, StringComparison.Ordinal)
+        && persisted.Port == candidate.Port
+        && persisted.SecurityMode == candidate.SecurityMode
+        && string.Equals(persisted.Username, candidate.Username, StringComparison.Ordinal)
+        && string.Equals(persisted.FromAddress, candidate.FromAddress, StringComparison.Ordinal)
+        && string.Equals(persisted.FromName, candidate.FromName, StringComparison.Ordinal)
+        && string.Equals(RevealPassword(persisted), RevealPassword(candidate), StringComparison.Ordinal);
+
+    private string? RevealPassword(SmtpSettings settings) => settings.HasPassword
+        ? protector.Unprotect(CommunicationSecretPurposes.SmtpPassword, settings.ProtectedPassword!, settings.PasswordFormatVersion)
+        : null;
 
     private static SmtpStatus ToStatus(SmtpSettings? settings) => settings is null
         ? new SmtpStatus(false, null, null, SmtpSecurityMode.StartTls, null, false, null, null, null, null, null, null)
@@ -208,21 +283,6 @@ public sealed class SmtpSettingsService(
             settings.LastTestedAtUtc,
             settings.LastTestSucceeded,
             settings.LastTestMessage);
-
-    private static string? GetConfigurationError(SmtpSettings settings)
-    {
-        if (GetConnectionPrerequisiteError(settings) is { } error)
-        {
-            return error;
-        }
-
-        if (settings.LastTestSucceeded != true)
-        {
-            return "Send a successful test email for the currently saved configuration before enabling SMTP.";
-        }
-
-        return null;
-    }
 
     private static string? GetConnectionPrerequisiteError(SmtpSettings settings)
     {

@@ -40,13 +40,8 @@ else
             <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="2" Class="mb-3">
                 <MudText Typo="Typo.h6">Kindle</MudText>
                 <MudSpacer />
-                <MudSwitch T="bool"
-                           @key="@("kindle-enabled:" + switchGeneration)"
-                           Value="isEnabled"
-                           ValueChanged="@(enabled => SetEnabledAsync(enabled))"
-                           Color="Color.Primary"
-                           Disabled="@busy"
-                           Label="@(isEnabled ? "Enabled" : "Disabled")" />
+                <SettingSwitch Value="isEnabled" Changing="SetEnabledAsync" Disabled="@busy" AlignEnd="true"
+                               Label="@(isEnabled ? "Enabled" : "Disabled")" aria-label="Kindle delivery" />
             </MudStack>
             <MudDivider Class="mb-3" />
         }
@@ -93,6 +88,12 @@ else
         <MudButton Variant="Variant.Outlined" Disabled="@(testBusy || isAvailable != true)" OnClick="TestKindleDeliveryAsync">
             Test service sign-in
         </MudButton>
+        @if (testResult is not null)
+        {
+            <MudAlert Severity="@(testResult.Value.Succeeded ? Severity.Success : Severity.Warning)" Class="mt-3" role="status">
+                @testResult.Value.Message
+            </MudAlert>
+        }
     </MudPaper>
 }
 
@@ -102,6 +103,7 @@ else
     private bool isLoading = true;
     private bool busy;
     private bool testBusy;
+    private (bool Succeeded, string Message)? testResult;
     private bool hasTarget;
     // Null means the lookup failed: controls that need the service stay disabled
     // without claiming it isn't set up.
@@ -112,7 +114,6 @@ else
     private string address = string.Empty;
     private uint? version;
     private string? errorMessage;
-    private int switchGeneration;
 
     protected override async Task OnInitializedAsync()
     {
@@ -143,7 +144,7 @@ else
             if (outcome.Succeeded && outcome.Target is { } target)
             {
                 ApplyTarget(target);
-                Snackbar.Add("Kindle delivery settings saved.", Severity.Success);
+                Snackbar.Saved("Kindle delivery settings saved.");
             }
             else
             {
@@ -160,10 +161,11 @@ else
         }
     }
 
-    private async Task SetEnabledAsync(bool enabled)
+    private async Task SetEnabledAsync(SettingSwitchChange change)
     {
         if (version is not { } expectedVersion)
         {
+            change.Refuse("Reload this page and try again.");
             return;
         }
 
@@ -172,23 +174,16 @@ else
 
         try
         {
-            var outcome = await DeliveryTargets.SetKindleEnabledAsync(enabled, expectedVersion);
+            var outcome = await DeliveryTargets.SetKindleEnabledAsync(change.Value, expectedVersion);
             if (outcome.Succeeded && outcome.Target is { } target)
             {
                 ApplyTarget(target, applyFields: false);
+                Snackbar.Saved(change.Value ? "Kindle delivery enabled." : "Kindle delivery disabled.");
             }
             else
             {
-                errorMessage = outcome.Error;
-                // The switch already flipped optimistically; this forces it back
-                // to the last known-good value on failure.
-                switchGeneration++;
+                change.Refuse(outcome.Error);
             }
-        }
-        catch (HttpRequestException)
-        {
-            errorMessage = "That could not be saved. Please try again.";
-            switchGeneration++;
         }
         finally
         {
@@ -199,21 +194,22 @@ else
     private async Task TestKindleDeliveryAsync()
     {
         testBusy = true;
+        testResult = null;
 
         try
         {
             var result = await DeliveryTargets.TestKindleDeliveryAsync();
             if (result is null)
             {
-                Snackbar.Add("The Kindle delivery test could not be run.", Severity.Error);
+                testResult = (false, "The Kindle delivery test could not be run.");
                 return;
             }
 
-            Snackbar.Add(result.Message, result.Succeeded ? Severity.Success : Severity.Error);
+            testResult = (result.Succeeded, result.Message);
         }
         catch (HttpRequestException)
         {
-            Snackbar.Add("The Kindle delivery test could not be run.", Severity.Error);
+            testResult = (false, "The Kindle delivery test could not be run.");
         }
         finally
         {

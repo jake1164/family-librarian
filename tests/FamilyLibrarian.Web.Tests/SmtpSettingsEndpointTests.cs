@@ -67,6 +67,26 @@ public sealed class SmtpSettingsEndpointTests
     }
 
     [TestMethod]
+    public async Task TurningEmailOnWithoutASeparateTestSavesThePasswordAndRecordsTheTurnOnTest()
+    {
+        using var client = await CreateAdminClientAsync(WebTestFixture.Require(fixture));
+        var write = await client.PutAsJsonAsync(
+            "/api/v1/admin/communications/smtp/",
+            new SetSmtpSettingsRequest(
+                "smtp.turn-on.example.test", 587, "StartTls", "mailer", "library@example.test", null, Password));
+        Assert.IsFalse((await write.Content.ReadAsStringAsync()).Contains(Password, StringComparison.Ordinal));
+
+        var enable = await client.PutAsJsonAsync(
+            "/api/v1/admin/communications/smtp/enabled", new SetSmtpEnabledRequest(true));
+
+        Assert.AreEqual(HttpStatusCode.OK, enable.StatusCode);
+        var status = await enable.Content.ReadFromJsonAsync<SmtpSettingsResponse>();
+        Assert.IsTrue(status!.IsEnabled);
+        Assert.IsTrue(status.HasPassword);
+        Assert.AreEqual(true, status.LastTestSucceeded);
+    }
+
+    [TestMethod]
     public async Task MutatingSmtpSettingsWithoutAnAntiforgeryTokenIsRejected()
     {
         using var client = await WebTestFixture.Require(fixture).CreateAdminClientAsync();

@@ -6,6 +6,7 @@
 @inherits LiveComponentBase
 @inject MatrixLinkApiClient MatrixLinkApi
 @inject ISnackbar Snackbar
+@inject IDialogService Dialogs
 
 <PageTitle>Matrix chat · Family Librarian</PageTitle>
 
@@ -158,6 +159,12 @@ else
 
     private async Task UnlinkAsync()
     {
+        if (!await Dialogs.ConfirmRemovalAsync("Remove your Matrix link?",
+                "Family Librarian stops sending you Matrix messages. You would have to link and verify again.", "Remove link"))
+        {
+            return;
+        }
+
         busy = true;
 
         try
@@ -167,16 +174,16 @@ else
             {
                 status = result.Status;
                 matrixUserId = string.Empty;
-                Snackbar.Add("Matrix link removed.", Severity.Success);
+                Snackbar.Saved("Matrix link removed.");
             }
             else
             {
-                Snackbar.Add(result.Error ?? "That could not be removed.", Severity.Error);
+                Snackbar.Failed(result.Error ?? "That could not be removed.");
             }
         }
         catch (HttpRequestException)
         {
-            Snackbar.Add("That could not be removed. Please try again.", Severity.Error);
+            Snackbar.Failed("That could not be removed. Please try again.");
         }
         finally
         {

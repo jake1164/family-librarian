@@ -629,6 +629,11 @@ public sealed class PublishingQueueEndpointTests
             new SetAudiobookshelfSettingsRequest("https://abs.example.test", null, "lib-1", "folder-1"));
         response.EnsureSuccessStatusCode();
 
+        var token = await client.PutAsJsonAsync(
+            "/api/v1/admin/publishing/audiobookshelf/api-token",
+            new FamilyLibrarian.Contracts.Publishing.SetPublishingSecretRequest("a-test-token"));
+        token.EnsureSuccessStatusCode();
+
         var enabled = await client.PutAsJsonAsync(
             "/api/v1/admin/publishing/audiobookshelf/enabled", new SetPublishingEnabledRequest(true));
         enabled.EnsureSuccessStatusCode();

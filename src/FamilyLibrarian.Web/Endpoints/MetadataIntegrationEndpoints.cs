@@ -71,11 +71,11 @@ internal static class MetadataIntegrationEndpoints
         var candidateCredential = status.IsExternallyManaged ? null : request?.Credential;
 
         var outcome = await tester.TestAsync(providerId, candidateCredential, cancellationToken);
-        var recorded = await admin.RecordTestResultAsync(
-            providerId,
-            outcome.Succeeded,
-            outcome.Message,
-            cancellationToken);
+        // Only a test of the saved credential is recorded. A key typed into the form is reported but not stored.
+        var testedUnsavedKey = !string.IsNullOrWhiteSpace(candidateCredential);
+        var recorded = testedUnsavedKey
+            ? ProviderCommandResult.Success(status)
+            : await admin.RecordTestResultAsync(providerId, outcome.Succeeded, outcome.Message, cancellationToken);
 
         return recorded.Status is null
             ? Results.NotFound()

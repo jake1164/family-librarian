@@ -33,10 +33,21 @@ public sealed class DecisionCapturePanelTests
     {
         var http = new HttpClient(new StubHandler(respond)) { BaseAddress = new Uri("http://localhost/") };
         await using var services = new ServiceCollection().AddLogging().AddMudServices().AddSingleton<IJSRuntime, NoJs>()
+            .AddSingleton<NavigationManager, StaticNavigation>()
             .AddSingleton(new ModelGatewayApiClient(http, new AntiforgeryTokenProvider(http))).BuildServiceProvider();
         await using var renderer = new HtmlRenderer(services, NullLoggerFactory.Instance);
         return await renderer.Dispatcher.InvokeAsync(async () =>
             (await renderer.RenderComponentAsync<DecisionCapturePanel>(ParameterView.Empty)).ToHtmlString());
+    }
+
+    /// <summary>The panel's notifications need a navigation service, which the static renderer does not provide.</summary>
+    private sealed class StaticNavigation : NavigationManager
+    {
+        public StaticNavigation() => Initialize("http://localhost/", "http://localhost/");
+
+        protected override void NavigateToCore(string uri, bool forceLoad)
+        {
+        }
     }
 
     private static HttpResponseMessage Json<T>(T value) => new(HttpStatusCode.OK) { Content = JsonContent.Create(value) };

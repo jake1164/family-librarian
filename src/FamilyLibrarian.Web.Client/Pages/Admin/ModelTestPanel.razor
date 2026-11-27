@@ -2,6 +2,7 @@
 @using FamilyLibrarian.Contracts.ModelTesting
 @using FamilyLibrarian.Web.Client.ModelTesting
 @inject ModelTestApiClient Api
+@inject ISnackbar Snackbar
 
 @* The "Test models" tab of the AI models page. It reuses the shared endpoint and key from the "Models & roles" tab and can
    never change a production role, switch, limit or permission: it only reads which model a role is set to use. *@
@@ -35,13 +36,15 @@
                 <MudText Typo="Typo.h5">Test settings</MudText>
                 <ModelAliasPicker @bind-Value="primaryModel" Models="Models" Label="Primary local model" />
                 <ModelAliasPicker @bind-Value="comparisonModel" Models="Models" Label="Comparison local model (optional)" />
-                <MudSwitch T="bool" @bind-Value="allowCloud" Color="Color.Warning"
-                           Label="Allow testing a cloud model (can use paid or rate-limited services)" />
+                <SettingSwitch Value="settings.AllowCloud" Changing="SetAllowCloudAsync" Color="Color.Warning" Disabled="@busy"
+                               ConfirmTitle="Allow testing a cloud model?" ConfirmYes="Allow cloud tests"
+                               ConfirmOn="Tests of a cloud model send made-up test prompts to a hosted service and can use paid or rate-limited services."
+                               Label="Allow testing a cloud model (can use paid or rate-limited services)" />
                 <MudText Typo="Typo.caption">
                     This switch is separate from the production cloud permission: allowing cloud tests does not let any role use a cloud model, and
                     the other way round. Each cloud test also needs a confirmation on the run.
                 </MudText>
-                <ModelAliasPicker @bind-Value="cloudModel" Models="Models" Label="Cloud model (optional)" Disabled="@(!allowCloud)" />
+                <ModelAliasPicker @bind-Value="cloudModel" Models="Models" Label="Cloud model (optional)" Disabled="@(!settings.AllowCloud)" />
                 <MudStack Row="true" Spacing="2" Wrap="Wrap.Wrap">
                     <MudNumericField Immediate="true" T="int" @bind-Value="timeoutSeconds" Label="Timeout (seconds)" Min="5" Max="120" Variant="Variant.Outlined" />
                     <MudNumericField Immediate="true" T="int" @bind-Value="maxOutputTokens" Label="Maximum output tokens" Min="16" Max="4096" Variant="Variant.Outlined" />
@@ -54,8 +57,8 @@
                 </MudStack>
                 <MudButton Variant="Variant.Filled" Color="Color.Primary" Disabled="@busy" OnClick="SaveAsync">Save test settings</MudButton>
                 <MudDivider />
-                <MudSwitch T="bool" Value="settings.IsEnabled" ValueChanged="SetEnabledAsync" Color="Color.Primary" Disabled="@busy"
-                           Label="@(settings.IsEnabled ? "Model testing is enabled" : "Model testing is disabled")" />
+                <SettingSwitch Value="settings.IsEnabled" Changing="SetEnabledAsync" Disabled="@busy"
+                               Label="@(settings.IsEnabled ? "Model testing is enabled" : "Model testing is disabled")" />
             </MudStack>
         </MudPaper>
 
@@ -168,7 +171,7 @@
 
 @code {
     private readonly SettingsSnapshot draft = new();
-    private object TestFields => new { primaryModel, comparisonModel, cloudModel, allowCloud, timeoutSeconds, maxOutputTokens, reasoning };
+    private object TestFields => new { primaryModel, comparisonModel, cloudModel, timeoutSeconds, maxOutputTokens, reasoning };
     /// <summary>The production roles as currently saved, used only to offer their configured model for testing (read only).</summary>
     [Parameter] public IReadOnlyList<ModelRoleDto> Roles { get; set; } = [];
 
@@ -182,7 +185,6 @@
     private string? primaryModel = string.Empty;
     private string? comparisonModel = string.Empty;
     private string? cloudModel = string.Empty;
-    private bool allowCloud;
     private int timeoutSeconds = 30;
     private int maxOutputTokens = 1024;
     private string reasoning = "Inherit";
@@ -224,45 +226,47 @@
         primaryModel = value.PrimaryModel ?? string.Empty;
         comparisonModel = value.ComparisonModel ?? string.Empty;
         cloudModel = value.CloudModel ?? string.Empty;
-        allowCloud = value.AllowCloud;
         timeoutSeconds = value.TimeoutSeconds;
         maxOutputTokens = value.MaxOutputTokens;
         reasoning = value.Reasoning;
         draft.Accept("test", TestFields);
     }
 
-    private async Task SaveAsync() => await ApplyResultAsync(
-        await Api.SaveAsync(new SaveModelTestSettingsRequest(primaryModel, comparisonModel, cloudModel, allowCloud, timeoutSeconds, maxOutputTokens, reasoning)),
+    private async Task SaveAsync() => ApplyResult(
+        await Api.SaveAsync(new SaveModelTestSettingsRequest(
+            primaryModel, comparisonModel, cloudModel, settings!.AllowCloud, timeoutSeconds, maxOutputTokens, reasoning)),
         "Test settings saved.");
 
-    private async Task SetEnabledAsync(bool enabled)
+    private async Task SetEnabledAsync(SettingSwitchChange change) =>
+        ApplySwitchResult(change, await Api.SetEnabledAsync(change.Value), change.Value ? "Model testing is on." : "Model testing is off.");
+
+    private async Task SetAllowCloudAsync(SettingSwitchChange change) =>
+        ApplySwitchResult(change, await Api.SetAllowCloudAsync(change.Value),
+            change.Value ? "Cloud testing is allowed." : "Cloud testing is not allowed.");
+
+    /// <summary>A switch saves only itself, so whatever is typed in the test settings stays as it is.</summary>
+    private void ApplySwitchResult(SettingSwitchChange change, ModelTestCallResult<ModelTestSettingsResponse> result, string success)
     {
-        var result = await Api.SetEnabledAsync(enabled);
-        if (result.Succeeded && result.Value is { } value)
+        if (!result.Succeeded || result.Value is not { } value)
         {
-            settings = value;
-            message = enabled ? "Model testing is on." : "Model testing is off.";
-            messageIsError = false;
+            change.Refuse(result.Error);
+            return;
+        }
+
+        settings = value;
+        Snackbar.Saved(success);
+    }
+
+    private void ApplyResult(ModelTestCallResult<ModelTestSettingsResponse> result, string success)
+    {
+        if (result.Value is { } value) Apply(value);
+        if (result.Succeeded)
+        {
+            Snackbar.Saved(success);
         }
         else
         {
-            message = result.Error;
-            messageIsError = true;
-        }
-    }
-
-    private async Task ApplyResultAsync(ModelTestCallResult<ModelTestSettingsResponse> result, string success)
-    {
-        busy = true;
-        try
-        {
-            messageIsError = !result.Succeeded;
-            message = result.Succeeded ? success : result.Error;
-            if (result.Value is { } value) Apply(value);
-        }
-        finally
-        {
-            busy = false;
+            Snackbar.Failed(result.Error);
         }
     }
 

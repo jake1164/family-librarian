@@ -1,14 +1,18 @@
 @page "/settings/communications"
 @attribute [Authorize(Roles = "Admin")]
 @using FamilyLibrarian.Contracts.Communications
+@using FamilyLibrarian.Contracts.Conversation
 @using FamilyLibrarian.Web.Client.Communications
+@using FamilyLibrarian.Web.Client.Conversation
 @using Microsoft.AspNetCore.Authorization
 @inject SmtpSettingsApiClient SmtpApi
 @inject MatrixSettingsApiClient MatrixApi
+@inject ChatSettingsApiClient ChatApi
 @inject ISnackbar Snackbar
+@inject IDialogService Dialogs
 
 <PageTitle>Communications settings | Family Librarian</PageTitle>
-<SettingsDraftGuard IsDirty="@(draft.HasChanges("smtp", SmtpFields) || draft.HasChanges("matrix", MatrixFields) || !string.IsNullOrEmpty(passwordDraft) || !string.IsNullOrEmpty(accessTokenDraft))" />
+<SettingsDraftGuard IsDirty="@(SmtpDirty || MatrixDirty)" />
 
 <MudText Typo="Typo.h4" GutterBottom="true">Communications settings</MudText>
 <MudText Typo="Typo.body1" Class="mb-4">
@@ -35,14 +39,16 @@ else
                 <MudChip T="string" Size="Size.Small" Color="Color.Warning" Variant="Variant.Outlined">Needs setup</MudChip>
             }
             <MudSpacer />
-            <MudSwitch T="bool" Value="smtp.IsEnabled" ValueChanged="SetEnabledAsync" Color="Color.Primary"
-                       Disabled="@busy" Label="@(smtp.IsEnabled ? "Enabled" : "Disabled")" />
+            <SettingSwitch Value="smtp.IsEnabled" Changing="SetSmtpEnabledAsync" Disabled="@busy" AlignEnd="true"
+                           WorkingText="@(smtp.LastTestSucceeded == true ? "Saving…" : "Sending a test email to your address…")"
+                           Label="@(smtp.IsEnabled ? "Enabled" : "Disabled")" aria-label="Email" />
         </MudStack>
 
         <MudText Typo="Typo.body2" Class="mt-3 mb-3">
             SMTP connections must use TLS. StartTLS is typical for port 587;
-            SSL/TLS on connect is typical for port 465. A saved configuration
-            must successfully send a test email before it can be enabled.
+            SSL/TLS on connect is typical for port 465. Turning email on uses the saved
+            settings. If they have not passed a test yet, it first sends a test email to your
+            account's address, and stays off if that fails.
         </MudText>
 
         <MudStack Spacing="3">
@@ -63,10 +69,10 @@ else
                     : "No password is stored. Leave both username and password blank only for a trusted relay.")
             </MudText>
             <MudStack Row="true" Spacing="2" AlignItems="AlignItems.Center">
-                <MudTextField Immediate="true" T="string" Label="Replace SMTP password" @bind-Value="passwordDraft"
-                              InputType="InputType.Password" autocomplete="new-password" Disabled="@busy" Class="flex-grow-1" />
-                <MudButton Variant="Variant.Filled" Disabled="@(busy || string.IsNullOrWhiteSpace(passwordDraft))"
-                           OnClick="SavePasswordAsync">Save password</MudButton>
+                <MudTextField Immediate="true" T="string" Label="@(smtp.HasPassword ? "Replace SMTP password" : "SMTP password")"
+                              @bind-Value="passwordDraft" InputType="InputType.Password" autocomplete="new-password"
+                              Disabled="@busy" Class="flex-grow-1"
+                              HelperText="@(string.IsNullOrWhiteSpace(passwordDraft) ? null : "Not saved yet -- click Save settings.")" />
                 @if (smtp.HasPassword)
                 {
                     <MudButton Variant="Variant.Outlined" Color="Color.Error" Disabled="@busy"
@@ -122,21 +128,35 @@ else
 {
     <MudPaper Class="pa-4 mt-4" Elevation="1">
         <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="2">
-            <MudText Typo="Typo.h6">Matrix (outbound chat)</MudText>
+            <MudText Typo="Typo.h6">Matrix bot connection</MudText>
             @if (MatrixNeedsSetup)
             {
                 <MudChip T="string" Size="Size.Small" Color="Color.Warning" Variant="Variant.Outlined">Needs setup</MudChip>
             }
             <MudSpacer />
-            <MudSwitch T="bool" Value="matrix.IsEnabled" ValueChanged="SetMatrixEnabledAsync" Color="Color.Primary"
-                       Disabled="@matrixBusy" Label="@(matrix.IsEnabled ? "Enabled" : "Disabled")" />
+            <SettingSwitch Value="matrix.IsEnabled" Changing="SetMatrixEnabledAsync" Disabled="@matrixBusy" AlignEnd="true"
+                           WorkingText="@(matrix.LastTestSucceeded == true ? "Saving…" : "Testing the connection…")"
+                           Label="@(matrix.IsEnabled ? "Enabled" : "Disabled")" aria-label="Matrix bot connection" />
         </MudStack>
 
         <MudText Typo="Typo.body2" Class="mt-3 mb-3">
             A dedicated Matrix account for the bot, with an access token (Settings ->
             Help &amp; About -> Advanced in Element, or your homeserver's admin API).
-            A saved configuration must successfully connect before it can be enabled.
+            The connection carries messages both ways: notifications, replies and chat.
+            Turning it on uses the saved settings, testing them first if needed.
         </MudText>
+
+        <MudAlert Severity="@(chat is { MatrixEnabled: false } ? Severity.Info : Severity.Normal)" Dense="true" Class="mb-3">
+            @if (chat is null)
+            {
+                <text>Letting people chat with the bot is a separate switch in </text>
+            }
+            else
+            {
+                <text>Letting people chat with the bot is a separate switch. <strong>Matrix chat is @(chat.MatrixEnabled ? "on" : "off")</strong> in </text>
+            }
+            <MudLink Href="settings/chat">Chat assistant</MudLink>.
+        </MudAlert>
 
         <MudStack Spacing="3">
             <MudTextField Immediate="true" T="string" Label="Homeserver URL" @bind-Value="homeserverUrl" Disabled="@matrixBusy"
@@ -206,6 +226,11 @@ else
     private bool matrixLoadFailed, matrixBusy;
     private string? homeserverUrl, botUserId, accessTokenDraft;
     private MatrixTestResponse? matrixTestResult;
+    // Only read to show where the second switch stands; null when it could not be read.
+    private ChatSettingsResponse? chat;
+
+    private bool SmtpDirty => draft.HasChanges("smtp", SmtpFields) || !string.IsNullOrEmpty(passwordDraft);
+    private bool MatrixDirty => draft.HasChanges("matrix", MatrixFields) || !string.IsNullOrEmpty(accessTokenDraft);
 
     private bool NeedsSetup => string.IsNullOrWhiteSpace(smtp?.Host) || smtp?.Port is null ||
         string.IsNullOrWhiteSpace(smtp?.FromAddress);
@@ -233,6 +258,15 @@ else
         {
             matrixLoadFailed = true;
         }
+
+        try
+        {
+            chat = await ChatApi.GetAsync();
+        }
+        catch (HttpRequestException)
+        {
+            // The page works without it; the link to the chat switch is still shown.
+        }
     }
 
     private async Task SaveSettingsAsync()
@@ -241,7 +275,11 @@ else
         try
         {
             var result = await SmtpApi.SetSettingsAsync(new SetSmtpSettingsRequest(
-                host, port, securityMode, username, fromAddress, fromName));
+                host, port, securityMode, username, fromAddress, fromName, passwordDraft));
+            if (result.Succeeded)
+            {
+                passwordDraft = null;
+            }
             ApplyResult(result, "SMTP settings saved.", applyFields: true);
         }
         finally
@@ -250,30 +288,32 @@ else
         }
     }
 
-    private async Task SetEnabledAsync(bool enabled)
+    private async Task SetSmtpEnabledAsync(SettingSwitchChange change)
     {
-        busy = true;
-        try
+        if (change.Value && SmtpDirty)
         {
-            ApplyResult(await SmtpApi.SetEnabledAsync(enabled), enabled ? "SMTP enabled." : "SMTP disabled.");
+            change.Refuse("Save settings first. Turning email on uses the saved settings.");
+            return;
         }
-        finally
-        {
-            busy = false;
-        }
-    }
 
-    private async Task SavePasswordAsync()
-    {
+        var sendsTest = change.Value && smtp?.LastTestSucceeded != true;
         busy = true;
         try
         {
-            var result = await SmtpApi.SetPasswordAsync(passwordDraft!);
-            if (result.Succeeded)
+            var result = await SmtpApi.SetEnabledAsync(change.Value);
+            if (!result.Succeeded)
             {
-                passwordDraft = null;
+                change.Refuse(result.Error);
+                // A test run by the refused change is recorded, so show it.
+                smtp = await SmtpApi.GetAsync();
+                return;
             }
-            ApplyResult(result, "SMTP password saved.");
+
+            smtp = result.Settings;
+            testResult = null;
+            Snackbar.Saved(!change.Value ? "Email disabled."
+                : sendsTest ? "Email enabled. A test email was sent to your account's address."
+                : "Email enabled.");
         }
         finally
         {
@@ -283,6 +323,12 @@ else
 
     private async Task ClearPasswordAsync()
     {
+        if (!await Dialogs.ConfirmRemovalAsync("Remove SMTP password?",
+                "The stored password is deleted. You would have to enter it again."))
+        {
+            return;
+        }
+
         busy = true;
         try
         {
@@ -302,6 +348,7 @@ else
             testResult = await SmtpApi.SendTestAsync(new SendSmtpTestRequest(
                     testRecipient, host, port, securityMode, username, passwordDraft, fromAddress, fromName))
                 ?? new SmtpTestResponse(false, "The SMTP test could not be completed.");
+            smtp = await SmtpApi.GetAsync();
         }
         finally
         {
@@ -313,7 +360,7 @@ else
     {
         if (!result.Succeeded)
         {
-            Snackbar.Add(result.Error ?? "That change could not be saved.", Severity.Error);
+            Snackbar.Failed(result.Error);
             return;
         }
 
@@ -327,7 +374,7 @@ else
             ApplyFields(smtp);
         }
 
-        Snackbar.Add(successMessage, Severity.Success);
+        Snackbar.Saved(successMessage);
     }
 
     private void ApplyFields(SmtpSettingsResponse? settings)
@@ -361,12 +408,29 @@ else
         }
     }
 
-    private async Task SetMatrixEnabledAsync(bool enabled)
+    private async Task SetMatrixEnabledAsync(SettingSwitchChange change)
     {
+        if (change.Value && MatrixDirty)
+        {
+            change.Refuse("Save settings first. Turning the connection on uses the saved settings.");
+            return;
+        }
+
         matrixBusy = true;
         try
         {
-            ApplyMatrixResult(await MatrixApi.SetEnabledAsync(enabled), enabled ? "Matrix enabled." : "Matrix disabled.");
+            var result = await MatrixApi.SetEnabledAsync(change.Value);
+            if (!result.Succeeded)
+            {
+                change.Refuse(result.Error);
+                matrix = await MatrixApi.GetAsync();
+                matrixTestResult = null;
+                return;
+            }
+
+            matrix = result.Settings;
+            matrixTestResult = null;
+            Snackbar.Saved(change.Value ? "Matrix enabled." : "Matrix disabled.");
         }
         finally
         {
@@ -376,6 +440,12 @@ else
 
     private async Task ClearMatrixAccessTokenAsync()
     {
+        if (!await Dialogs.ConfirmRemovalAsync("Remove Matrix access token?",
+                "The stored token is deleted. You would have to enter it again."))
+        {
+            return;
+        }
+
         matrixBusy = true;
         try
         {
@@ -394,6 +464,7 @@ else
         {
             matrixTestResult = await MatrixApi.SendTestAsync(new SendMatrixTestRequest(homeserverUrl, botUserId, accessTokenDraft))
                 ?? new MatrixTestResponse(false, "The Matrix test could not be completed.");
+            matrix = await MatrixApi.GetAsync();
         }
         finally
         {
@@ -405,7 +476,7 @@ else
     {
         if (!result.Succeeded)
         {
-            Snackbar.Add(result.Error ?? "That change could not be saved.", Severity.Error);
+            Snackbar.Failed(result.Error);
             return;
         }
 
@@ -415,7 +486,7 @@ else
             ApplyMatrixFields(matrix);
         }
 
-        Snackbar.Add(successMessage, Severity.Success);
+        Snackbar.Saved(successMessage);
     }
 
     private void ApplyMatrixFields(MatrixSettingsResponse? settings)

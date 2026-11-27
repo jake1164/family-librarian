@@ -32,7 +32,7 @@ internal static class OidcSettingsEndpoints
         SetOidcSettingsRequest request, OidcSettingsService service, CancellationToken cancellationToken) =>
         ToOidcResult(await service.SetSettingsAsync(
             request.DisplayName, request.Authority, request.ClientId, request.Scopes, request.MatchClaimName,
-            request.AdminClaimName, request.AdminClaimValues, cancellationToken));
+            request.AdminClaimName, request.AdminClaimValues, request.ClientSecret, cancellationToken));
 
     private static async Task<IResult> SetOidcEnabledAsync(
         SetOidcEnabledRequest request, OidcSettingsService service, CancellationToken cancellationToken) =>
@@ -54,14 +54,15 @@ internal static class OidcSettingsEndpoints
         TestOidcConnectionRequest? request, OidcSettingsService service, CancellationToken cancellationToken)
     {
         var result = await service.TestConnectionAsync(request?.Authority, cancellationToken);
+        var endpoints = result.Test?.Endpoints;
         return Results.Ok(new OidcConnectionTestResponse(
-            result.Status?.LastTestSucceeded ?? false,
-            result.Status?.LastTestMessage ?? "The connection test could not be run.",
-            result.DiscoveryEndpoints?.AuthorizationEndpoint,
-            result.DiscoveryEndpoints?.TokenEndpoint,
-            result.DiscoveryEndpoints?.UserinfoEndpoint,
-            result.DiscoveryEndpoints?.JwksUri,
-            result.DiscoveryEndpoints?.EndSessionEndpoint));
+            result.Test?.Succeeded ?? false,
+            result.Test?.Message ?? "The connection test could not be run.",
+            endpoints?.AuthorizationEndpoint,
+            endpoints?.TokenEndpoint,
+            endpoints?.UserinfoEndpoint,
+            endpoints?.JwksUri,
+            endpoints?.EndSessionEndpoint));
     }
 
     private static IResult ToOidcResult(OidcCommandResult result) => result.Outcome switch

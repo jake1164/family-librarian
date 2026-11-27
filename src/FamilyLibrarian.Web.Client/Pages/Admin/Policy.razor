@@ -90,7 +90,7 @@ else
             var result = await PolicyApi.SetDefaultProfileAsync(selectedProfileId);
             if (!result.Succeeded)
             {
-                Snackbar.Add(result.Error ?? "That change could not be saved.", Severity.Error);
+                Snackbar.Failed(result.Error ?? "That change could not be saved.");
                 return;
             }
 

@@ -49,6 +49,86 @@ public sealed class ModelGatewayTests
         new(new FakeGatewayStore { Settings = settings }, new PassThroughProtector());
 
     [TestMethod]
+    public async Task ARoleSwitchUsesTheSavedModelAndIsRefusedWithoutOne()
+    {
+        var (service, store, _) = Create();
+
+        var refused = await service.SetRoleEnabledAsync(ModelRole.CandidateTriage, true, CancellationToken.None);
+
+        Assert.IsFalse(refused.Succeeded);
+        StringAssert.Contains(refused.Error, "Choose a local model");
+        Assert.IsFalse(store.Settings!.Roles.Any(role => role.IsEnabled));
+
+        store.Settings = Configured(role: ModelRole.CandidateTriage, roleEnabled: false);
+        var enabled = await service.SetRoleEnabledAsync(ModelRole.CandidateTriage, true, CancellationToken.None);
+
+        Assert.IsTrue(enabled.Succeeded);
+        var saved = store.Settings.FindRole(ModelRole.CandidateTriage)!;
+        Assert.IsTrue(saved.IsEnabled);
+        Assert.AreEqual("local/alias", saved.LocalModel, "The switch leaves the saved model as it was.");
+    }
+
+    [TestMethod]
+    public async Task ARoleOnACloudModelCannotBeTurnedOnWithoutCloudUse()
+    {
+        var (service, store, _) = Create();
+        store.Settings = Configured(roleEnabled: false, placement: ModelPlacement.Cloud);
+
+        var result = await service.SetRoleEnabledAsync(ModelRole.CandidateAmbiguityAssessment, true, CancellationToken.None);
+
+        Assert.IsFalse(result.Succeeded);
+        StringAssert.Contains(result.Error, "Allow cloud use first");
+    }
+
+    [TestMethod]
+    public async Task WithdrawingCloudUseAlwaysSucceedsAndTurnsOffCloudRoles()
+    {
+        var (service, store, _) = Create();
+        store.Settings = Configured(allowCloud: true, placement: ModelPlacement.Cloud);
+        await service.SetPermissionsAsync(null, true, null, CancellationToken.None);
+
+        var result = await service.SetPermissionsAsync(false, null, null, CancellationToken.None);
+
+        Assert.IsTrue(result.Succeeded);
+        Assert.IsFalse(result.Settings!.AllowCloud);
+        Assert.IsFalse(result.Settings.AllowCloudExcerpts);
+        Assert.IsFalse(store.Settings.FindRole(ModelRole.CandidateAmbiguityAssessment)!.IsEnabled);
+    }
+
+    [TestMethod]
+    public async Task APermissionChangeLeavesTheOtherPermissionsAlone()
+    {
+        var (service, store, _) = Create();
+        store.Settings = Configured(allowCloud: true);
+
+        await service.SetPermissionsAsync(null, null, true, CancellationToken.None);
+
+        Assert.IsTrue(store.Settings.AllowCloud);
+        Assert.IsTrue(store.Settings.AllowModelHoldRelease);
+        Assert.IsFalse(store.Settings.AllowCloudExcerpts);
+    }
+
+    [TestMethod]
+    public async Task FileDetailsCannotGoToTheCloudWithoutCloudUse()
+    {
+        var (service, _, _) = Create();
+
+        var result = await service.SetPermissionsAsync(null, true, null, CancellationToken.None);
+
+        Assert.IsFalse(result.Succeeded);
+    }
+
+    [TestMethod]
+    public async Task NonAdministratorsCannotUseTheSwitches()
+    {
+        var (service, store, _) = Create(admin: false);
+
+        Assert.IsTrue((await service.SetRoleEnabledAsync(ModelRole.CandidateTriage, true, CancellationToken.None)).Forbidden);
+        Assert.IsTrue((await service.SetPermissionsAsync(true, null, null, CancellationToken.None)).Forbidden);
+        Assert.IsNull(store.Settings);
+    }
+
+    [TestMethod]
     public async Task EveryRoleIsOffAndNothingIsConfiguredByDefault()
     {
         var (service, _, _) = Create();

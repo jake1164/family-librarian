@@ -88,7 +88,7 @@
             var result = await BackupApi.ExportAsync(exportPassphrase!);
             if (!result.Succeeded || result.Archive is null || result.Filename is null)
             {
-                Snackbar.Add(result.Error ?? "The settings archive could not be created.", Severity.Error);
+                Snackbar.Failed(result.Error ?? "The settings archive could not be created.");
                 return;
             }
 
@@ -111,7 +111,7 @@
             var result = await BackupApi.PreviewAsync(archive, importPassphrase!);
             if (!result.Succeeded || result.Preview is null)
             {
-                Snackbar.Add(result.Error ?? "The settings archive could not be previewed.", Severity.Error);
+                Snackbar.Failed(result.Error ?? "The settings archive could not be previewed.");
                 return;
             }
 
@@ -132,7 +132,7 @@
             var result = await BackupApi.ImportAsync(archive, importPassphrase!);
             if (!result.Succeeded || result.Import is null)
             {
-                Snackbar.Add(result.Error ?? "The settings archive could not be imported.", Severity.Error);
+                Snackbar.Failed(result.Error ?? "The settings archive could not be imported.");
                 return;
             }
 

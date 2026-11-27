@@ -3,6 +3,7 @@
 @using FamilyLibrarian.Contracts.Requests
 @using FamilyLibrarian.Web.Client.Requests
 @inject AcquisitionPreferenceApiClient Preferences
+@inject IDialogService Dialogs
 
 <PageTitle>Saved acquisition choices · Family Librarian</PageTitle>
 <MudText Typo="Typo.h4" GutterBottom="true">Saved acquisition choices</MudText>
@@ -17,7 +18,7 @@ else
         <MudPaper Outlined="true" Class="pa-4 mb-2">
             <MudStack Row="true" Wrap="Wrap.Wrap" AlignItems="AlignItems.Center" Justify="Justify.SpaceBetween">
                 <MudText>@Label(choice)</MudText>
-                <MudButton Disabled="@busy" OnClick="() => RemoveAsync(choice.Id)" aria-label="@($"Remove: {Label(choice)}")">Remove</MudButton>
+                <MudButton Disabled="@busy" OnClick="() => RemoveAsync(choice)" aria-label="@($"Remove: {Label(choice)}")">Remove</MudButton>
             </MudStack>
         </MudPaper>
     }
@@ -35,12 +36,18 @@ else
         catch (HttpRequestException) { error = "We could not load your saved choices."; }
         finally { loading = false; }
     }
-    private async Task RemoveAsync(Guid id)
+    private async Task RemoveAsync(AcquisitionPreferenceResponse choice)
     {
+        if (!await Dialogs.ConfirmRemovalAsync("Remove this saved choice?",
+                $"\"{Label(choice)}\" will no longer be accepted automatically."))
+        {
+            return;
+        }
+
         busy = true; error = null;
         try
         {
-            if (await Preferences.RemoveAsync(id)) await LoadAsync();
+            if (await Preferences.RemoveAsync(choice.Id)) await LoadAsync();
             else error = "That choice could not be removed. Please reload and try again.";
         }
         catch (HttpRequestException) { error = "That choice could not be removed. Please try again."; }

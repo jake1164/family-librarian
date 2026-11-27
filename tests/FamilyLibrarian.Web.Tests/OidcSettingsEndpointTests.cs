@@ -87,10 +87,16 @@ public sealed class OidcSettingsEndpointTests
     }
 
     [TestMethod]
-    public async Task LocalLoginCannotBeDisabledWithoutASuccessfulTest()
+    public async Task LocalLoginCannotBeDisabledWithoutASavedIssuerToTest()
     {
         var fixture = WebTestFixture.Require(_fixture);
         using var client = await CreateAdminClientWithTokenAsync(fixture);
+        // The database is shared with the other tests here, so clear the issuer rather than assume it is blank.
+        // Saving also clears any recorded test result.
+        var cleared = await client.PutAsJsonAsync(
+            "/api/v1/admin/authentication/oidc/",
+            new SetOidcSettingsRequest("Sign in with Test IdP", null, null, "openid profile email", "email", "groups", null));
+        Assert.AreEqual(HttpStatusCode.OK, cleared.StatusCode);
 
         var disable = await client.PutAsJsonAsync(
             "/api/v1/admin/authentication/oidc/local-login-disabled", new SetOidcLocalLoginDisabledRequest(true));
@@ -121,6 +127,46 @@ public sealed class OidcSettingsEndpointTests
         var restore = await client.PutAsJsonAsync(
             "/api/v1/admin/authentication/oidc/local-login-disabled", new SetOidcLocalLoginDisabledRequest(false));
         Assert.AreEqual(HttpStatusCode.OK, restore.StatusCode);
+    }
+
+    [TestMethod]
+    public async Task ATestOfAnUnsavedIssuerIsReportedButNotRecorded()
+    {
+        var fixture = WebTestFixture.Require(_fixture);
+        using var client = await CreateAdminClientWithTokenAsync(fixture);
+        await client.PutAsJsonAsync(
+            "/api/v1/admin/authentication/oidc/",
+            new SetOidcSettingsRequest(
+                "Sign in with Test IdP", "https://saved.issuer.test/", "client-abc",
+                "openid profile email", "email", "groups", null));
+
+        var response = await client.PostAsJsonAsync(
+            "/api/v1/admin/authentication/oidc/test", new TestOidcConnectionRequest("https://other.issuer.test/"));
+
+        var result = await response.Content.ReadFromJsonAsync<OidcConnectionTestResponse>();
+        Assert.IsNotNull(result);
+        Assert.IsTrue(result.Succeeded);
+        StringAssert.Contains(result.Message, "not saved yet");
+        var settings = await client.GetFromJsonAsync<OidcSettingsResponse>("/api/v1/admin/authentication/oidc/");
+        Assert.IsNull(settings!.LastTestSucceeded);
+    }
+
+    [TestMethod]
+    public async Task SavingSettingsStoresATypedClientSecretAndABlankOneKeepsIt()
+    {
+        var fixture = WebTestFixture.Require(_fixture);
+        using var client = await CreateAdminClientWithTokenAsync(fixture);
+        SetOidcSettingsRequest Request(string? secret) => new(
+            "Sign in with Test IdP", "https://issuer.test/", "client-abc", "openid profile email", "email", "groups", null, secret);
+
+        var write = await client.PutAsJsonAsync("/api/v1/admin/authentication/oidc/", Request(SecretValue));
+        var body = await write.Content.ReadAsStringAsync();
+        Assert.IsFalse(body.Contains(SecretValue, StringComparison.Ordinal));
+        await client.PutAsJsonAsync("/api/v1/admin/authentication/oidc/", Request(null));
+
+        var settings = await client.GetFromJsonAsync<OidcSettingsResponse>("/api/v1/admin/authentication/oidc/");
+        Assert.IsTrue(settings!.HasClientSecret);
+        Assert.AreEqual(SecretValue[^4..], settings.ClientSecretHint);
     }
 
     [TestMethod]

@@ -50,9 +50,23 @@ public sealed class CwaSettingsService(
         bool isEnabled, CancellationToken cancellationToken)
     {
         var settings = await store.GetOrCreateAsync(cancellationToken);
-        if (isEnabled && GetConfigurationError(settings) is { } configurationError)
+        if (isEnabled)
         {
-            return CwaCommandResult.Invalid(configurationError);
+            if (GetRequirementError(settings) is { } requirementError)
+            {
+                return CwaCommandResult.Invalid(requirementError);
+            }
+
+            // Enabling needs a passing test of the saved settings. When none is recorded, run it here rather than
+            // making the administrator find and press a separate button first.
+            if (settings.LastTestSucceeded != true)
+            {
+                var test = await TestConnectionAsync(CwaConnectionTestTarget.All, cancellationToken);
+                if (!test.Outcome.Succeeded)
+                {
+                    return CwaCommandResult.Invalid($"CWA stayed off. The connection test failed: {test.Outcome.Message}");
+                }
+            }
         }
 
         settings.SetEnabled(isEnabled, currentUser.UserId, clock.UtcNow);
@@ -529,6 +543,27 @@ public sealed class CwaSettingsService(
 
     private static string? GetConfigurationError(CwaSettings settings)
     {
+        if (GetRequirementError(settings) is { } requirementError)
+        {
+            return requirementError;
+        }
+
+        // LastTestSucceeded is reset to null by every settings/secret mutation
+        // (CwaSettings.ResetTestResult()), so this is specifically "a successful
+        // test for the *currently saved* configuration," not a stale pass from
+        // before the last edit.
+        if (settings.LastTestSucceeded != true)
+        {
+            return "Test the connection (ingest and OPDS) and confirm it succeeds before enabling CWA. " +
+                   "Any settings change since the last test invalidates it.";
+        }
+
+        return null;
+    }
+
+    /// <summary>What must be saved before a connection test is worth running.</summary>
+    private static string? GetRequirementError(CwaSettings settings)
+    {
         var ingestError = GetIngestConfigurationError(settings);
         if (ingestError is not null)
         {
@@ -545,16 +580,6 @@ public sealed class CwaSettingsService(
         {
             return "An OPDS catalog URL is required before enabling CWA, independent of the ingest " +
                    "transport -- ownership lookup and post-ingest verification depend on it.";
-        }
-
-        // LastTestSucceeded is reset to null by every settings/secret mutation
-        // (CwaSettings.ResetTestResult()), so this is specifically "a successful
-        // test for the *currently saved* configuration," not a stale pass from
-        // before the last edit.
-        if (settings.LastTestSucceeded != true)
-        {
-            return "Test the connection (ingest and OPDS) and confirm it succeeds before enabling CWA. " +
-                   "Any settings change since the last test invalidates it.";
         }
 
         return null;

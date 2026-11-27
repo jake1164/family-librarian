@@ -38,10 +38,9 @@ public sealed record CwaStatus(
     string? LastTestMessage)
 {
     /// <summary>
-    /// True once ingest delivery has enough to enable. Mirrors
-    /// <c>CwaSettingsService</c>'s <c>GetConfigurationError</c> exactly, so the
-    /// settings UI can show the Enabled switch only when flipping it would
-    /// actually be accepted.
+    /// True once ingest delivery has enough to enable. Mirrors the ingest part of
+    /// <c>CwaSettingsService</c>'s enable requirements, so the settings UI can
+    /// say that setup is still needed.
     /// </summary>
     public bool IsIngestConfigured => TransportMode == CwaTransportMode.Local
         ? !string.IsNullOrWhiteSpace(LocalIngestPath)

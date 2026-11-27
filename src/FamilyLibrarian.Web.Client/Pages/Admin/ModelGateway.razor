@@ -3,6 +3,8 @@
 @using FamilyLibrarian.Contracts.ModelGateway
 @using FamilyLibrarian.Web.Client.ModelGateway
 @inject ModelGatewayApiClient Api
+@inject ISnackbar Snackbar
+@inject IDialogService Dialogs
 
 <PageTitle>AI models · Family Librarian</PageTitle>
 <SettingsDraftGuard IsDirty="@(settings is not null && (form.HasUnsavedChanges || !string.IsNullOrEmpty(apiKey)))" />
@@ -21,9 +23,9 @@
         </MudText>
     </div>
 
-    @if (!string.IsNullOrWhiteSpace(message))
+    @if (loadProblem is not null)
     {
-        <MudAlert Severity="@(messageIsError ? Severity.Error : Severity.Success)" role="status">@message</MudAlert>
+        <MudAlert Severity="Severity.Error" role="alert">@loadProblem</MudAlert>
     }
 
     @if (settings is null)
@@ -45,8 +47,8 @@
                         <MudText Typo="Typo.caption">Set the endpoint on the Connection tab first.</MudText>
                     }
                 </div>
-                <MudSwitch T="bool" Value="settings.IsEnabled" ValueChanged="SetEnabledAsync" Color="Color.Primary" Disabled="@busy"
-                           Label="@(settings.IsEnabled ? "Enabled" : "Disabled")" Class="flex-shrink-0" aria-label="AI models master switch" />
+                <SettingSwitch Value="settings.IsEnabled" Changing="SetEnabledAsync" Disabled="@busy" AlignEnd="true" Class="flex-shrink-0"
+                               Label="@(settings.IsEnabled ? "Enabled" : "Disabled")" aria-label="AI models master switch" />
             </MudStack>
         </MudPaper>
 
@@ -95,8 +97,7 @@
                             <MudText Typo="Typo.body2">@(settings.HasApiKey ? "A key is stored (it cannot be shown again)." : "No key is stored.")</MudText>
                             <MudStack Row="true" Spacing="2" AlignItems="AlignItems.Center">
                                 <MudTextField Immediate="true" @bind-Value="apiKey" Label="New API key" InputType="InputType.Password" Variant="Variant.Outlined"
-                                              Class="flex-grow-1" />
-                                <MudButton Variant="Variant.Outlined" Disabled="@(busy || string.IsNullOrWhiteSpace(apiKey))" OnClick="SetApiKeyAsync">Store key</MudButton>
+                                              Class="flex-grow-1" HelperText="@(string.IsNullOrWhiteSpace(apiKey) ? null : "Not saved yet -- click Save settings.")" />
                                 <MudButton Variant="Variant.Text" Color="Color.Error" Disabled="@(busy || !settings.HasApiKey)" OnClick="ClearApiKeyAsync">Remove key</MudButton>
                             </MudStack>
 
@@ -134,10 +135,17 @@
 
                             <MudDivider />
                             <MudText Typo="Typo.h6">Cloud use</MudText>
-                            <MudSwitch T="bool" @bind-Value="form.AllowCloud" Color="Color.Warning"
-                                       Label="Allow roles to use cloud models (can send book data off this server and use paid or rate-limited services)" />
-                            <MudSwitch T="bool" @bind-Value="form.AllowCloudExcerpts" Color="Color.Warning" Disabled="@(!form.AllowCloud)"
-                                       Label="Also allow details read from downloaded files (embedded titles, headings, language tags and bounded book excerpts) to be sent to a cloud model" />
+                            <MudText Typo="Typo.caption">These permissions save as soon as you change them.</MudText>
+                            <SettingSwitch Value="settings.AllowCloud" Color="Color.Warning" Disabled="@busy"
+                                           Changing="@(change => SetPermissionAsync(change, new(AllowCloud: change.Value), "Cloud use"))"
+                                           ConfirmTitle="Allow cloud models?" ConfirmYes="Allow cloud use"
+                                           ConfirmOn="Roles placed on a cloud model can send book data off this server and use paid or rate-limited services."
+                                           Label="Allow roles to use cloud models (can send book data off this server and use paid or rate-limited services)" />
+                            <SettingSwitch Value="settings.AllowCloudExcerpts" Color="Color.Warning" Disabled="@(busy || !settings.AllowCloud)"
+                                           Changing="@(change => SetPermissionAsync(change, new(AllowCloudExcerpts: change.Value), "Sending file details to cloud models"))"
+                                           ConfirmTitle="Send file details to cloud models?" ConfirmYes="Allow sending"
+                                           ConfirmOn="Details read from downloaded files, including bounded book excerpts, can be sent to a cloud model."
+                                           Label="Also allow details read from downloaded files (embedded titles, headings, language tags and bounded book excerpts) to be sent to a cloud model" />
                             <MudText Typo="Typo.caption">
                                 The second switch is separate and off by default. Without it, a cloud model reviewing a file sees only the names and
                                 outcomes of the checks, never anything read out of the file. Local validation models can receive file details and bounded
@@ -147,8 +155,11 @@
 
                             <MudDivider />
                             <MudText Typo="Typo.h6">Identity hold release</MudText>
-                            <MudSwitch T="bool" @bind-Value="form.AllowModelHoldRelease" Color="Color.Warning"
-                                       Label="Allow AI validation to release narrowly eligible identity holds" />
+                            <SettingSwitch Value="settings.AllowModelHoldRelease" Color="Color.Warning" Disabled="@busy"
+                                           Changing="@(change => SetPermissionAsync(change, new(AllowModelHoldRelease: change.Value), "Releasing identity holds"))"
+                                           ConfirmTitle="Let AI release identity holds?" ConfirmYes="Allow release"
+                                           ConfirmOn="A model will be able to release a narrowly eligible held file without a librarian reviewing it."
+                                           Label="Allow AI validation to release narrowly eligible identity holds" />
                             <MudText Typo="Typo.caption">
                                 Off by default. Also requires the Artifact validation decision role. Only inconclusive holds,
                                 corroborated author differences and contents of an already accepted collection can qualify.
@@ -176,16 +187,17 @@
                     {
                         <MudPaper Outlined="true" Class="pa-3">
                             <MudStack Spacing="2">
-                                <MudSwitch T="bool" @bind-Value="role.IsEnabled" Color="Color.Primary" Label="@Title(role.Role)" Disabled="@AiOff" />
+                                <SettingSwitch Value="@IsRoleEnabled(role.Role)" Changing="@(change => SetRoleEnabledAsync(role, change))"
+                                               Label="@Title(role.Role)" Disabled="@(busy || AiOff)" />
                                 <MudText Typo="Typo.body2">@Describe(role.Role)</MudText>
                                 <MudStack Row="true" Spacing="2" Wrap="Wrap.Wrap">
                                     <MudSelect T="string" @bind-Value="role.Placement" Label="Runs on" Variant="Variant.Outlined" Style="min-width: 12rem;" Disabled="@AiOff">
                                         <MudSelectItem Value="@("Local")">Local model</MudSelectItem>
-                                        <MudSelectItem Value="@("Cloud")" Disabled="@(!form.AllowCloud)">Cloud model</MudSelectItem>
+                                        <MudSelectItem Value="@("Cloud")" Disabled="@(!settings.AllowCloud)">Cloud model</MudSelectItem>
                                     </MudSelect>
                                     @if (role.Placement == "Cloud")
                                     {
-                                        <ModelAliasPicker @bind-Value="role.CloudModel" Models="models" Label="Cloud model" Class="flex-grow-1" Disabled="@(AiOff || !form.AllowCloud)" />
+                                        <ModelAliasPicker @bind-Value="role.CloudModel" Models="models" Label="Cloud model" Class="flex-grow-1" Disabled="@(AiOff || !settings.AllowCloud)" />
                                     }
                                     else
                                     {
@@ -237,8 +249,8 @@
                             </MudStack>
                             <MudText Typo="Typo.subtitle2">Cloud allowance, per day (0 = none)</MudText>
                             <MudStack Row="true" Spacing="2" Wrap="Wrap.Wrap">
-                                <MudNumericField Immediate="true" T="int" @bind-Value="form.Limits.CloudDailyRequests" Label="Requests" Min="0" Variant="Variant.Outlined" Disabled="@(AiOff || !form.AllowCloud)" />
-                                <MudNumericField Immediate="true" T="int" @bind-Value="form.Limits.CloudDailyTokens" Label="Tokens" Min="0" Variant="Variant.Outlined" Disabled="@(AiOff || !form.AllowCloud)" />
+                                <MudNumericField Immediate="true" T="int" @bind-Value="form.Limits.CloudDailyRequests" Label="Requests" Min="0" Variant="Variant.Outlined" Disabled="@(AiOff || !settings.AllowCloud)" />
+                                <MudNumericField Immediate="true" T="int" @bind-Value="form.Limits.CloudDailyTokens" Label="Tokens" Min="0" Variant="Variant.Outlined" Disabled="@(AiOff || !settings.AllowCloud)" />
                             </MudStack>
                             @SaveBar(AiOff)
                         </MudStack>
@@ -311,8 +323,7 @@
     private bool modelsUsedUnsavedValues;
     private string apiKey = string.Empty;
     private bool busy;
-    private string? message;
-    private bool messageIsError;
+    private string? loadProblem;
 
     protected override async Task OnInitializedAsync()
     {
@@ -322,8 +333,7 @@
         }
         catch (HttpRequestException)
         {
-            message = "Settings could not be loaded.";
-            messageIsError = true;
+            loadProblem = "Settings could not be loaded.";
             return;
         }
 
@@ -356,8 +366,15 @@
     private async Task SaveAsync()
     {
         var endpointBefore = settings?.EndpointUrl;
-        await ApplyResultAsync(await Api.SaveAsync(form.ToRequest()), "Settings saved.");
-        if (!messageIsError && !string.Equals(endpointBefore, settings?.EndpointUrl, StringComparison.Ordinal))
+        var saved = ApplyResult(await WhileBusyAsync(() => Api.SaveAsync(form.ToRequest(apiKey))), "Settings saved.");
+        if (!saved)
+        {
+            return;
+        }
+
+        var keySaved = !string.IsNullOrWhiteSpace(apiKey);
+        apiKey = string.Empty;
+        if (keySaved || !string.Equals(endpointBefore, settings?.EndpointUrl, StringComparison.Ordinal))
         {
             await LoadModelsAsync();
         }
@@ -402,67 +419,128 @@
         }
         catch (HttpRequestException)
         {
-            message = "Usage could not be loaded.";
-            messageIsError = true;
+            Snackbar.Failed("Usage could not be loaded.");
         }
     }
 
     private async Task ResolveConnectionAsync(string keep)
     {
-        await ApplyResultAsync(
-            await Api.ResolveConnectionAsync(keep),
+        ApplyResult(
+            await WhileBusyAsync(() => Api.ResolveConnectionAsync(keep)),
             keep == "Shared" ? "Kept the shared connection and discarded the older test one." : "Adopted the older test connection. AI models are off until you turn them on.");
-        await LoadModelsAsync();
-    }
-
-    private async Task SetApiKeyAsync()
-    {
-        await ApplyResultAsync(await Api.SetApiKeyAsync(apiKey), "API key stored.", keepUnsavedEdits: true);
-        if (!messageIsError) apiKey = string.Empty;
         await LoadModelsAsync();
     }
 
     private async Task ClearApiKeyAsync()
     {
-        await ApplyResultAsync(await Api.ClearApiKeyAsync(), "API key removed.", keepUnsavedEdits: true);
+        if (!await Dialogs.ConfirmRemovalAsync("Remove the API key?",
+                "The stored key is deleted. AI roles stop working with an endpoint that requires it."))
+        {
+            return;
+        }
+
+        ApplyResult(await WhileBusyAsync(() => Api.ClearApiKeyAsync()), "API key removed.", keepUnsavedEdits: true);
         await LoadModelsAsync();
     }
 
-    private async Task SetEnabledAsync(bool enabled) =>
-        await ApplyResultAsync(await Api.SetEnabledAsync(enabled), enabled ? "AI models are on." : "AI models are off.", keepUnsavedEdits: true);
+    private async Task SetEnabledAsync(SettingSwitchChange change)
+    {
+        var result = await WhileBusyAsync(() => Api.SetEnabledAsync(change.Value));
+        ApplySwitchResult(change, result, change.Value ? "AI models are on." : "AI models are off.");
+    }
 
-    /// <param name="keepUnsavedEdits">
-    /// True for calls that do not save the form (master switch, API key): the host's reply updates what it owns, but
-    /// anything typed and not yet saved stays on the page instead of being replaced by the stored settings.
-    /// </param>
-    private async Task ApplyResultAsync(ModelGatewayCallResult<ModelGatewaySettingsResponse> result, string success, bool keepUnsavedEdits = false)
+    private async Task SetPermissionAsync(SettingSwitchChange change, SetModelGatewayPermissionsRequest request, string name)
+    {
+        var rolesBefore = settings!.Roles.Count(role => role.IsEnabled);
+        var result = await WhileBusyAsync(() => Api.SetPermissionsAsync(request));
+        var rolesTurnedOff = result.Value is { } value ? rolesBefore - value.Roles.Count(role => role.IsEnabled) : 0;
+        ApplySwitchResult(change, result, $"{name} turned {(change.Value ? "on" : "off")}." +
+            (rolesTurnedOff > 0 ? " Roles that run on a cloud model were turned off too." : string.Empty));
+    }
+
+    private async Task SetRoleEnabledAsync(ModelGatewayForm.RoleEdit role, SettingSwitchChange change)
+    {
+        var saved = settings!.Roles.FirstOrDefault(candidate => candidate.Role == role.Role);
+        if (change.Value && saved is not null && !SameRoleSetup(role, saved))
+        {
+            change.Refuse("Save settings first. Turning a role on uses its saved model.");
+            return;
+        }
+
+        var result = await WhileBusyAsync(() => Api.SetRoleEnabledAsync(role.Role, change.Value));
+        ApplySwitchResult(change, result, $"{Title(role.Role)} turned {(change.Value ? "on" : "off")}.");
+    }
+
+    private static bool SameRoleSetup(ModelGatewayForm.RoleEdit edited, ModelRoleDto saved) =>
+        edited.Placement == saved.Placement && Same(edited.LocalModel, saved.LocalModel) &&
+        Same(edited.CloudModel, saved.CloudModel) && edited.Reasoning == saved.Reasoning;
+
+    private static bool Same(string? left, string? right) => (left ?? string.Empty).Trim() == (right ?? string.Empty);
+
+    private bool IsRoleEnabled(string role) => settings?.Roles.Any(candidate => candidate.Role == role && candidate.IsEnabled) == true;
+
+    private void ApplySwitchResult(
+        SettingSwitchChange change, ModelGatewayCallResult<ModelGatewaySettingsResponse> result, string success)
+    {
+        if (!result.Succeeded || result.Value is not { } value)
+        {
+            change.Refuse(result.Error);
+            return;
+        }
+
+        settings = value;
+        notice = value.ConnectionNotice ?? notice;
+        // Whatever is typed and not yet saved stays on the page.
+        form.AcceptSwitches(value);
+        Snackbar.Saved(success);
+    }
+
+    /// <summary>Holds the page's controls while the host is saving, so two changes cannot be sent at once.</summary>
+    private async Task<T> WhileBusyAsync<T>(Func<Task<T>> call)
     {
         busy = true;
         try
         {
-            messageIsError = !result.Succeeded;
-            message = result.Succeeded ? success : result.Error;
-            if (result.Value is { } value)
-            {
-                if (!keepUnsavedEdits)
-                {
-                    Apply(value);
-                }
-                else
-                {
-                    settings = value;
-                    notice = value.ConnectionNotice ?? notice;
-                    if (form.Refresh(value) && result.Succeeded)
-                    {
-                        message += " Your unsaved changes are still here: press \"Save settings\" to keep them.";
-                    }
-                }
-            }
+            return await call();
         }
         finally
         {
             busy = false;
         }
+    }
+
+    /// <param name="keepUnsavedEdits">
+    /// True for calls that do not save the form (removing the API key): the host's reply updates what it owns, but
+    /// anything typed and not yet saved stays on the page instead of being replaced by the stored settings.
+    /// </param>
+    private bool ApplyResult(
+        ModelGatewayCallResult<ModelGatewaySettingsResponse> result, string success, bool keepUnsavedEdits = false)
+    {
+        var kept = false;
+        if (result.Value is { } value)
+        {
+            if (!keepUnsavedEdits)
+            {
+                Apply(value);
+            }
+            else
+            {
+                settings = value;
+                notice = value.ConnectionNotice ?? notice;
+                kept = form.Refresh(value);
+            }
+        }
+
+        if (result.Succeeded)
+        {
+            Snackbar.Saved(kept ? $"{success} Your unsaved changes are still here: press \"Save settings\" to keep them." : success);
+        }
+        else
+        {
+            Snackbar.Failed(result.Error);
+        }
+
+        return result.Succeeded;
     }
 
     private static string Title(string role) => ModelRoleLabels.Title(role);

@@ -136,13 +136,13 @@ else
             else
             {
                 defaultFormat = previous;
-                Snackbar.Add("That could not be saved.", Severity.Error);
+                Snackbar.Failed("That could not be saved.");
             }
         }
         catch (HttpRequestException)
         {
             defaultFormat = previous;
-            Snackbar.Add("That could not be saved. Please try again.", Severity.Error);
+            Snackbar.Failed("That could not be saved. Please try again.");
         }
         finally
         {
@@ -166,13 +166,13 @@ else
             else
             {
                 narration = previous;
-                Snackbar.Add(result.Error ?? "That could not be saved.", Severity.Error);
+                Snackbar.Failed(result.Error ?? "That could not be saved.");
             }
         }
         catch (HttpRequestException)
         {
             narration = previous;
-            Snackbar.Add("That could not be saved. Please try again.", Severity.Error);
+            Snackbar.Failed("That could not be saved. Please try again.");
         }
         finally
         {
