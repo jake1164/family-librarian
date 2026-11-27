@@ -78,7 +78,17 @@ internal sealed class GutenbergCatalogRepository(AppDbContext database) : IGuten
         state?.InProgressFormatCount ?? 0,
         state?.LastProgressUtc,
         state?.Status ?? "NeverSynced",
-        state?.FailureMessage);
+        state?.FailureMessage,
+        state?.DownloadedBytes ?? 0,
+        state?.LastArchiveSizeBytes,
+        state?.SourceHost,
+        state?.ProgressMessage,
+        LatestSuccessfulCheck(state));
+
+    internal static DateTimeOffset? LatestSuccessfulCheck(GutenbergCatalogSyncStateEntity? state) =>
+        state?.LastSuccessfulIncrementalSyncUtc is { } incremental &&
+        (state.LastSuccessfulSyncUtc is null || incremental > state.LastSuccessfulSyncUtc)
+            ? incremental : state?.LastSuccessfulSyncUtc;
 
     internal static GutenbergCatalogBook ToModel(GutenbergCatalogBookEntity book) => new(
         book.GutenbergId,

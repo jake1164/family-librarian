@@ -30,6 +30,21 @@ public sealed class GutenbergCatalogEndpointTests
     }
 
     [TestMethod]
+    public async Task RefreshRequiresAnAdministratorAndAnAntiforgeryToken()
+    {
+        var fixture = WebTestFixture.Require(_fixture);
+        using var anonymous = fixture.CreateAnonymousClient();
+        using var reader = await fixture.CreateUserClientAsync();
+        using var admin = await fixture.CreateAdminClientAsync();
+        using var anonymousResponse = await anonymous.PostAsync("/api/v1/admin/gutenberg/sync", null);
+        using var readerResponse = await reader.PostAsync("/api/v1/admin/gutenberg/sync", null);
+        using var adminResponse = await admin.PostAsync("/api/v1/admin/gutenberg/sync", null);
+        Assert.AreEqual(HttpStatusCode.Unauthorized, anonymousResponse.StatusCode);
+        Assert.AreEqual(HttpStatusCode.Forbidden, readerResponse.StatusCode);
+        Assert.AreEqual(HttpStatusCode.BadRequest, adminResponse.StatusCode);
+    }
+
+    [TestMethod]
     public async Task AnInProgressCatalogueOperationReportsProgressAndPreventsAnotherOperation()
     {
         var fixture = WebTestFixture.Require(_fixture);

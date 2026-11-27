@@ -1,0 +1,49 @@
+@if (Status.IsWorking)
+{
+    <MudProgressLinear Indeterminate="@(Status.DownloadPercent is null)" Value="@(Status.DownloadPercent ?? 0)"
+                       Color="Color.Info" Class="mt-2" aria-label="@($"Project Gutenberg catalogue: {Status.Status}")" />
+    <div role="status" aria-live="polite" class="mt-2">
+        <MudText Typo="Typo.body2">@Summary</MudText>
+        @if (Status.Status == "Downloading")
+        {
+            <MudText Typo="Typo.body2">
+                Downloaded @Bytes(Status.DownloadedBytes)@(Status.DownloadSizeBytes is { } total ? $" of {Bytes(total)}" : " (total size not supplied by source)").
+            </MudText>
+        }
+        @if (Status.Status is "Parsing" or "Importing" or "CheckingUpdates")
+        {
+            <MudText Typo="Typo.body2">@(Status.Status == "CheckingUpdates" ? "Checked so far" : "Imported so far"): @Status.InProgressBookCount.ToString("N0") books · @Status.InProgressFormatCount.ToString("N0") formats.</MudText>
+        }
+        @if (!string.IsNullOrWhiteSpace(Status.SourceHost))
+        {
+            <MudText Typo="Typo.caption">Source: @Status.SourceHost.</MudText>
+        }
+        @if (Status.LastProgressUtc is { } progressedAt)
+        {
+            <MudText Typo="Typo.caption">Last progress: @progressedAt.ToLocalTime().ToString("g").</MudText>
+        }
+        <MudText Typo="Typo.caption">You can leave this page; the server will continue.</MudText>
+        @if (Status.IsReady && Status.Status != "Purging")
+        {
+            <MudText Typo="Typo.caption">The existing local catalogue remains searchable.</MudText>
+        }
+    </div>
+}
+
+@code {
+    [Parameter, EditorRequired] public GutenbergCatalogStatusResponse Status { get; set; } = null!;
+
+    private string Summary => Status.ProgressMessage ?? Status.Status switch
+    {
+        "Queued" => "Refresh queued. Waiting for the catalogue worker.",
+        "Downloading" => "Downloading the catalogue archive.",
+        "Decompressing" => "Download complete. Decompressing the catalogue.",
+        "CheckingUpdates" => "Checking the daily new-and-updated-books feed.",
+        "Parsing" or "Importing" => "Building the local catalogue.",
+        "Retrying" => "Retrying after a temporary catalogue error.",
+        "Purging" => "Deleting the local catalogue.",
+        _ => "Refreshing the local catalogue."
+    };
+
+    private static string Bytes(long bytes) => $"{bytes / (1024d * 1024):N1} MiB";
+}

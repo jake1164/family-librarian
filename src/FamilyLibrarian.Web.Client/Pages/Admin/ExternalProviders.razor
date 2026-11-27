@@ -67,9 +67,7 @@
                             <MudText Typo="Typo.subtitle2" Class="flex-grow-1">Local catalogue status</MudText>
                             @if (gutenbergCatalogStatus is not null)
                             {
-                                <MudChip T="string" Size="Size.Small" Color="@GutenbergCatalogStateColor">
-                                    @GutenbergCatalogStateLabel
-                                </MudChip>
+                                <GutenbergCatalogStatusChip Status="@gutenbergCatalogStatus.Status" />
                             }
                             <MudButton Variant="Variant.Outlined"
                                        Size="Size.Small"
@@ -92,16 +90,13 @@
                         }
                         else
                         {
-                            @if (GutenbergCatalogIsSynchronizing || GutenbergCatalogIsPurging)
+                            @if (gutenbergCatalogStatus.IsWorking)
                             {
-                                <MudProgressLinear Indeterminate="true" Color="Color.Info" Class="mt-2"
-                                                   aria-label="@(GutenbergCatalogIsPurging ? "Deleting Project Gutenberg catalogue records" : "Refreshing Project Gutenberg catalogue")" />
+                                <GutenbergCatalogProgress Status="gutenbergCatalogStatus" />
                             }
-
-                            <MudText Typo="Typo.body2" Class="mt-2">@GutenbergCatalogSummary</MudText>
-                            @if (GutenbergCatalogIsSynchronizing)
+                            else
                             {
-                                <MudText Typo="Typo.caption" Class="mt-1">@GutenbergImportProgressSummary</MudText>
+                                <MudText Typo="Typo.body2" Class="mt-2">@GutenbergCatalogSummary</MudText>
                             }
                             <MudGrid Class="mt-1">
                                 <MudItem xs="12" sm="6" md="3">
@@ -111,6 +106,10 @@
                                 <MudItem xs="12" sm="6" md="3">
                                     <MudText Typo="Typo.caption">Last full catalogue download</MudText>
                                     <MudText Typo="Typo.body2">@GutenbergLastSuccessfulDownload</MudText>
+                                </MudItem>
+                                <MudItem xs="12" sm="6" md="3">
+                                    <MudText Typo="Typo.caption">Last successful check</MudText>
+                                    <MudText Typo="Typo.body2">@(gutenbergCatalogStatus.LastSuccessfulCheckUtc?.ToLocalTime().ToString("g") ?? "Never")</MudText>
                                 </MudItem>
                                 <MudItem xs="12" sm="6" md="3">
                                     <MudText Typo="Typo.caption">Latest refresh attempt</MudText>
@@ -696,36 +695,6 @@
 
     private bool GutenbergCatalogHasRecords => gutenbergCatalogStatus?.BookCount > 0;
 
-    private string GutenbergCatalogStateLabel => GutenbergCatalogIsPurging
-        ? "Deleting records"
-        : gutenbergCatalogRefreshInProgress
-        ? "Refreshing"
-        : gutenbergCatalogStatus?.Status switch
-        {
-            "CheckingUpdates" => "Checking changes",
-            "Downloading" => "Downloading",
-            "Parsing" => "Parsing",
-            "Importing" => "Importing",
-            "Retrying" => "Retrying",
-            "Completed" when gutenbergCatalogStatus.IsReady => "Ready",
-            "Failed" => "Refresh failed",
-            "NeverSynced" => "Not downloaded",
-            _ => gutenbergCatalogStatus?.Status ?? "Checking"
-        };
-
-    private Color GutenbergCatalogStateColor => GutenbergCatalogIsPurging
-        ? Color.Info
-        : gutenbergCatalogRefreshInProgress
-        ? Color.Info
-        : gutenbergCatalogStatus?.Status switch
-        {
-            "CheckingUpdates" or "Downloading" or "Parsing" or "Importing" => Color.Info,
-            "Retrying" => Color.Warning,
-            "Completed" when gutenbergCatalogStatus.IsReady => Color.Success,
-            "Failed" => Color.Error,
-            _ => Color.Warning
-        };
-
     private string GutenbergCatalogSummary => GutenbergCatalogIsPurging
         ? "Deleting the local catalogue. Search records will be removed when this operation completes."
         : gutenbergCatalogRefreshInProgress
@@ -752,13 +721,6 @@
             "Completed" when gutenbergCatalogStatus.IsReady => "The local catalogue is ready for automatic request lookup.",
             _ => "The local catalogue has not been downloaded yet."
         };
-
-    private string GutenbergImportProgressSummary => gutenbergCatalogStatus is not { } status
-        ? "Waiting for the catalogue importer to report its first progress update."
-        : $"Imported so far: {status.InProgressBookCount:N0} books · {status.InProgressFormatCount:N0} formats. " +
-          (status.LastProgressUtc is { } progressedAt
-              ? $"Last progress: {progressedAt.ToLocalTime():g}."
-              : "No progress timestamp is available yet.");
 
     private string GutenbergAvailableRecords => gutenbergCatalogStatus is { IsReady: true } status
         ? $"{status.BookCount:N0} books · {status.FormatCount:N0} formats"
@@ -808,7 +770,12 @@
 
             gutenbergCatalogStatus = result.Status;
             gutenbergCatalogStatusUnavailable = false;
-            Snackbar.Add("Project Gutenberg catalogue refreshed.", Severity.Success);
+            Snackbar.Add("Catalogue refresh queued. You can leave this page; the server will continue.", Severity.Info);
+        }
+        catch (OperationCanceledException)
+        {
+            Snackbar.Add("The refresh request timed out. Check the catalogue status before trying again.", Severity.Error);
+            await LoadGutenbergCatalogStatusAsync();
         }
         catch (HttpRequestException)
         {
@@ -874,7 +841,7 @@
     }
 
     private static bool IsGutenbergCatalogOperationStatus(string? status) => status is
-        "CheckingUpdates" or "Downloading" or "Parsing" or "Importing" or "Retrying" or "Purging";
+        "Queued" or "CheckingUpdates" or "Downloading" or "Decompressing" or "Parsing" or "Importing" or "Retrying" or "Purging";
 
     private async Task SetBuiltInSourceEnabledAsync(ProviderStatusResponse source, bool enabled)
     {

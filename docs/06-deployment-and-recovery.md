@@ -13,6 +13,23 @@ same application image with the `--migrate` command, so the schema reviewed in
 source control is the schema deployed by Compose. Do not replace it with
 `EnsureCreated`, and do not run migrations from every application replica.
 
+## Project Gutenberg catalogue refreshes
+
+On **Sources**, **Refresh now** queues a server-owned catalogue refresh and returns
+immediately. Closing the browser does not cancel accepted work. Manual, startup
+and daily checks share the same importer and ordered fallback sources for the full
+archive, daily feed and individual book records. A gap beyond the daily feed's
+coverage triggers a full import; the newest successful full or incremental check
+determines that gap.
+
+The page reports the current phase, source host, download bytes and import counts.
+A download that receives no bytes for two minutes fails with an explanation;
+active transfers may run longer. The previous validated snapshot remains searchable
+until a replacement is validated. A refresh cannot overlap another refresh or a
+catalogue deletion. On application startup, queued work is picked up, while an
+operation interrupted after starting is marked failed with a retry instruction.
+No manual database status reset is needed after upgrading from a stuck refresh.
+
 ## Resumable audiobook archive downloads
 
 An in-progress LibriVox audiobook archive is kept under

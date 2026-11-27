@@ -1,4 +1,5 @@
 using System.Net.Http.Json;
+using System.Text.Json;
 using FamilyLibrarian.Web.Client.Authentication;
 
 namespace FamilyLibrarian.Web.Client.Gutenberg;
@@ -25,7 +26,8 @@ public sealed class GutenbergCatalogApiClient(HttpClient httpClient, Antiforgery
                 null);
         }
 
-        return new GutenbergCatalogRefreshResult(false, null, "The Project Gutenberg catalogue could not be refreshed.");
+        return new GutenbergCatalogRefreshResult(false, null,
+            await ReadErrorAsync(response, "The Project Gutenberg catalogue could not be refreshed.", cancellationToken));
     }
 
     public async Task<GutenbergCatalogPurgeResult> PurgeAsync(CancellationToken cancellationToken = default)
@@ -40,7 +42,19 @@ public sealed class GutenbergCatalogApiClient(HttpClient httpClient, Antiforgery
             return new GutenbergCatalogPurgeResult(true, result?.DeletedBookCount ?? 0, null);
         }
 
-        return new GutenbergCatalogPurgeResult(false, 0, "The local Project Gutenberg catalogue could not be deleted.");
+        return new GutenbergCatalogPurgeResult(false, 0,
+            await ReadErrorAsync(response, "The local Project Gutenberg catalogue could not be deleted.", cancellationToken));
+    }
+
+    private static async Task<string> ReadErrorAsync(HttpResponseMessage response, string fallback, CancellationToken cancellationToken)
+    {
+        try
+        {
+            var problem = await response.Content.ReadFromJsonAsync<JsonElement>(cancellationToken);
+            return problem.ValueKind == JsonValueKind.Object && problem.TryGetProperty("detail", out var detail) && detail.ValueKind == JsonValueKind.String
+                ? detail.GetString() ?? fallback : fallback;
+        }
+        catch (JsonException) { return fallback; }
     }
 }
 
@@ -55,7 +69,18 @@ public sealed record GutenbergCatalogStatusResponse(
     int InProgressFormatCount,
     DateTimeOffset? LastProgressUtc,
     string Status,
-    string? FailureMessage);
+    string? FailureMessage,
+    long DownloadedBytes = 0,
+    long? DownloadSizeBytes = null,
+    string? SourceHost = null,
+    string? ProgressMessage = null,
+    DateTimeOffset? LastSuccessfulCheckUtc = null)
+{
+    public bool IsWorking => Status is "Queued" or "CheckingUpdates" or "Downloading" or "Decompressing" or "Parsing" or "Importing" or "Retrying" or "Purging";
+
+    public double? DownloadPercent => Status == "Downloading" && DownloadSizeBytes is > 0
+        ? Math.Clamp(DownloadedBytes * 100d / DownloadSizeBytes.Value, 0, 100) : null;
+}
 
 public sealed record GutenbergCatalogRefreshResult(
     bool Succeeded,

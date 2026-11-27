@@ -96,7 +96,18 @@ public sealed record GutenbergCatalogStatus(
     int InProgressFormatCount,
     DateTimeOffset? LastProgressUtc,
     string Status,
-    string? FailureMessage);
+    string? FailureMessage,
+    long DownloadedBytes = 0,
+    long? DownloadSizeBytes = null,
+    string? SourceHost = null,
+    string? ProgressMessage = null,
+    DateTimeOffset? LastSuccessfulCheckUtc = null);
+
+public static class GutenbergCatalogOperations
+{
+    public static bool IsInProgress(string? status) => status is
+        "Queued" or "CheckingUpdates" or "Downloading" or "Decompressing" or "Parsing" or "Importing" or "Retrying" or "Purging";
+}
 
 public sealed record GutenbergCatalogSyncResult(bool Succeeded, GutenbergCatalogStatus Status, string? Error = null);
 

@@ -726,7 +726,7 @@ public static class DependencyInjection
         }
         services.AddSingleton(mirrorOptions);
         services.AddScoped<IGutenbergCatalog, GutenbergCatalogRepository>();
-        services.AddScoped<IGutenbergCatalogSynchronizer, GutenbergCatalogSynchronizer>();
+        services.AddScoped<IGutenbergCatalogSynchronizer>(services => services.GetRequiredService<GutenbergCatalogSynchronizer>());
         services.AddScoped<IGutenbergCatalogMaintenance, GutenbergCatalogMaintenance>();
         services.AddSingleton<IGutenbergFileResolver, GutenbergFileResolver>();
         services.AddSingleton(TimeProvider.System);

@@ -206,6 +206,10 @@ Administrators also get:
   request timeline to discover it. Project Gutenberg searches use the daily RDF
   catalogue imported into PostgreSQL; LibriVox searches its live audiobook API.
   Project Gutenberg ebook downloads use configured mirrors.
+  Catalogue refreshes run on the server after being queued, so leaving the page
+  does not cancel them. Sources shows the download bytes, source host, current
+  phase, import counts and last successful check. Manual and daily refreshes use
+  the same fallback sources when the primary catalogue service is unavailable.
   Source failures remain visible to administrators but
   do not prevent Work or request pages from loading;
 - **Security scans**, for the latest 25, 50 (default), or 100 imported/acquired
@@ -351,6 +355,10 @@ Docker then fails setup instead of reporting integration tests as skipped. CI
 and the full-regression/Web-class tasks set it automatically. Tests tagged
 `Migration` retain historical upgrade and data-preservation coverage.
 
+Full-catalogue Gutenberg integration tests also run the native `bzip2` decoder,
+which is included in the application image. For workstation tests, install it on
+`PATH`; Git for Windows includes it in its `usr/bin` directory.
+
 Run affected host tests before handing off a feature change. Authentication,
 startup/DI, shared harness and cross-cutting changes require full deterministic
 regression; database changes also require affected migration and concurrency
@@ -417,6 +425,8 @@ FAMILY_LIBRARIAN_LIVE_BROWSER_TESTS=1 dotnet test \
 
 It starts a disposable PostgreSQL database and a local Kestrel test host, verifies
 one WebSocket across client-side navigation, then disconnects the browser and
-checks that reconnect restores a missed notification. It does not use lab or
+checks that reconnect restores a missed notification. It also checks the Sources
+page's queued refresh, live catalogue phases, download bytes and phone layout.
+It does not use lab or
 production credentials. `FAMILY_LIBRARIAN_E2E_CHROMIUM_EXECUTABLE` optionally points
 to an existing compatible Chromium executable instead of Playwright's default.

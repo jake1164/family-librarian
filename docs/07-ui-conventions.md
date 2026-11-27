@@ -64,6 +64,13 @@ switch. Media-type icon still comes from the shared `MediaTypeVisuals.Icon`.
 
 ## Provider activity outcomes
 
+The Sources page's catalogue phase uses `Gutenberg/GutenbergCatalogStatusChip`,
+with labels and colors defined in `MediaTypeVisuals.GutenbergCatalogLabel` and
+`GutenbergCatalogColor`. Queued/checking/downloading/decompressing/importing are
+blue, retries are amber, completed is green and failed is red. Download progress
+shows bytes and uses a determinate bar only when the source supplies a total;
+record counts are shown during checking/importing rather than during download.
+
 The Tasks dashboard's **Sources now** panel uses `Operations/SourceStatusChip`,
 backed by `MediaTypeVisuals.SourceStateColor`/`SourceStateLabel`. Idle and disabled
 are neutral; searching/checking/downloading/processing/queued/working/waiting are

@@ -15,6 +15,25 @@ namespace FamilyLibrarian.Web.Client.Theme;
 /// </summary>
 public static class MediaTypeVisuals
 {
+    public static Color GutenbergCatalogColor(string status) => status switch
+    {
+        "Queued" or "CheckingUpdates" or "Downloading" or "Decompressing" or "Parsing" or "Importing" or "Purging" => Color.Info,
+        "Retrying" => Color.Warning,
+        "Completed" => Color.Success,
+        "Failed" => Color.Error,
+        _ => Color.Default
+    };
+
+    public static string GutenbergCatalogLabel(string status) => status switch
+    {
+        "CheckingUpdates" => "Checking changes",
+        "Completed" => "Ready",
+        "Failed" => "Refresh failed",
+        "NeverSynced" => "Not downloaded",
+        "Purging" => "Deleting records",
+        _ => status
+    };
+
     public static string SourceLastActionLabel(string outcome) => outcome switch
     {
         "Submitted" => "Download requested",

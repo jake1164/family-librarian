@@ -2212,6 +2212,9 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options)
             entity.Property(state => state.LastSuccessfulIncrementalSyncUtc).HasColumnName("last_successful_incremental_sync_utc").HasColumnType("timestamp with time zone");
             entity.Property(state => state.LastSourceModifiedUtc).HasColumnName("last_source_modified_utc").HasColumnType("timestamp with time zone");
             entity.Property(state => state.LastArchiveSizeBytes).HasColumnName("last_archive_size_bytes");
+            entity.Property(state => state.DownloadedBytes).HasColumnName("downloaded_bytes");
+            entity.Property(state => state.SourceHost).HasColumnName("source_host").HasMaxLength(253);
+            entity.Property(state => state.ProgressMessage).HasColumnName("progress_message").HasMaxLength(500);
             entity.Property(state => state.BookCount).HasColumnName("book_count");
             entity.Property(state => state.FormatCount).HasColumnName("format_count");
             entity.Property(state => state.InProgressBookCount).HasColumnName("in_progress_book_count");
