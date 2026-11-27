@@ -265,7 +265,8 @@
                     <MudText Typo="Typo.h6" Class="flex-grow-1">@provider.DisplayName</MudText>
                     <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined">@provider.ProviderId</MudChip>
                     <MudSwitch T="bool" Value="provider.IsEnabled" Disabled="@providersBusy"
-                               ValueChanged="@(enabled => SetProviderEnabledAsync(provider.Id, enabled))" Label="Enabled" />
+                               ValueChanged="@(enabled => SetProviderEnabledAsync(provider.Id, enabled))"
+                               Color="Color.Primary" Label="@(provider.IsEnabled ? "Enabled" : "Disabled")" />
                 </MudStack>
 
                 @if (configurationIssue is not null)

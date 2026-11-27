@@ -33,7 +33,7 @@
                     <MudText Typo="Typo.body2">Adds a Chat page to the menu for everyone who is signed in.</MudText>
                 </div>
                 <MudSwitch T="bool" Value="settings.WebEnabled" ValueChanged="SetWebAsync" Color="Color.Primary" Disabled="@busy"
-                           aria-label="Web chat" />
+                           Label="@(settings.WebEnabled ? "Enabled" : "Disabled")" Class="flex-shrink-0" aria-label="Web chat" />
             </MudStack>
             @if (settings.WebEnabled)
             {
@@ -51,7 +51,7 @@
                     </MudText>
                 </div>
                 <MudSwitch T="bool" Value="settings.MatrixEnabled" ValueChanged="SetMatrixAsync" Color="Color.Primary" Disabled="@busy"
-                           aria-label="Matrix chat" />
+                           Label="@(settings.MatrixEnabled ? "Enabled" : "Disabled")" Class="flex-shrink-0" aria-label="Matrix chat" />
             </MudStack>
             @if (!settings.MatrixConnectionReady)
             {

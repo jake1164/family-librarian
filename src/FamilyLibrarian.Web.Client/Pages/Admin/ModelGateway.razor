@@ -46,7 +46,7 @@
                     }
                 </div>
                 <MudSwitch T="bool" Value="settings.IsEnabled" ValueChanged="SetEnabledAsync" Color="Color.Primary" Disabled="@busy"
-                           aria-label="AI models master switch" />
+                           Label="@(settings.IsEnabled ? "Enabled" : "Disabled")" Class="flex-shrink-0" aria-label="AI models master switch" />
             </MudStack>
         </MudPaper>
 
