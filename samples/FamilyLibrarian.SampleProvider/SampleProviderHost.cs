@@ -428,6 +428,10 @@ internal sealed record SampleCandidate(
 /// </summary>
 internal sealed class SampleJob(SampleCandidate candidate, DateTimeOffset createdAtUtc, TimeSpan stage)
 {
+    // Retain the same bytes for listing and every download. Rebuilding an
+    // EPUB changes ZIP timestamps and can invalidate its advertised checksum.
+    private readonly List<SampleOutput> _outputs = CreateOutputs(candidate);
+
     public SampleCandidate Candidate { get; } = candidate;
 
     public bool Cancelled { get; set; }
@@ -463,20 +467,22 @@ internal sealed class SampleJob(SampleCandidate candidate, DateTimeOffset create
         _ => null
     };
 
-    public IReadOnlyList<SampleOutput> BuildOutputs()
+    public IReadOnlyList<SampleOutput> BuildOutputs() => _outputs;
+
+    private static List<SampleOutput> CreateOutputs(SampleCandidate candidate)
     {
-        var epubBytes = SampleEpub.Build(Candidate.Title, Candidate.Author, Candidate.Contents);
+        var epubBytes = SampleEpub.Build(candidate.Title, candidate.Author, candidate.Contents);
         var outputs = new List<SampleOutput>
         {
-            new("primary", "ebook", $"{Candidate.Reference}.epub", "application/epub+zip", epubBytes)
+            new("primary", "ebook", $"{candidate.Reference}.epub", "application/epub+zip", epubBytes)
         };
 
         // One candidate demonstrates a multi-output job (protocol v2 §8a) --
         // an ebook plus a separate cover -- rather than every job assuming
         // exactly one file.
-        if (Candidate.Reference == "pride-and-prejudice")
+        if (candidate.Reference == "pride-and-prejudice")
         {
-            var coverBytes = Encoding.UTF8.GetBytes($"Cover placeholder for {Candidate.Title}.\n");
+            var coverBytes = Encoding.UTF8.GetBytes($"Cover placeholder for {candidate.Title}.\n");
             outputs.Add(new SampleOutput("cover", "cover", "cover.txt", "text/plain", coverBytes));
         }
 

@@ -5,6 +5,7 @@ using FamilyLibrarian.Domain.Requests;
 using FamilyLibrarian.Infrastructure.Providers;
 using FamilyLibrarian.SampleProvider;
 using System.Net;
+using System.Security.Cryptography;
 using System.Text.Json.Nodes;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting.Server;
@@ -472,6 +473,10 @@ public sealed class ExternalProviderClientTests
         Assert.AreEqual(ProviderOutputKind.File, primary.Kind);
         Assert.IsFalse(string.IsNullOrEmpty(primary.ChecksumsJson));
 
+        // ZIP entry timestamps have two-second precision. A retained output
+        // must still match its advertised checksum after that boundary.
+        await Task.Delay(TimeSpan.FromMilliseconds(2100));
+
         var artifact = await client.GetOutputAsync(
             _baseUrl, null, submission.JobId!, "primary", CancellationToken.None);
         await using var content = artifact.Content;
@@ -480,6 +485,13 @@ public sealed class ExternalProviderClientTests
         var bytes = buffer.ToArray();
         Assert.AreEqual(0x50, bytes[0]);
         Assert.AreEqual(0x4B, bytes[1]);
+        var checksums = JsonNode.Parse(primary.ChecksumsJson!)!.AsArray();
+        var sha256 = checksums.Single(checksum => checksum!["algorithm"]!.GetValue<string>() == "sha256")!;
+        Assert.AreEqual(sha256["value"]!.GetValue<string>(), Convert.ToHexString(SHA256.HashData(bytes)).ToLowerInvariant(),
+            "The retained file must match the checksum advertised before the download.");
+
+        var listedAgain = await client.ListOutputsAsync(_baseUrl, null, submission.JobId!, CancellationToken.None);
+        Assert.AreEqual(primary.ChecksumsJson, listedAgain.Single(output => output.OutputId == "primary").ChecksumsJson);
     }
 
     [TestMethod]
