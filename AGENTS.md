@@ -46,6 +46,11 @@ file before proposing, changing, or reviewing code.
 
 ## Delivery workflow
 
+- Lab integration cases must reuse an existing compatible running test group by default. Before adding an
+  `up`/`down`, container recreation or application restart, inspect the lab's existing fixtures and reset
+  contracts. A dedicated lifecycle needs a reason tied to the assertion, setup-audit coverage and measured
+  lifecycle/runtime evidence. Preserve case isolation and acceptance assertions; follow the lab's AGENTS.md.
+
 - Do not be a yes-person. Give clear, evidence-based feedback and push back when a request conflicts with the architecture, security, current documentation, or the project's stated goals. Explain the trade-off and offer a safer or more maintainable alternative where possible.
 - Never create a Git commit without first asking the user for an explicit yes-or-no confirmation in the current conversation. A general request to implement, finish, publish, or push changes is not commit authorization.
 - The application runs through Docker Compose for development and self-hosted deployment. Keep the default runtime limited to the application host/API and PostgreSQL unless a planned slice requires more.
